@@ -1,9 +1,11 @@
 import { useState } from 'react'
-import { Form, useLoaderData, useNavigation, useSearchParams, useSubmit } from 'react-router'
+import { Form, useLoaderData, useNavigation, useRevalidator, useSearchParams, useSubmit } from 'react-router'
 import { Loader, Search, ShieldOff, ShieldCheck as ShieldCheckIcon } from 'lucide-react'
 import type { Route } from './+types/admin.customers'
 import { requireAdmin } from '~/lib/admin-auth.server'
 import { prisma } from '~/lib/prisma.server'
+import { ADMIN_CHANNEL, type CustomerRegisteredPayload } from '~/lib/pusher-channels'
+import { usePusherEvent } from '~/hooks/use-pusher'
 import { ConfirmDialog } from '~/components/ConfirmDialog'
 
 const PAGE_SIZE = 20
@@ -89,12 +91,19 @@ export default function AdminCustomers() {
   const [params] = useSearchParams()
   const navigation = useNavigation()
   const submit = useSubmit()
+  const revalidator = useRevalidator()
   const loading = navigation.state !== 'idle'
   const totalPages = Math.max(1, Math.ceil(data.total / data.pageSize))
 
   // Pending action target — populated when admin clicks suspend/activate;
   // cleared when the modal closes or the action settles.
   const [pending, setPending] = useState<CustomerRow | null>(null)
+
+  // The toast for "new customer registered" is fired by the parent admin layout;
+  // here we just refresh the list so the new row appears at the top.
+  usePusherEvent<CustomerRegisteredPayload>(ADMIN_CHANNEL, 'customer:registered', () => {
+    revalidator.revalidate()
+  })
 
   function gotoPage(n: number) {
     const next = new URLSearchParams(params)

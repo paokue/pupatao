@@ -14,6 +14,7 @@ export default [
   route("api/bank-qr", "routes/api.bank-qr.tsx"),
   route("api/locale", "routes/api.locale.tsx"),
   route("api/lookup-tel", "routes/api.lookup-tel.tsx"),
+  route("api/pusher-auth", "routes/api.pusher-auth.tsx"),
 
   // Admin auth (outside the admin layout — login can't require admin).
   route("admin/login", "routes/admin.login.tsx"),

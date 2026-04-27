@@ -43,5 +43,5 @@ export default defineConfig({
       devOptions: { enabled: false },
     }),
   ],
-  ssr: { external: ['@prisma/client', '.prisma/client', 'bcryptjs'] },
+  ssr: { external: ['@prisma/client', '.prisma/client', 'bcryptjs', 'pusher'] },
 })

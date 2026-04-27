@@ -3,6 +3,7 @@ import { redirect, useNavigate, useSearchParams } from 'react-router'
 import type { Route } from './+types/register'
 import { prisma } from '~/lib/prisma.server'
 import { createUserSession, getCurrentUser, hashPassword } from '~/lib/auth.server'
+import { notifyAdmin } from '~/lib/pusher.server'
 import { LoginModal } from '~/components/LoginModal'
 import { RegisterModal } from '~/components/RegisterModal'
 
@@ -44,6 +45,12 @@ export async function action({ request }: Route.ActionArgs) {
           ],
         },
       },
+    })
+
+    notifyAdmin('customer:registered', {
+      id: user.id,
+      tel: user.tel,
+      createdAt: user.createdAt.toISOString(),
     })
 
     return createUserSession(user.id, request, next)

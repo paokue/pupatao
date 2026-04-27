@@ -1,9 +1,13 @@
 import { useState } from 'react'
-import { Link, useLoaderData, useNavigation, useSearchParams } from 'react-router'
+import { Link, useLoaderData, useNavigation, useRevalidator, useSearchParams } from 'react-router'
 import { Check, ExternalLink, X } from 'lucide-react'
+import { toast } from 'sonner'
 import type { Route } from './+types/admin.transactions'
 import { requireAdmin } from '~/lib/admin-auth.server'
 import { prisma } from '~/lib/prisma.server'
+import { notifyAdmin, notifyUser } from '~/lib/pusher.server'
+import { ADMIN_CHANNEL, type TxCreatedPayload, type TxResolvedPayload } from '~/lib/pusher-channels'
+import { usePusherEvent } from '~/hooks/use-pusher'
 import { ConfirmDialog } from '~/components/ConfirmDialog'
 
 const PAGE_SIZE = 25
@@ -78,7 +82,7 @@ export async function action({ request }: Route.ActionArgs) {
     if (tx.status !== 'PENDING') return { error: 'Only pending transactions can be reviewed.' }
 
     if (op === 'reject') {
-      await prisma.$transaction([
+      const [updated] = await prisma.$transaction([
         prisma.transaction.update({
           where: { id: tx.id },
           data: { status: 'CANCELLED', note: `${tx.note ?? 'Deposit'} — rejected by admin` },
@@ -91,13 +95,22 @@ export async function action({ request }: Route.ActionArgs) {
           },
         }),
       ])
+      notifyUser(tx.userId, 'transaction:updated', {
+        id: updated.id,
+        status: 'CANCELLED',
+        type: updated.type as 'DEPOSIT' | 'WITHDRAW',
+        amount: updated.amount,
+        balanceAfter: updated.balanceAfter,
+        note: updated.note,
+      })
+      notifyAdmin('transaction:resolved', { id: updated.id })
       return { ok: true }
     }
 
     // Approve: re-read wallet inside the transaction so balanceBefore/After are
     // computed against the live balance (in case other writes happened between
     // the user's submit and admin's approval).
-    await prisma.$transaction(async db => {
+    const updated = await prisma.$transaction(async db => {
       const wallet = await db.wallet.findUnique({ where: { id: tx.walletId } })
       if (!wallet) throw new Error('Wallet not found.')
 
@@ -109,7 +122,7 @@ export async function action({ request }: Route.ActionArgs) {
         where: { id: wallet.id },
         data: { balance: newBalance, version: { increment: 1 } },
       })
-      await db.transaction.update({
+      const u = await db.transaction.update({
         where: { id: tx.id },
         data: {
           status: 'COMPLETED',
@@ -126,7 +139,18 @@ export async function action({ request }: Route.ActionArgs) {
           metadata: { amount: tx.amount, walletId: tx.walletId, newBalance },
         },
       })
+      return u
     })
+
+    notifyUser(tx.userId, 'transaction:updated', {
+      id: updated.id,
+      status: 'COMPLETED',
+      type: updated.type as 'DEPOSIT' | 'WITHDRAW',
+      amount: updated.amount,
+      balanceAfter: updated.balanceAfter,
+      note: updated.note,
+    })
+    notifyAdmin('transaction:resolved', { id: updated.id })
 
     return { ok: true }
   } catch (err) {
@@ -143,10 +167,29 @@ export default function AdminTransactions() {
   const data = useLoaderData<typeof loader>()
   const [params] = useSearchParams()
   const navigation = useNavigation()
+  const revalidator = useRevalidator()
   const loading = navigation.state !== 'idle'
   const totalPages = Math.max(1, Math.ceil(data.total / data.pageSize))
 
   const [pending, setPending] = useState<PendingAction>(null)
+
+  usePusherEvent<TxCreatedPayload>(ADMIN_CHANNEL, 'transaction:created', tx => {
+    if (tx.type !== 'DEPOSIT' && tx.type !== 'WITHDRAW') return
+    const isOnTab =
+      (data.tab === 'deposit' && tx.type === 'DEPOSIT') ||
+      (data.tab === 'withdraw' && tx.type === 'WITHDRAW')
+    if (!isOnTab) return
+    if (data.status !== 'PENDING' && data.status !== 'ALL') return
+    toast.message('New ' + tx.type.toLowerCase() + ' request', {
+      description: `${tx.user.tel} · ${tx.amount.toLocaleString()} ₭`,
+    })
+    revalidator.revalidate()
+  })
+
+  usePusherEvent<TxResolvedPayload>(ADMIN_CHANNEL, 'transaction:resolved', () => {
+    // Another admin resolved a row — refresh so the list stays accurate.
+    revalidator.revalidate()
+  })
 
   function tabHref(tab: Tab) {
     const next = new URLSearchParams(params)

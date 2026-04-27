@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
-import { Form, useFetcher, useLoaderData, useNavigate, useOutletContext, useSearchParams } from 'react-router'
+import { Form, useFetcher, useLoaderData, useNavigate, useOutletContext, useRevalidator, useSearchParams } from 'react-router'
+import { toast } from 'sonner'
 import type { Route } from './+types/home'
 import { LoginModal } from '~/components/LoginModal'
 import { RegisterModal } from '~/components/RegisterModal'
@@ -9,6 +10,16 @@ import { useT } from '~/lib/use-t'
 import { LanguageSwitch } from '~/components/LanguageSwitch'
 import { setBalance as storeSetBalance, recordPlay, switchWallet, resetDemoBalance, hydrateBalances, DEMO_RESET_AMOUNT } from '~/lib/user-store'
 import { useSoundEngine, playClick, playChipPlace, playCoin, startBgMusic, stopBgMusic } from '~/hooks/use-sound-engine'
+import { usePresenceMembers, usePusherEvent } from '~/hooks/use-pusher'
+import {
+  PRESENCE_LIVE,
+  userChannel,
+  type RoundDicePayload,
+  type RoundResolvedPayload,
+  type RoundSettledPayload,
+  type RoundStartedPayload,
+  type TxUpdatedPayload,
+} from '~/lib/pusher-channels'
 import { LogOut, Pencil, ReceiptText, Undo, User, Volume2, VolumeOff, Wallet } from 'lucide-react'
 
 type SymbolKey = 'fish' | 'prawn' | 'crab' | 'rooster' | 'gourd' | 'frog'
@@ -68,11 +79,23 @@ interface PairBet {
 }
 
 const PAIR_MULTIPLIER = 6  // stake 100 → 600 total (5× profit)
-const LIVE_ROUND_SECONDS = 60
 
-// Live stream embed URL (YouTube). Swap for your channel/stream when ready.
-// Using Lofi Girl's 24/7 stream as a reliable placeholder.
-const STREAM_URL = 'https://www.youtube.com/embed/jfKfPfyJRdk?autoplay=1&mute=1&controls=0'
+// Embed-URL helper used by the LIVE iframe — supports YouTube watch/embed
+// links, Facebook video/live links, and direct MP4 / HLS file URLs (admin can
+// paste any of these). Facebook URLs are rewritten to the plugin endpoint
+// because facebook.com itself sends X-Frame-Options that forbid direct iframe
+// embedding ("refused to connect").
+function liveEmbedSrc(rawUrl: string | null): { kind: 'iframe' | 'video'; src: string } | null {
+  if (!rawUrl) return null
+  if (/\.(mp4|webm|mov|m3u8)(\?|$)/i.test(rawUrl)) return { kind: 'video', src: rawUrl }
+  const yt = rawUrl.match(/(?:youtube\.com\/(?:watch\?v=|embed\/)|youtu\.be\/)([\w-]{11})/)
+  if (yt) return { kind: 'iframe', src: `https://www.youtube.com/embed/${yt[1]}?autoplay=1&mute=1&controls=0` }
+  if (/(?:facebook\.com|fb\.watch)/i.test(rawUrl)) {
+    const href = encodeURIComponent(rawUrl)
+    return { kind: 'iframe', src: `https://www.facebook.com/plugins/video.php?href=${href}&show_text=false&autoplay=true&mute=1` }
+  }
+  return { kind: 'iframe', src: rawUrl }
+}
 
 type LivePhase = 'idle' | 'betting' | 'awaiting_result'
 
@@ -210,10 +233,25 @@ function ProfileDropdown({ name, onClose }: ProfileDropdownProps) {
   )
 }
 
+// Shape of a single bet in the customer's "your bets in this round" list.
+type MyLiveBet = {
+  id: string
+  kind: 'SYMBOL' | 'RANGE' | 'PAIR'
+  amount: number
+  symbol: string | null
+  range: string | null
+  pairA: string | null
+  pairB: string | null
+}
+
 // Recent rolls for the HISTORY sidebar. Self-play list is per-user (rounds
 // the customer placed bets in); live list is global so everyone sees the
-// same admin-hosted (or player-entered) LIVE results. Anonymous visitors
-// get empty arrays here and fall back to in-memory session state.
+// same admin-hosted LIVE results. Anonymous visitors get empty arrays here
+// and fall back to in-memory session state.
+//
+// Also returns the currently-open LIVE round (if any) so the LIVE-mode UI
+// shows the admin's stream + a server-driven betting countdown rather than
+// a hardcoded placeholder + local timer.
 export async function loader({ request }: Route.LoaderArgs) {
   const { getCurrentUser } = await import('~/lib/auth.server')
   let user: Awaited<ReturnType<typeof getCurrentUser>> = null
@@ -222,10 +260,68 @@ export async function loader({ request }: Route.LoaderArgs) {
   } catch (err) {
     console.error('[home loader] getCurrentUser failed:', err)
   }
-  if (!user) {
-    return { selfPlayHistory: [] as SymbolKey[][], liveHistory: [] as SymbolKey[][] }
-  }
+
   const { prisma } = await import('~/lib/prisma.server')
+
+  // The currently in-flight LIVE round (if any), plus the most recent stream
+  // URL from any past round. The fallback URL keeps the customer's video panel
+  // populated between rounds — once the host has streamed once, the iframe
+  // stays visible (just disabled for betting) until the next round starts.
+  const [liveRoundRaw, lastStreamRound] = await Promise.all([
+    prisma.gameRound.findFirst({
+      where: { mode: 'LIVE', status: { in: ['BETTING', 'LOCKED', 'AWAITING_RESULT'] } },
+      orderBy: { createdAt: 'desc' },
+      select: { id: true, status: true, streamUrl: true, bettingClosesAt: true, dice1: true, dice2: true, dice3: true },
+    }),
+    prisma.gameRound.findFirst({
+      where: { mode: 'LIVE', streamUrl: { not: null } },
+      orderBy: { createdAt: 'desc' },
+      select: { streamUrl: true },
+    }),
+  ])
+  const liveRound = liveRoundRaw
+    ? {
+        id: liveRoundRaw.id,
+        status: liveRoundRaw.status as 'BETTING' | 'LOCKED' | 'AWAITING_RESULT',
+        streamUrl: liveRoundRaw.streamUrl,
+        bettingClosesAt: liveRoundRaw.bettingClosesAt?.toISOString() ?? null,
+        dice: [
+          (liveRoundRaw.dice1 as string | null) ?? null,
+          (liveRoundRaw.dice2 as string | null) ?? null,
+          (liveRoundRaw.dice3 as string | null) ?? null,
+        ] as (string | null)[],
+      }
+    : null
+  const lastStreamUrl = lastStreamRound?.streamUrl ?? null
+
+  if (!user) {
+    return {
+      selfPlayHistory: [] as SymbolKey[][],
+      liveHistory: [] as SymbolKey[][],
+      liveRound,
+      lastStreamUrl,
+      myLiveBets: [] as MyLiveBet[],
+    }
+  }
+
+  // The customer's own bets in the current LIVE round — populates the
+  // "your bets in this round" list shown during the awaiting-result phase.
+  const myLiveBets = liveRound
+    ? (await prisma.bet.findMany({
+        where: { roundId: liveRound.id, userId: user.id },
+        orderBy: { createdAt: 'asc' },
+        select: { id: true, kind: true, amount: true, symbol: true, range: true, pairA: true, pairB: true },
+      })).map(b => ({
+        id: b.id,
+        kind: b.kind as 'SYMBOL' | 'RANGE' | 'PAIR',
+        amount: b.amount,
+        symbol: b.symbol as string | null,
+        range: b.range as string | null,
+        pairA: b.pairA as string | null,
+        pairB: b.pairB as string | null,
+      }))
+    : []
+
   const [selfPlay, live] = await Promise.all([
     prisma.gameRound.findMany({
       where: {
@@ -251,6 +347,9 @@ export async function loader({ request }: Route.LoaderArgs) {
   return {
     selfPlayHistory: selfPlay.map(toLower).filter((r): r is SymbolKey[] => r !== null),
     liveHistory: live.map(toLower).filter((r): r is SymbolKey[] => r !== null),
+    liveRound,
+    lastStreamUrl,
+    myLiveBets,
   }
 }
 
@@ -318,16 +417,113 @@ export default function FishPrawnCrabGame() {
   const [bgStarted, setBgStarted] = useState(false)
   const [soundEnabled, setSoundEnabled] = useState(true)
 
-  // Live (streaming) mode
+  // Live (streaming) mode — driven by the admin's open round (loaderData.liveRound).
   const [mode, setMode] = useState<'random' | 'live'>('random')
-  const [livePhase, setLivePhase] = useState<LivePhase>('idle')
-  const [liveTimer, setLiveTimer] = useState(LIVE_ROUND_SECONDS)
-  const [liveDiceInput, setLiveDiceInput] = useState<(SymbolKey | null)[]>([null, null, null])
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const liveRound = loaderData.liveRound
+  const revalidator = useRevalidator()
 
-  // Admin controls are revealed via ?admin=1 (temporary stub until /admin route + backend).
+  // Locally-mirrored dice for the open round. Initialised from the loader and
+  // updated optimistically as the admin reveals each die (round:dice event).
+  // Reset whenever the round id changes (new round started, or no round).
+  const [revealedDice, setRevealedDice] = useState<(SymbolKey | null)[]>(() =>
+    (liveRound?.dice ?? [null, null, null]).map(d => (d ? (d.toLowerCase() as SymbolKey) : null)),
+  )
+  useEffect(() => {
+    setRevealedDice(
+      (loaderData.liveRound?.dice ?? [null, null, null]).map(d =>
+        d ? (d.toLowerCase() as SymbolKey) : null,
+      ),
+    )
+  }, [loaderData.liveRound?.id])
+
+  // Customer's own bets in the current round — drives the "your bets" list
+  // shown during the awaiting-result phase.
+  const myLiveBets = loaderData.myLiveBets
+
+  // Settlement modal — populated from the per-user `round:settled` event.
+  const [liveSettleModal, setLiveSettleModal] = useState<RoundSettledPayload | null>(null)
+
+  // Tick a "now" clock every second while in LIVE mode so the countdown
+  // re-renders without jitter. Stays still in RANDOM mode.
+  const [nowTick, setNowTick] = useState(() => Date.now())
+  useEffect(() => {
+    if (mode !== 'live') return
+    const id = setInterval(() => setNowTick(Date.now()), 1000)
+    return () => clearInterval(id)
+  }, [mode])
+
+  // Derived live state.
+  const liveTimer = (() => {
+    if (!liveRound?.bettingClosesAt) return 0
+    const remaining = Math.ceil((new Date(liveRound.bettingClosesAt).getTime() - nowTick) / 1000)
+    return Math.max(0, remaining)
+  })()
+  const livePhase: LivePhase = (() => {
+    if (!liveRound) return 'idle'
+    if (liveRound.status === 'BETTING' && liveTimer > 0) return 'betting'
+    return 'awaiting_result'
+  })()
+
+  // Presence: while the customer is in LIVE mode their browser joins the
+  // global presence-live channel so the admin Live page can list them as a
+  // current viewer. Subscribing to the channel is the only thing required —
+  // the members list itself isn't rendered here.
+  const presenceChannel = mode === 'live' && !isAnonymous ? PRESENCE_LIVE : null
+  usePresenceMembers(presenceChannel)
+
+  // When the admin opens a new LIVE round, refresh our loader so the stream
+  // URL + countdown reflect the new round (otherwise we'd keep showing the
+  // stale "WAITING FOR RESULT" state from a previous round, or "no round").
+  usePusherEvent<RoundStartedPayload>(presenceChannel, 'round:started', () => {
+    revalidator.revalidate()
+  })
+  usePusherEvent<RoundResolvedPayload>(presenceChannel, 'round:resolved', () => {
+    revalidator.revalidate()
+  })
+
+  // Each die the admin picks (or changes) shows up here in real time.
+  usePusherEvent<RoundDicePayload>(presenceChannel, 'round:dice', payload => {
+    if (!liveRound || payload.roundId !== liveRound.id) return
+    setRevealedDice(prev => {
+      const next = [...prev]
+      const i = payload.dieIndex - 1
+      if (i >= 0 && i < 3) next[i] = payload.symbol.toLowerCase() as SymbolKey
+      return next
+    })
+  })
+
+  // Per-user settlement event — opens the result modal with the customer's
+  // personal stake / payout / new balance.
+  usePusherEvent<RoundSettledPayload>(
+    authUser ? userChannel(authUser.id) : null,
+    'round:settled',
+    payload => {
+      setLiveSettleModal(payload)
+    },
+  )
+
+  // When the admin resolves (or cancels) the live round, refresh the page
+  // loader so the new wallet balance + history land. The admin already pushes
+  // a `transaction:updated` companion event for the balance toast.
+  usePusherEvent<RoundResolvedPayload>(
+    authUser ? userChannel(authUser.id) : null,
+    'round:resolved',
+    () => { revalidator.revalidate() },
+  )
+  usePusherEvent<TxUpdatedPayload>(
+    authUser ? userChannel(authUser.id) : null,
+    'transaction:updated',
+    payload => {
+      if (payload.id.startsWith('round:')) {
+        const positive = payload.note?.toLowerCase().includes('payout')
+        toast[positive ? 'success' : 'message'](positive ? 'Live round payout' : 'Live round update', {
+          description: `Balance: ${payload.balanceAfter.toLocaleString()} ₭`,
+        })
+      }
+    },
+  )
+
   const [searchParams] = useSearchParams()
-  const isAdmin = searchParams.get('admin') === '1'
 
   // Grid size tracking for drawing pair connector lines.
   const gridRef = useRef<HTMLDivElement>(null)
@@ -639,36 +835,97 @@ export default function FishPrawnCrabGame() {
     }, 2000)
   }, [hasAnyBet, isRolling, ensureBgMusic, soundEnabled, startRollSound, stopRollSound, applyResult])
 
-  // Live (host-entered) result. After confirming → round goes idle, admin manually starts next.
-  const submitLiveResult = useCallback(() => {
-    if (livePhase !== 'awaiting_result') return
-    if (!liveDiceInput.every((v): v is SymbolKey => v !== null)) return
-    const finalResults = liveDiceInput as SymbolKey[]
-    applyResult(finalResults)
-    setLiveDiceInput([null, null, null])
-    setLivePhase('idle')
-    setLiveTimer(LIVE_ROUND_SECONDS)
-  }, [livePhase, liveDiceInput, applyResult])
+  // LIVE bet submission — sends staged bets up to /api/play-round which
+  // attaches them to the admin's open round and debits the stake. No dice
+  // come from the customer here; the admin enters dice on the admin Live page
+  // and we react to the resulting `round:resolved` event via revalidation.
+  const placeLiveBets = useCallback(() => {
+    if (mode !== 'live' || livePhase !== 'betting') return
+    if (!authUser) {
+      setLoginHint(t('auth.signInOrRegister'))
+      setLoginOpen(true)
+      return
+    }
+    if (!hasAnyBet) return
+    const snapshot = {
+      symbol: currentBets,
+      range: currentRangeBets,
+      pair: currentPairBets,
+    }
+    const betTotal =
+      snapshot.symbol.reduce((s, b) => s + b.amount, 0) +
+      snapshot.range.reduce((s, b) => s + b.amount, 0) +
+      snapshot.pair.reduce((s, b) => s + b.amount, 0)
 
-  // Admin opens a new betting round: 'idle' → 'betting' + reset timer.
-  const startLiveRound = useCallback(() => {
-    setLiveDiceInput([null, null, null])
-    setLivePhase('betting')
-    setLiveTimer(LIVE_ROUND_SECONDS)
-  }, [])
+    const payload = {
+      mode: 'LIVE',
+      wallet: user.activeWallet === 'real' ? 'REAL' : 'DEMO',
+      bets: {
+        symbol: snapshot.symbol.map(b => ({
+          symbol: b.symbol.toUpperCase(),
+          cell: b.cell,
+          amount: b.amount,
+        })),
+        range: snapshot.range.map(b => ({
+          range: b.range.toUpperCase(),
+          amount: b.amount,
+        })),
+        pair: snapshot.pair.map(b => ({
+          symbolA: b.a.toUpperCase(),
+          symbolB: b.b.toUpperCase(),
+          cellA: b.cellA,
+          cellB: b.cellB,
+          amount: b.amount,
+        })),
+      },
+    }
+    playRoundFetcher.submit(payload, {
+      method: 'post',
+      action: '/api/play-round',
+      encType: 'application/json',
+    })
+    // Optimistic clear — the staged bets already reduced the local balance
+    // when chips were placed, so we just need to clear the staged list.
+    setCurrentBets([])
+    setCurrentRangeBets([])
+    setCurrentPairBets([])
+    setPendingCell(null)
+    setLastBetTotal(betTotal)
+    soundEnabled && playClick()
+    toast.success('Bets placed', {
+      description: `${betTotal.toLocaleString()} ₭ — waiting for the host to enter dice`,
+    })
+  }, [mode, livePhase, authUser, hasAnyBet, currentBets, currentRangeBets, currentPairBets, user.activeWallet, playRoundFetcher, soundEnabled, t])
 
-  // Mode toggle: enter LIVE → round starts idle (admin must click Start).
+  // Show server errors (insufficient balance, no open round, betting closed) as a toast,
+  // and revalidate after a successful LIVE submission so myLiveBets reflects the new rows.
+  useEffect(() => {
+    if (playRoundFetcher.state !== 'idle') return
+    const data = playRoundFetcher.data
+    if (!data) return
+    if (data.error) {
+      toast.error('Bet not placed', { description: data.error })
+    } else if (data.ok) {
+      revalidator.revalidate()
+    }
+  }, [playRoundFetcher.state, playRoundFetcher.data, revalidator])
+
+  // Mode toggle: switching modes clears any staged bets to avoid mixing
+  // RANDOM (client-rolled) and LIVE (server-attached) bets. Switching INTO
+  // LIVE also forces a loader revalidation so we pick up the admin's current
+  // round state (a `round:started` event might have fired before we joined
+  // presence-live, in which case the local snapshot is already stale).
   const toggleMode = useCallback(() => {
     setMode(prev => {
       const next = prev === 'random' ? 'live' : 'random'
-      if (next === 'live') {
-        setLivePhase('idle')
-        setLiveTimer(LIVE_ROUND_SECONDS)
-        setLiveDiceInput([null, null, null])
-      }
+      if (next === 'live') revalidator.revalidate()
       return next
     })
-  }, [])
+    setCurrentBets([])
+    setCurrentRangeBets([])
+    setCurrentPairBets([])
+    setPendingCell(null)
+  }, [revalidator])
 
   // (Webcam getUserMedia removed — stream is now an external iframe embed on user side.)
 
@@ -682,27 +939,6 @@ export default function FishPrawnCrabGame() {
     ro.observe(el)
     return () => ro.disconnect()
   }, [])
-
-  // Betting countdown: only ticks during LIVE + betting phase.
-  useEffect(() => {
-    if (mode !== 'live' || livePhase !== 'betting') {
-      if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null }
-      return
-    }
-    timerRef.current = setInterval(() => {
-      setLiveTimer(prev => {
-        if (prev <= 1) {
-          setLivePhase('awaiting_result')
-          if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null }
-          return 0
-        }
-        return prev - 1
-      })
-    }, 1000)
-    return () => {
-      if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null }
-    }
-  }, [mode, livePhase])
 
   const displayDice = isRolling ? rollingDice : diceResults
 
@@ -749,77 +985,7 @@ export default function FishPrawnCrabGame() {
     </>
   )
 
-  // Host-side "ENTER RESULT" picker used in LIVE mode when the round has locked.
-  const livePicker = (
-    <div className="flex flex-col items-center gap-3">
-      <div className="text-xs font-bold tracking-widest" style={{ color: '#fde68a' }}>
-        ENTER DICE RESULTS
-      </div>
-      <div className="flex items-start gap-3">
-        {[0, 1, 2].map(dieIdx => (
-          <div key={dieIdx} className="flex flex-col items-center gap-1.5">
-            <div
-              className="relative flex items-center justify-center rounded-xl bg-white shadow-xl"
-              style={{
-                width: 60, height: 60,
-                border: `1px solid ${liveDiceInput[dieIdx] ? '#f59e0b' : '#7c3aed'}`,
-              }}
-            >
-              {liveDiceInput[dieIdx] ? (
-                <img
-                  src={`/symbols/${liveDiceInput[dieIdx]}.jpg`}
-                  alt=""
-                  className="absolute inset-0 h-full w-full object-contain p-1"
-                />
-              ) : (
-                <span style={{ color: '#7c3aed', fontSize: 24 }}>?</span>
-              )}
-            </div>
-            <div className="grid grid-cols-3 gap-0.5">
-              {SYMBOLS.map(sym => {
-                const selected = liveDiceInput[dieIdx] === sym
-                return (
-                  <button
-                    key={sym}
-                    onClick={() => {
-                      playClick()
-                      setLiveDiceInput(prev => {
-                        const next = [...prev]
-                        next[dieIdx] = sym
-                        return next
-                      })
-                    }}
-                    className="flex h-6 w-6 items-center justify-center rounded-md text-[10px] font-bold transition-all"
-                    style={{
-                      background: selected ? '#f59e0b' : '#2d1b4e',
-                      color: selected ? '#1e0040' : '#e9d5ff',
-                      border: `1px solid ${selected ? '#fcd34d' : '#6d28d9'}`,
-                    }}
-                    title={SYMBOL_NAMES[sym]}
-                  >
-                    {SYMBOL_VALUES[sym]}
-                  </button>
-                )
-              })}
-            </div>
-          </div>
-        ))}
-      </div>
-      <button
-        onClick={submitLiveResult}
-        disabled={!liveDiceInput.every(v => v !== null)}
-        className="rounded-full px-6 py-2 text-sm font-bold tracking-widest transition-all disabled:opacity-40"
-        style={{
-          background: 'linear-gradient(135deg, #16a34a, #15803d)',
-          color: '#fff',
-          border: '1px solid #f59e0b',
-          boxShadow: '0 0 18px rgba(22,163,74,0.5)',
-        }}
-      >
-        CONFIRM & PAYOUT
-      </button>
-    </div>
-  )
+  // (Host result entry lives on the admin Live page now — customers just bet.)
 
   return (
     <div
@@ -1081,7 +1247,8 @@ export default function FishPrawnCrabGame() {
         </aside>
 
         <div className="flex flex-1 flex-col min-w-0">
-          {/* LIVE mode (spectator): centered stream iframe + status badge + (admin controls when ?admin=1). */}
+          {/* LIVE mode (spectator): centered stream iframe + countdown driven by the
+              admin's open round. The admin Live page sets the stream URL + closes-at. */}
           {mode === 'live' ? (
             <div
               className="flex shrink-0 flex-col items-center gap-3 px-2 py-3 md:px-4"
@@ -1091,13 +1258,38 @@ export default function FishPrawnCrabGame() {
                 className="relative w-full max-h-[38vh] overflow-hidden rounded-lg bg-black md:max-h-[45vh]"
                 style={{ maxWidth: 720, aspectRatio: '16/9', border: '1px solid #a78bfa' }}
               >
-                <iframe
-                  src={STREAM_URL}
-                  className="h-full w-full"
-                  allow="autoplay; encrypted-media; picture-in-picture"
-                  allowFullScreen
-                  title="Live stream"
-                />
+                {(() => {
+                  // Prefer the active round's stream URL; otherwise fall back
+                  // to the last known stream URL so the video stays visible
+                  // between rounds (the betting controls stay disabled until
+                  // a new round opens, but the host's feed keeps playing).
+                  const embed = liveEmbedSrc(liveRound?.streamUrl ?? loaderData.lastStreamUrl ?? null)
+                  if (!embed) {
+                    return (
+                      <div className="flex h-full w-full items-center justify-center text-xs" style={{ color: '#a78bfa' }}>
+                        Waiting for the host to set the stream…
+                      </div>
+                    )
+                  }
+                  return embed.kind === 'video' ? (
+                    <video
+                      src={embed.src}
+                      className="h-full w-full"
+                      controls
+                      autoPlay
+                      muted
+                      playsInline
+                    />
+                  ) : (
+                    <iframe
+                      src={embed.src}
+                      className="h-full w-full"
+                      allow="autoplay; encrypted-media; picture-in-picture"
+                      allowFullScreen
+                      title="Live stream"
+                    />
+                  )
+                })()}
                 <div
                   className="absolute top-2 left-2 flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-bold tracking-widest"
                   style={{ background: 'rgba(220,38,38,0.9)', color: '#fff' }}
@@ -1131,61 +1323,17 @@ export default function FishPrawnCrabGame() {
 
           <div className="flex-1 p-3 overflow-auto" style={{ background: '#7c3aed' }}>
             {mode === 'live' && livePhase !== 'betting' ? (
-              <div className="flex flex-col items-center gap-5 py-6">
-                {/* Big dice result in place of the board */}
-                <div className="flex flex-col items-center gap-2">
-                  {diceDisplay}
+              <div className="flex flex-col items-center gap-4 py-6">
+                <div className="text-sm font-semibold text-center" style={{ color: '#c4b5fd' }}>
+                  {livePhase === 'idle'
+                    ? '⏸ Waiting for the host to start the next round…'
+                    : '🔒 Betting closed — host is entering the result.'}
                 </div>
-
-                {/* Non-admin waiting message + demo Start Round for UI testing */}
-                {!isAdmin && (
-                  <div className="mt-2 flex flex-col items-center gap-2 text-center">
-                    <div className="text-sm font-semibold" style={{ color: '#c4b5fd' }}>
-                      {livePhase === 'idle'
-                        ? '⏸ Waiting for host to start the next round…'
-                        : '🔒 Host is entering the result…'}
-                    </div>
-                    {livePhase === 'idle' && (
-                      <button
-                        onClick={startLiveRound}
-                        className="rounded-full px-4 py-1.5 text-[11px] font-bold tracking-widest opacity-80 transition-opacity hover:opacity-100"
-                        style={{
-                          background: 'rgba(22,163,74,0.15)',
-                          color: '#4ade80',
-                          border: '1px dashed #4ade80',
-                        }}
-                        title="Demo only: simulates the admin starting a round (UI testing)"
-                      >
-                        🛠 DEMO · START ROUND ({LIVE_ROUND_SECONDS}s)
-                      </button>
-                    )}
-                  </div>
-                )}
-
-                {/* Admin controls (only when ?admin=1) */}
-                {isAdmin && (
-                  <div
-                    className="flex w-full max-w-md flex-col items-center gap-3 rounded-2xl px-5 py-4"
-                    style={{ background: 'rgba(30,0,64,0.75)', border: '1px dashed #a78bfa' }}
-                  >
-                    <div className="text-[10px] font-bold tracking-widest" style={{ color: '#fde68a' }}>HOST CONTROLS</div>
-                    {livePhase === 'idle' ? (
-                      <button
-                        onClick={startLiveRound}
-                        className="rounded-full px-6 py-2.5 text-sm font-bold tracking-widest transition-opacity hover:opacity-90"
-                        style={{
-                          background: 'linear-gradient(135deg, #16a34a, #15803d)',
-                          color: '#fff',
-                          border: '1px solid #f59e0b',
-                          boxShadow: '0 0 18px rgba(22,163,74,0.5)',
-                        }}
-                      >
-                        ▶ START ROUND ({LIVE_ROUND_SECONDS}s)
-                      </button>
-                    ) : livePhase === 'awaiting_result' ? (
-                      livePicker
-                    ) : null}
-                  </div>
+                {livePhase === 'awaiting_result' && (
+                  <>
+                    <DiceReveal dice={revealedDice} />
+                    {myLiveBets.length > 0 && <MyBetsList bets={myLiveBets} />}
+                  </>
                 )}
               </div>
             ) : (<>
@@ -1477,8 +1625,8 @@ export default function FishPrawnCrabGame() {
           </div>
         </div>
 
-        {/* Floating ROLL button on mobile (right aside is hidden < md). RANDOM mode only. */}
-        {mode === 'random' && (
+        {/* Floating action button on mobile (right aside is hidden < md). */}
+        {mode === 'random' ? (
           <button
             onClick={rollDice}
             disabled={isRolling || !hasAnyBet}
@@ -1494,6 +1642,21 @@ export default function FishPrawnCrabGame() {
             aria-label="Roll dice"
           >
             {isRolling ? '...' : 'ROLL'}
+          </button>
+        ) : livePhase === 'betting' && (
+          <button
+            onClick={placeLiveBets}
+            disabled={!hasAnyBet || playRoundFetcher.state !== 'idle'}
+            className="fixed bottom-4 right-4 z-40 flex h-16 w-16 items-center justify-center rounded-full font-bold tracking-widest text-xs transition-all disabled:opacity-40 md:hidden"
+            style={{
+              background: 'linear-gradient(135deg, #16a34a, #15803d)',
+              color: '#fff',
+              border: '2px solid #f59e0b',
+              boxShadow: '0 4px 20px rgba(22,163,74,0.6)',
+            }}
+            aria-label="Place live bets"
+          >
+            OKAY
           </button>
         )}
 
@@ -1587,27 +1750,34 @@ export default function FishPrawnCrabGame() {
               >
                 {isRolling ? '...' : 'ROLL'}
               </button>
+            ) : livePhase === 'betting' ? (
+              <button
+                onClick={placeLiveBets}
+                disabled={!hasAnyBet || playRoundFetcher.state !== 'idle'}
+                className="flex h-20 w-20 flex-col items-center justify-center rounded-full text-center font-bold tracking-widest text-[10px] transition-all disabled:opacity-40"
+                style={{
+                  background: 'linear-gradient(135deg, #16a34a, #15803d)',
+                  color: '#fff',
+                  border: '4px solid #f59e0b',
+                  boxShadow: '0 0 22px rgba(22,163,74,0.55)',
+                }}
+                title="Place your bets in this round"
+              >
+                <span className="text-sm">OKAY</span>
+                <span className="opacity-80">{liveTimer}s</span>
+              </button>
             ) : (
               <div
                 className="flex h-20 w-20 flex-col items-center justify-center rounded-full text-center font-bold tracking-widest text-[9px]"
                 style={{
-                  background: livePhase === 'betting'
-                    ? 'linear-gradient(135deg, #4c1d95, #2d1b4e)'
-                    : 'linear-gradient(135deg, #b45309, #78350f)',
+                  background: 'linear-gradient(135deg, #b45309, #78350f)',
                   color: '#fde68a',
                   border: '4px solid #f59e0b',
-                  boxShadow: livePhase === 'betting' ? '0 0 18px rgba(124,58,237,0.5)' : '0 0 22px rgba(234,88,12,0.55)',
+                  boxShadow: '0 0 22px rgba(234,88,12,0.55)',
                 }}
-                title={livePhase === 'betting' ? 'Betting open' : 'Enter result in dice area'}
+                title="Waiting for the host"
               >
-                {livePhase === 'betting' ? (
-                  <>
-                    <span className="text-lg">{liveTimer}</span>
-                    <span className="opacity-80">OPEN</span>
-                  </>
-                ) : (
-                  <span>ENTER{'\n'}RESULT</span>
-                )}
+                <span>WAITING</span>
               </div>
             )}
           </div>
@@ -1754,6 +1924,108 @@ export default function FishPrawnCrabGame() {
         )
       })()}
 
+      {/* LIVE settlement modal — fired by the per-user `round:settled` event
+          right after the admin clicks SUMMARY on the Live page. Shows the
+          customer's personal stake, payout, net, and post-settlement balance. */}
+      {liveSettleModal && (() => {
+        const m = liveSettleModal
+        const isWin = m.net > 0
+        const isEven = m.net === 0
+        const amountText = isEven ? '0' : `${isWin ? '+' : '-'}${Math.abs(m.net).toLocaleString()}`
+        const accent = isWin ? '#4ade80' : isEven ? '#fde68a' : '#f87171'
+        return (
+          <div
+            className="fixed inset-0 z-[100] flex items-center justify-center p-4"
+            style={{ background: 'rgba(15,0,32,0.82)' }}
+            onClick={() => setLiveSettleModal(null)}
+          >
+            <div
+              onClick={e => e.stopPropagation()}
+              className="w-full max-w-sm rounded-md p-6 bg-white"
+            >
+              <div className="text-center text-xs font-bold tracking-widest text-gray-500">
+                LIVE ROUND RESULT
+              </div>
+              <div
+                className="mt-2 text-center text-2xl font-bold tracking-widest"
+                style={{ color: accent }}
+              >
+                {isWin ? '🎉 YOU WIN!' : isEven ? 'BREAK EVEN' : '💔 YOU LOST'}
+              </div>
+              <div className="mt-3 flex items-center justify-center gap-2">
+                {m.dice.map((s, i) => (
+                  <img
+                    key={i}
+                    src={`/symbols/${s.toLowerCase()}.jpg`}
+                    alt={s}
+                    className="h-12 w-12 rounded object-contain"
+                    style={{ border: '1px solid #c4b5fd', background: '#f5f5f5' }}
+                  />
+                ))}
+                <span className="ml-2 rounded-full px-3 py-1 text-xs font-bold tracking-widest" style={{ background: '#f3f4f6', color: '#1e0040' }}>
+                  SUM {m.diceSum}
+                </span>
+              </div>
+              <div
+                className="mt-4 text-center text-4xl font-bold"
+                style={{ color: accent }}
+              >
+                {amountText}
+              </div>
+              <div className="mt-3 grid grid-cols-2 gap-2 text-center text-[11px] font-bold text-gray-600">
+                <div className="rounded-md px-2 py-2" style={{ background: '#f3f4f6' }}>
+                  <div className="tracking-widest">STAKE</div>
+                  <div className="mt-0.5 text-sm" style={{ color: '#1e0040' }}>{m.stake.toLocaleString()}</div>
+                </div>
+                <div className="rounded-md px-2 py-2" style={{ background: '#f3f4f6' }}>
+                  <div className="tracking-widest">PAYOUT</div>
+                  <div className="mt-0.5 text-sm" style={{ color: '#1e0040' }}>{m.payout.toLocaleString()}</div>
+                </div>
+              </div>
+              {m.bets.length > 0 && (
+                <div className="mt-3 rounded-md px-3 py-2" style={{ background: '#f3f4f6' }}>
+                  <div className="mb-1.5 text-[10px] font-bold tracking-widest text-gray-500">YOUR BETS THIS ROUND</div>
+                  <ul className="flex max-h-44 flex-col gap-1 overflow-y-auto">
+                    {m.bets.map((b, i) => {
+                      const isWin = b.result === 'WIN'
+                      const sign = isWin ? '+' : '-'
+                      const amount = isWin ? b.payout - b.amount : b.amount
+                      return (
+                        <li
+                          key={i}
+                          className="grid grid-cols-[1fr_auto_auto] items-center gap-2 rounded px-2 py-1 text-[11px]"
+                          style={{ background: '#fff' }}
+                        >
+                          <span className="truncate text-gray-700">{describeSettledBet(b)}</span>
+                          <span className="text-[10px] font-bold tracking-widest" style={{ color: isWin ? '#16a34a' : '#dc2626' }}>
+                            {b.result}
+                          </span>
+                          <span className="text-right font-bold" style={{ color: isWin ? '#16a34a' : '#dc2626' }}>
+                            {sign}{amount.toLocaleString()}
+                          </span>
+                        </li>
+                      )
+                    })}
+                  </ul>
+                </div>
+              )}
+              <div className='w-full border-1 border-primary mt-4'></div>
+              <div className="flex items-center justify-between pt-2">
+                <span className="text-xs font-bold tracking-widest">TOTAL BALANCE</span>
+                <span className="text-xl font-bold">{m.newBalance.toLocaleString()}</span>
+              </div>
+              <button
+                onClick={() => setLiveSettleModal(null)}
+                className="mt-5 w-full rounded-xl py-3 text-sm font-bold tracking-widest transition-opacity hover:opacity-90 border"
+                autoFocus
+              >
+                CONTINUE
+              </button>
+            </div>
+          </div>
+        )
+      })()}
+
       {/* Sign-in overlay — opened from the Anonymous pill or when anonymous users try to switch to REAL */}
       <LoginModal
         open={loginOpen}
@@ -1772,6 +2044,98 @@ export default function FishPrawnCrabGame() {
           setLoginOpen(true)
         }}
       />
+    </div>
+  )
+}
+
+// ─── Awaiting-result UI helpers (LIVE mode) ─────────────────────────────────
+
+const SYMBOL_VALUE_BY_KEY: Record<SymbolKey, number> = {
+  prawn: 1, crab: 2, fish: 3, rooster: 4, frog: 5, gourd: 6,
+}
+
+const RANGE_LABELS: Record<string, { label: string; range: string }> = {
+  LOW: { label: 'LOW', range: '3-8' },
+  MIDDLE: { label: 'MIDDLE', range: '9-10' },
+  HIGH: { label: 'HIGH', range: '11-18' },
+}
+
+function DiceReveal({ dice }: { dice: (SymbolKey | null)[] }) {
+  return (
+    <div className="flex items-center gap-3">
+      {dice.map((sym, i) => (
+        <div
+          key={i}
+          className="relative flex items-center justify-center overflow-hidden rounded-xl bg-white shadow-xl"
+          style={{ width: 64, height: 64, border: `1px solid ${sym ? '#f59e0b' : '#7c3aed'}` }}
+        >
+          {sym ? (
+            <img src={`/symbols/${sym}.jpg`} alt={sym} className="absolute inset-0 h-full w-full object-contain p-1" />
+          ) : (
+            <span style={{ color: '#7c3aed', fontSize: 26 }}>?</span>
+          )}
+        </div>
+      ))}
+    </div>
+  )
+}
+
+// Shared bet-description formatter used by both MyBetsList (awaiting result)
+// and the settlement modal (after settlement). Shows symbol+value for SYMBOL,
+// the two symbols for PAIR, and the range label+range for RANGE.
+function describeBetGeneric(b: { kind: string; symbol: string | null; range: string | null; pairA: string | null; pairB: string | null }): string {
+  if (b.kind === 'SYMBOL' && b.symbol) {
+    const k = b.symbol.toLowerCase() as SymbolKey
+    return `${b.symbol} (${SYMBOL_VALUE_BY_KEY[k]})`
+  }
+  if (b.kind === 'PAIR' && b.pairA && b.pairB) {
+    const a = b.pairA.toLowerCase() as SymbolKey
+    const c = b.pairB.toLowerCase() as SymbolKey
+    return `${b.pairA} (${SYMBOL_VALUE_BY_KEY[a]}) + ${b.pairB} (${SYMBOL_VALUE_BY_KEY[c]})`
+  }
+  if (b.kind === 'RANGE' && b.range) {
+    const cfg = RANGE_LABELS[b.range]
+    return cfg ? `${cfg.label} (${cfg.range})` : b.range
+  }
+  return b.kind
+}
+
+function describeSettledBet(b: { kind: string; symbol: string | null; range: string | null; pairA: string | null; pairB: string | null; amount: number }): string {
+  return `${describeBetGeneric(b)} · ${b.amount.toLocaleString()}`
+}
+
+function MyBetsList({ bets }: { bets: MyLiveBet[] }) {
+  const total = bets.reduce((s, b) => s + b.amount, 0)
+  const describe = describeBetGeneric
+  return (
+    <div
+      className="w-full max-w-sm rounded-xl p-4"
+      style={{ background: '#1e0040', border: '1px solid #4c1d95' }}
+    >
+      <div className="mb-2 text-[10px] font-bold tracking-widest" style={{ color: '#a78bfa' }}>
+        YOUR BETS THIS ROUND
+      </div>
+      <ul className="flex flex-col gap-1">
+        {bets.map(b => (
+          <li
+            key={b.id}
+            className="flex items-center justify-between rounded-md px-2 py-1.5 text-xs"
+            style={{ background: '#2d1b4e', color: '#e9d5ff' }}
+          >
+            <span className="truncate">{describe(b)}</span>
+            <span className="ml-2 shrink-0 font-bold" style={{ color: '#fde68a' }}>
+              {b.amount.toLocaleString()} ₭
+            </span>
+          </li>
+        ))}
+      </ul>
+      <div
+        className="mt-2 flex items-center justify-between border-t pt-2 text-xs font-bold"
+        style={{ borderColor: '#4c1d95', color: '#fde68a' }}
+      >
+        <span>TOTAL</span>
+        <span>{total.toLocaleString()} ₭</span>
+      </div>
     </div>
   )
 }

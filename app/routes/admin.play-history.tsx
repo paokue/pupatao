@@ -1,7 +1,9 @@
-import { Link, useLoaderData, useSearchParams } from 'react-router'
+import { Link, useLoaderData, useRevalidator, useSearchParams } from 'react-router'
 import type { Route } from './+types/admin.play-history'
 import { requireAdmin } from '~/lib/admin-auth.server'
 import { prisma } from '~/lib/prisma.server'
+import { ADMIN_CHANNEL, type BetPlacedPayload, type RoundResolvedPayload } from '~/lib/pusher-channels'
+import { usePusherEvent } from '~/hooks/use-pusher'
 
 const PAGE_SIZE = 30
 
@@ -57,7 +59,19 @@ export async function loader({ request }: Route.LoaderArgs) {
 export default function AdminPlayHistory() {
   const data = useLoaderData<typeof loader>()
   const [params] = useSearchParams()
+  const revalidator = useRevalidator()
   const totalPages = Math.max(1, Math.ceil(data.total / data.pageSize))
+
+  // Each new bet (and every round resolution) re-fetches the page-1 list. We
+  // skip revalidation when the admin is paginated past the first page, since
+  // appending fresh rows would shift the pagination cursor under their feet.
+  const onFirstPage = data.page === 1
+  usePusherEvent<BetPlacedPayload>(ADMIN_CHANNEL, 'bet:placed', () => {
+    if (onFirstPage) revalidator.revalidate()
+  })
+  usePusherEvent<RoundResolvedPayload>(ADMIN_CHANNEL, 'round:resolved', () => {
+    if (onFirstPage) revalidator.revalidate()
+  })
 
   function pageHref(p: number) {
     const next = new URLSearchParams(params)

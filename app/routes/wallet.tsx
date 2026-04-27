@@ -1,12 +1,15 @@
 import { useState, useMemo, useEffect } from 'react'
-import { useLoaderData, useNavigate, useNavigation } from 'react-router'
+import { useLoaderData, useNavigate, useNavigation, useRevalidator } from 'react-router'
 import { ArrowLeft, Eye, EyeOff, Loader, Wallet as WalletIcon } from 'lucide-react'
 import { toast } from 'sonner'
 import type { Route } from './+types/wallet'
 import bcrypt from 'bcryptjs'
 import { requireUser } from '~/lib/auth.server'
 import { prisma } from '~/lib/prisma.server'
+import { notifyAdmin, notifyUser } from '~/lib/pusher.server'
 import { useUIStore } from '~/lib/ui-store'
+import { userChannel, type TxCreatedPayload, type TxUpdatedPayload } from '~/lib/pusher-channels'
+import { usePusherEvent } from '~/hooks/use-pusher'
 import { playClick } from '~/hooks/use-sound-engine'
 import { DepositModal } from '~/components/DepositModal'
 import { WithdrawModal } from '~/components/WithdrawModal'
@@ -41,6 +44,24 @@ function formatDate(ts: string | number): string {
 
 function formatAmount(n: number): string {
   return n.toLocaleString()
+}
+
+function toTxCreatedPayload(
+  tx: { id: string; type: string; amount: number; status: string; createdAt: Date },
+  user: { id: string; tel: string; firstName: string | null; lastName: string | null },
+): TxCreatedPayload {
+  return {
+    id: tx.id,
+    type: tx.type as TxCreatedPayload['type'],
+    amount: tx.amount,
+    status: tx.status,
+    createdAt: tx.createdAt.toISOString(),
+    user: {
+      id: user.id,
+      tel: user.tel,
+      name: [user.firstName, user.lastName].filter(Boolean).join(' ') || null,
+    },
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -190,7 +211,7 @@ export async function action({ request }: Route.ActionArgs) {
       // idempotencyKey must be unique; MongoDB's unique index is non-sparse,
       // so omitting it would collide on the second null. We generate a fresh
       // UUID per request — same key the future "retry" deduper would consult.
-      await prisma.transaction.create({
+      const created = await prisma.transaction.create({
         data: {
           userId: user.id,
           walletId: wallet.id,
@@ -204,6 +225,7 @@ export async function action({ request }: Route.ActionArgs) {
           note: 'Deposit request — awaiting verification',
         },
       })
+      notifyAdmin('transaction:created', toTxCreatedPayload(created, user))
       return { op, ok: true }
     } catch (err) {
       console.error('[wallet/deposit]', err)
@@ -245,7 +267,7 @@ export async function action({ request }: Route.ActionArgs) {
       // PENDING — admin debits the balance only on approval. We snapshot the
       // bank QR onto the transaction (slipUrl), so a later QR change leaves
       // older requests pointing at the QR that was current when submitted.
-      await prisma.transaction.create({
+      const created = await prisma.transaction.create({
         data: {
           userId: user.id,
           walletId: wallet.id,
@@ -259,6 +281,7 @@ export async function action({ request }: Route.ActionArgs) {
           note: 'Withdraw request — awaiting verification',
         },
       })
+      notifyAdmin('transaction:created', toTxCreatedPayload(created, user))
       return { op, ok: true }
     } catch (err) {
       console.error('[wallet/withdraw]', err)
@@ -293,7 +316,7 @@ export async function action({ request }: Route.ActionArgs) {
       if (!recipient) return { op, error: 'Recipient not found.' }
       if (recipient.status !== 'ACTIVE') return { op, error: "Recipient's account is not active." }
 
-      await prisma.$transaction(async db => {
+      const recvTx = await prisma.$transaction(async db => {
         const senderWallet = await db.wallet.findUnique({
           where: { userId_type: { userId: user.id, type: 'REAL' } },
         })
@@ -329,7 +352,7 @@ export async function action({ request }: Route.ActionArgs) {
             note: `Transfer to ${recipient.tel}`,
           },
         })
-        await db.transaction.create({
+        return db.transaction.create({
           data: {
             userId: recipient.id,
             walletId: recvWallet.id,
@@ -343,6 +366,15 @@ export async function action({ request }: Route.ActionArgs) {
             note: `Transfer from ${user.tel}`,
           },
         })
+      })
+
+      notifyUser(recipient.id, 'transaction:updated', {
+        id: recvTx.id,
+        status: 'COMPLETED',
+        type: 'TRANSFER_IN',
+        amount,
+        balanceAfter: recvTx.balanceAfter,
+        note: recvTx.note,
       })
 
       return { op, ok: true }
@@ -556,9 +588,40 @@ export default function WalletPage() {
   const navigate = useNavigate()
   const loaderData = useLoaderData<typeof loader>()
   const navigation = useNavigation()
+  const revalidator = useRevalidator()
   const balanceHidden = useUIStore(s => s.balanceHidden)
   const toggleBalanceHidden = useUIStore(s => s.toggleBalanceHidden)
   const t = useT()
+
+  // Realtime: when the admin approves/rejects a deposit/withdraw, or when
+  // someone transfers to us, refresh the loader so the balance + tx rows
+  // update without a manual refresh.
+  usePusherEvent<TxUpdatedPayload>(
+    userChannel(loaderData.me.id),
+    'transaction:updated',
+    payload => {
+      const isCredit = payload.type === 'DEPOSIT' || payload.type === 'TRANSFER_IN'
+      const sign = isCredit ? '+' : '-'
+      const verbApproved = payload.type === 'DEPOSIT'
+        ? 'Deposit approved'
+        : payload.type === 'WITHDRAW'
+          ? 'Withdraw approved'
+          : 'Transfer received'
+      const verbRejected = payload.type === 'DEPOSIT'
+        ? 'Deposit rejected'
+        : 'Withdraw rejected'
+      if (payload.status === 'COMPLETED') {
+        toast.success(verbApproved, {
+          description: `${sign}${payload.amount.toLocaleString()} ₭`,
+        })
+      } else {
+        toast.error(verbRejected, {
+          description: payload.note ?? `${payload.amount.toLocaleString()} ₭ — request not approved`,
+        })
+      }
+      revalidator.revalidate()
+    },
+  )
 
   const [tab, setTab] = useState<Tab>('deposit')
   const [amount, setAmount] = useState('')
