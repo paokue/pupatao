@@ -20,7 +20,7 @@ import {
   type RoundStartedPayload,
   type TxUpdatedPayload,
 } from '~/lib/pusher-channels'
-import { LogOut, Pencil, ReceiptText, Undo, User, Volume2, VolumeOff, Wallet } from 'lucide-react'
+import { LogOut, Pencil, ReceiptText, RefreshCw, Undo, User, Volume2, VolumeOff, Wallet } from 'lucide-react'
 
 type SymbolKey = 'fish' | 'prawn' | 'crab' | 'rooster' | 'gourd' | 'frog'
 
@@ -50,22 +50,25 @@ interface RangeBet {
   amount: number
 }
 
+// Range visuals + bounds (the multiplier is intentionally NOT here — it lives
+// in the server-side payout config, passed through the loader, so admins can
+// tune payouts via env vars without redeploying).
 const RANGE_CONFIG: ReadonlyArray<{
   key: RangeKey; label: string; range: string;
-  min: number; max: number; multiplier: number;
+  min: number; max: number;
   bg: string; border: string; color: string;
 }> = [
     {
       key: 'low', label: 'LOW', range: '1-8', min: 3, max: 8,
-      multiplier: 2, bg: 'linear-gradient(135deg, #0369a1, #0c4a6e)', border: '#38bdf8', color: '#bae6fd'
+      bg: 'linear-gradient(135deg, #0369a1, #0c4a6e)', border: '#38bdf8', color: '#bae6fd'
     },
     {
       key: 'middle', label: 'MIDDLE', range: '9-10', min: 9, max: 10,
-      multiplier: 4, bg: 'linear-gradient(135deg, #a21caf, #581c87)', border: '#e879f9', color: '#fae8ff'
+      bg: 'linear-gradient(135deg, #a21caf, #581c87)', border: '#e879f9', color: '#fae8ff'
     },
     {
       key: 'high', label: 'HIGH', range: '11-18', min: 11, max: 18,
-      multiplier: 2, bg: 'linear-gradient(135deg, #b91c1c, #7f1d1d)', border: '#fb7185', color: '#ffe4e6'
+      bg: 'linear-gradient(135deg, #b91c1c, #7f1d1d)', border: '#fb7185', color: '#ffe4e6'
     },
   ]
 
@@ -78,7 +81,10 @@ interface PairBet {
   amount: number
 }
 
-const PAIR_MULTIPLIER = 6  // stake 100 → 600 total (5× profit)
+// Per-range payout lookup against the server-supplied PayoutConfig.
+function rangeMultiplier(key: RangeKey, cfg: { rangeLow: number; rangeMiddle: number; rangeHigh: number }): number {
+  return key === 'low' ? cfg.rangeLow : key === 'middle' ? cfg.rangeMiddle : cfg.rangeHigh
+}
 
 // Embed-URL helper used by the LIVE iframe — supports YouTube watch/embed
 // links, Facebook video/live links, and direct MP4 / HLS file URLs (admin can
@@ -122,6 +128,7 @@ const SYMBOL_NAMES: Record<SymbolKey, string> = {
   frog: 'FROG',
 }
 
+const MIN_CHIP = 1_000    // Minimum allowed chip amount (₭)
 const MAX_CHIP = 100_000  // Maximum allowed chip amount (₭)
 
 const CHIP_CONFIG = [
@@ -158,9 +165,9 @@ function ProfileDropdown({ name, onClose }: ProfileDropdownProps) {
   }, [onClose])
 
   const items = [
-    { label: t('menu.wallet'),       icon: <Wallet size={18} />,      href: '/wallet',  desc: t('menu.walletDesc') },
-    { label: t('menu.playHistory'),  icon: <ReceiptText size={18} />, href: '/history', desc: t('menu.playHistoryDesc') },
-    { label: t('menu.profile'),      icon: <User size={18} />,        href: '/profile', desc: t('menu.profileDesc') },
+    { label: t('menu.wallet'), icon: <Wallet size={18} />, href: '/wallet', desc: t('menu.walletDesc') },
+    { label: t('menu.playHistory'), icon: <ReceiptText size={18} />, href: '/history', desc: t('menu.playHistoryDesc') },
+    { label: t('menu.profile'), icon: <User size={18} />, href: '/profile', desc: t('menu.profileDesc') },
   ]
 
   return (
@@ -215,6 +222,15 @@ function ProfileDropdown({ name, onClose }: ProfileDropdownProps) {
 
       <div className="mx-4" style={{ height: 1, background: '#4c1d95' }} />
 
+      <div className="px-4 py-3">
+        <div className="mb-2 text-[10px] font-bold tracking-widest" style={{ color: '#a78bfa' }}>
+          {t('menu.language')}
+        </div>
+        <LanguageSwitch variant="inline" />
+      </div>
+
+      <div className="mx-4" style={{ height: 1, background: '#4c1d95' }} />
+
       <div className="py-1">
         <Form method="post" action="/logout" onSubmit={() => { playClick(); onClose() }}>
           <button
@@ -262,6 +278,8 @@ export async function loader({ request }: Route.LoaderArgs) {
   }
 
   const { prisma } = await import('~/lib/prisma.server')
+  const { getPayoutConfig } = await import('~/lib/payouts.server')
+  const payoutConfig = getPayoutConfig()
 
   // The currently in-flight LIVE round (if any), plus the most recent stream
   // URL from any past round. The fallback URL keeps the customer's video panel
@@ -281,16 +299,16 @@ export async function loader({ request }: Route.LoaderArgs) {
   ])
   const liveRound = liveRoundRaw
     ? {
-        id: liveRoundRaw.id,
-        status: liveRoundRaw.status as 'BETTING' | 'LOCKED' | 'AWAITING_RESULT',
-        streamUrl: liveRoundRaw.streamUrl,
-        bettingClosesAt: liveRoundRaw.bettingClosesAt?.toISOString() ?? null,
-        dice: [
-          (liveRoundRaw.dice1 as string | null) ?? null,
-          (liveRoundRaw.dice2 as string | null) ?? null,
-          (liveRoundRaw.dice3 as string | null) ?? null,
-        ] as (string | null)[],
-      }
+      id: liveRoundRaw.id,
+      status: liveRoundRaw.status as 'BETTING' | 'LOCKED' | 'AWAITING_RESULT',
+      streamUrl: liveRoundRaw.streamUrl,
+      bettingClosesAt: liveRoundRaw.bettingClosesAt?.toISOString() ?? null,
+      dice: [
+        (liveRoundRaw.dice1 as string | null) ?? null,
+        (liveRoundRaw.dice2 as string | null) ?? null,
+        (liveRoundRaw.dice3 as string | null) ?? null,
+      ] as (string | null)[],
+    }
     : null
   const lastStreamUrl = lastStreamRound?.streamUrl ?? null
 
@@ -301,6 +319,7 @@ export async function loader({ request }: Route.LoaderArgs) {
       liveRound,
       lastStreamUrl,
       myLiveBets: [] as MyLiveBet[],
+      payoutConfig,
     }
   }
 
@@ -308,18 +327,18 @@ export async function loader({ request }: Route.LoaderArgs) {
   // "your bets in this round" list shown during the awaiting-result phase.
   const myLiveBets = liveRound
     ? (await prisma.bet.findMany({
-        where: { roundId: liveRound.id, userId: user.id },
-        orderBy: { createdAt: 'asc' },
-        select: { id: true, kind: true, amount: true, symbol: true, range: true, pairA: true, pairB: true },
-      })).map(b => ({
-        id: b.id,
-        kind: b.kind as 'SYMBOL' | 'RANGE' | 'PAIR',
-        amount: b.amount,
-        symbol: b.symbol as string | null,
-        range: b.range as string | null,
-        pairA: b.pairA as string | null,
-        pairB: b.pairB as string | null,
-      }))
+      where: { roundId: liveRound.id, userId: user.id },
+      orderBy: { createdAt: 'asc' },
+      select: { id: true, kind: true, amount: true, symbol: true, range: true, pairA: true, pairB: true },
+    })).map(b => ({
+      id: b.id,
+      kind: b.kind as 'SYMBOL' | 'RANGE' | 'PAIR',
+      amount: b.amount,
+      symbol: b.symbol as string | null,
+      range: b.range as string | null,
+      pairA: b.pairA as string | null,
+      pairB: b.pairB as string | null,
+    }))
     : []
 
   const [selfPlay, live] = await Promise.all([
@@ -350,6 +369,7 @@ export async function loader({ request }: Route.LoaderArgs) {
     liveRound,
     lastStreamUrl,
     myLiveBets,
+    payoutConfig,
   }
 }
 
@@ -375,7 +395,7 @@ export default function FishPrawnCrabGame() {
     : t('auth.anonymous')
   const initials = authUser
     ? ((authUser.firstName?.[0] ?? '') + (authUser.lastName?.[0] ?? '')).toUpperCase() ||
-      authUser.tel.slice(-2)
+    authUser.tel.slice(-2)
     : '??'
 
   const [balance, setBalance] = useState(0)
@@ -405,10 +425,18 @@ export default function FishPrawnCrabGame() {
   const [customAmount, setCustomAmount] = useState('')
   const [resultModal, setResultModal] = useState<{
     win: number; betTotal: number; newBalance: number; dice: SymbolKey[]; diceSum: number
+    symbolResults: { symbol: SymbolKey; amount: number; payout: number; won: boolean }[]
+    rangeResults: { range: RangeKey; amount: number; payout: number; won: boolean }[]
+    pairResults: { a: SymbolKey; b: SymbolKey; amount: number; payout: number; won: boolean }[]
   } | null>(null)
   const [diceResults, setDiceResults] = useState<SymbolKey[]>([])
   const [rollingDice, setRollingDice] = useState<SymbolKey[]>([])
   const [isRolling, setIsRolling] = useState(false)
+  // Yellow winner-highlight on the board (cells + range buttons) only stays
+  // up for ~5s after a roll resolves — long enough for the player to clock
+  // which bets won, short enough that the next set of chips doesn't sit
+  // on a board still glowing from the previous round.
+  const [winnerHighlight, setWinnerHighlight] = useState(false)
   const [lastWin, setLastWin] = useState(0)
   const [lastBetTotal, setLastBetTotal] = useState(0)
   const [history, setHistory] = useState<SymbolKey[][]>([])
@@ -516,9 +544,10 @@ export default function FishPrawnCrabGame() {
     payload => {
       if (payload.id.startsWith('round:')) {
         const positive = payload.note?.toLowerCase().includes('payout')
-        toast[positive ? 'success' : 'message'](positive ? 'Live round payout' : 'Live round update', {
-          description: `Balance: ${payload.balanceAfter.toLocaleString()} ₭`,
-        })
+        toast[positive ? 'success' : 'message'](
+          positive ? t('live.payoutTitle') : t('live.updateTitle'),
+          { description: t('live.balance', { amount: payload.balanceAfter.toLocaleString() }) },
+        )
       }
     },
   )
@@ -702,26 +731,38 @@ export default function FishPrawnCrabGame() {
   }, [pendingCell, currentBets, currentRangeBets, currentPairBets, selectedChip, ensureBgMusic, soundEnabled])
 
   // Apply the outcome of a roll (random or live-entered). Payout + state reset.
+  // Multipliers come from the server-supplied payout config so the optimistic
+  // client-side win shown in the result modal matches what the server records.
   const applyResult = useCallback((finalResults: SymbolKey[]) => {
     const sum = finalResults.reduce((s, sym) => s + SYMBOL_VALUES[sym], 0)
     setRollingDice([])
     setDiceResults(finalResults)
     setHistory(prev => [finalResults, ...prev].slice(0, 30))
 
-    let win = 0
-    currentBets.forEach(bet => {
+    // Per-bet payout calc — captured into typed result lists so the result
+    // modal can render Single / Range / Pair sections + a summary alongside
+    // the headline net total.
+    const pc = loaderData.payoutConfig
+    const symbolResults = currentBets.map(bet => {
       const matches = finalResults.filter(r => r === bet.symbol).length
-      if (matches > 0) win += bet.amount * (matches + 1)
+      const payout = matches === 1 ? bet.amount * pc.symbol1
+        : matches === 2 ? bet.amount * pc.symbol2
+        : matches === 3 ? bet.amount * pc.symbol3
+        : 0
+      return { symbol: bet.symbol, amount: bet.amount, payout, won: payout > 0 }
     })
-    currentRangeBets.forEach(rb => {
+    const rangeResults = currentRangeBets.map(rb => {
       const cfg = RANGE_CONFIG.find(c => c.key === rb.range)!
-      if (sum >= cfg.min && sum <= cfg.max) win += rb.amount * cfg.multiplier
+      const won = sum >= cfg.min && sum <= cfg.max
+      const payout = won ? rb.amount * rangeMultiplier(rb.range, pc) : 0
+      return { range: rb.range, amount: rb.amount, payout, won }
     })
-    currentPairBets.forEach(pb => {
-      if (finalResults.includes(pb.a) && finalResults.includes(pb.b)) {
-        win += pb.amount * PAIR_MULTIPLIER
-      }
+    const pairResults = currentPairBets.map(pb => {
+      const won = finalResults.includes(pb.a) && finalResults.includes(pb.b)
+      const payout = won ? pb.amount * pc.pair : 0
+      return { a: pb.a, b: pb.b, amount: pb.amount, payout, won }
     })
+    const win = [...symbolResults, ...rangeResults, ...pairResults].reduce((s, b) => s + b.payout, 0)
 
     const betTotal =
       currentBets.reduce((s, b) => s + b.amount, 0) +
@@ -759,10 +800,15 @@ export default function FishPrawnCrabGame() {
     setCurrentRangeBets([])
     setCurrentPairBets([])
     setIsRolling(false)
+    setWinnerHighlight(true)
 
     // Show summary modal unless the round had no bets (e.g. live admin confirmed with zero wagers).
     if (betTotal > 0) {
-      setResultModal({ win, betTotal, newBalance, dice: finalResults, diceSum: sum })
+      setResultModal({
+        win, betTotal, newBalance,
+        dice: finalResults, diceSum: sum,
+        symbolResults, rangeResults, pairResults,
+      })
     }
 
     if (win > 0) {
@@ -892,8 +938,8 @@ export default function FishPrawnCrabGame() {
     setPendingCell(null)
     setLastBetTotal(betTotal)
     soundEnabled && playClick()
-    toast.success('Bets placed', {
-      description: `${betTotal.toLocaleString()} ₭ — waiting for the host to enter dice`,
+    toast.success(t('live.betsPlacedTitle'), {
+      description: t('live.betsPlacedDesc', { amount: betTotal.toLocaleString() }),
     })
   }, [mode, livePhase, authUser, hasAnyBet, currentBets, currentRangeBets, currentPairBets, user.activeWallet, playRoundFetcher, soundEnabled, t])
 
@@ -904,11 +950,11 @@ export default function FishPrawnCrabGame() {
     const data = playRoundFetcher.data
     if (!data) return
     if (data.error) {
-      toast.error('Bet not placed', { description: data.error })
+      toast.error(t('live.betNotPlaced'), { description: data.error })
     } else if (data.ok) {
       revalidator.revalidate()
     }
-  }, [playRoundFetcher.state, playRoundFetcher.data, revalidator])
+  }, [playRoundFetcher.state, playRoundFetcher.data, revalidator, t])
 
   // Mode toggle: switching modes clears any staged bets to avoid mixing
   // RANDOM (client-rolled) and LIVE (server-attached) bets. Switching INTO
@@ -939,6 +985,19 @@ export default function FishPrawnCrabGame() {
     ro.observe(el)
     return () => ro.disconnect()
   }, [])
+
+  // Auto-fade the winner highlight 5s after a roll lands, and also clear it
+  // immediately if a new roll starts (so the previous round's highlight
+  // doesn't bleed into the next one).
+  useEffect(() => {
+    if (isRolling) {
+      setWinnerHighlight(false)
+      return
+    }
+    if (!winnerHighlight) return
+    const id = setTimeout(() => setWinnerHighlight(false), 5000)
+    return () => clearTimeout(id)
+  }, [winnerHighlight, isRolling])
 
   const displayDice = isRolling ? rollingDice : diceResults
 
@@ -1012,127 +1071,128 @@ export default function FishPrawnCrabGame() {
         className="flex items-center justify-between px-4 py-2"
         style={{ background: '#1e0040', borderBottom: '1px solid #a78bfa' }}
       >
-        <div className="relative">
-          {isAnonymous ? (
-            // Unauthenticated: placeholder + quick Sign-in button that opens the modal.
-            <button
-              type="button"
-              onClick={() => {
-                playClick()
-                ensureBgMusic()
-                setLoginHint(undefined)
-                setLoginOpen(true)
-              }}
-              className="flex items-center gap-2.5 rounded-xl px-3 py-2 transition-all hover:opacity-90"
-              style={{
-                background: 'linear-gradient(135deg, #4c1d95, #2d1b4e)',
-                border: '1px dashed #a78bfa',
-              }}
-              title={t('auth.signInOrRegister')}
-            >
-              <div
-                className="flex h-7 w-7 items-center justify-center rounded-full text-xs font-bold"
-                style={{ background: '#2d1b4e', color: '#a78bfa', border: '1px dashed #a78bfa' }}
-              >
-                👤
-              </div>
-              <span className="hidden sm:inline text-sm font-semibold" style={{ color: '#c4b5fd' }}>
-                {displayName}
-              </span>
-              <span className="hidden sm:inline rounded-full px-2 py-0.5 text-[10px] font-bold uppercase" style={{ background: '#7c3aed', color: '#fff' }}>
-                {t('auth.signIn')}
-              </span>
-            </button>
-          ) : (
-            <>
+        <div className='flex items-center gap-2'>
+          <div className="relative">
+            {isAnonymous ? (
+              // Unauthenticated: placeholder + quick Sign-in button that opens the modal.
               <button
-                onClick={() => { playClick(); ensureBgMusic(); setProfileOpen(v => !v) }}
-                className="flex items-center gap-2.5 rounded-xl px-3 py-2 transition-all hover:opacity-90"
-                style={{
-                  background: profileOpen ? '#4c1d95' : 'linear-gradient(135deg, #4c1d95, #2d1b4e)',
-                  border: '1px solid #7c3aed',
+                type="button"
+                onClick={() => {
+                  playClick()
+                  ensureBgMusic()
+                  setLoginHint(undefined)
+                  setLoginOpen(true)
                 }}
+                className="flex items-center gap-2.5 rounded-full sm:rounded-xl p-1 sm:p-2 transition-all hover:opacity-90"
+                style={{
+                  background: 'linear-gradient(135deg, #4c1d95, #2d1b4e)',
+                  border: '1px dashed #a78bfa',
+                }}
+                title={t('auth.signInOrRegister')}
               >
                 <div
                   className="flex h-7 w-7 items-center justify-center rounded-full text-xs font-bold"
-                  style={{ background: 'linear-gradient(135deg, #f59e0b, #b45309)', color: '#1e0040' }}
+                  style={{ background: '#2d1b4e', color: '#a78bfa', border: '1px dashed #a78bfa' }}
                 >
-                  {initials}
+                  👤
                 </div>
-                <span className="hidden sm:inline text-sm font-semibold max-w-[90px] truncate" style={{ color: '#e9d5ff' }}>
+                <span className="hidden sm:inline text-sm font-semibold" style={{ color: '#c4b5fd' }}>
                   {displayName}
                 </span>
-                <svg
-                  className="hidden sm:block transition-transform"
-                  style={{ transform: profileOpen ? 'rotate(180deg)' : 'rotate(0deg)', color: '#a78bfa' }}
-                  width="12" height="12" viewBox="0 0 12 12" fill="currentColor"
-                >
-                  <path d="M6 8L1 3h10L6 8z" />
-                </svg>
+                <span className="hidden sm:inline rounded-full px-2 py-0.5 text-[10px] font-bold uppercase" style={{ background: '#7c3aed', color: '#fff' }}>
+                  {t('auth.signIn')}
+                </span>
               </button>
-              {profileOpen && (
-                <ProfileDropdown name={displayName} onClose={() => setProfileOpen(false)} />
-              )}
-            </>
-          )}
-        </div>
+            ) : (
+              <>
+                <button
+                  onClick={() => { playClick(); ensureBgMusic(); setProfileOpen(v => !v) }}
+                  className="flex items-center gap-2.5 rounded-full sm:rounded-xl p-1 sm:p-2 transition-all hover:opacity-90"
+                  style={{
+                    background: profileOpen ? '#4c1d95' : 'linear-gradient(135deg, #4c1d95, #2d1b4e)',
+                    border: '1px solid #7c3aed',
+                  }}
+                >
+                  <div
+                    className="flex h-7 w-7 items-center justify-center rounded-full text-xs font-bold"
+                    style={{ background: 'linear-gradient(135deg, #f59e0b, #b45309)', color: '#1e0040' }}
+                  >
+                    {initials}
+                  </div>
+                  <span className="hidden sm:inline text-sm font-semibold max-w-[90px] truncate" style={{ color: '#e9d5ff' }}>
+                    {displayName}
+                  </span>
+                  <svg
+                    className="hidden sm:block transition-transform"
+                    style={{ transform: profileOpen ? 'rotate(180deg)' : 'rotate(0deg)', color: '#a78bfa' }}
+                    width="12" height="12" viewBox="0 0 12 12" fill="currentColor"
+                  >
+                    <path d="M6 8L1 3h10L6 8z" />
+                  </svg>
+                </button>
+                {profileOpen && (
+                  <ProfileDropdown name={displayName} onClose={() => setProfileOpen(false)} />
+                )}
+              </>
+            )}
+          </div>
 
-        <div className="flex items-center gap-3">
-          <button
-            onClick={() => { playClick(); toggleMode() }}
-            className="rounded-full px-3 py-1.5 text-xs font-bold tracking-widest"
-            style={{
-              background: mode === 'live'
-                ? 'linear-gradient(180deg, #dc2626 0%, #7f1d1d 100%)'
-                : 'linear-gradient(180deg, #7c3aed 0%, #4c1d95 100%)',
-              color: '#fff',
-              border: `1px solid ${mode === 'live' ? '#fca5a5' : '#a78bfa'}`,
-            }}
-            title={mode === 'live' ? t('game.toggleToRandom') : t('game.toggleToLive')}
-          >
-            {mode === 'live' ? t('game.modeLive') : t('game.modeSelf')}
-          </button>
-          <button
-            onClick={() => { playClick(); ensureBgMusic() }}
-            className="hidden md:inline-flex rounded-full px-4 py-1.5 text-xs font-bold"
-            style={{ background: 'linear-gradient(180deg, #16a34a 0%, #14532d 100%)', color: '#bbf7d0', border: '1px solid #4ade80' }}
-          >
-            {t('game.dailyBonus')}
-          </button>
-          {mode === 'live' ? (
-            <span
-              className="text-sm font-bold tracking-widest hidden sm:block rounded-full px-3 py-1"
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => { playClick(); toggleMode() }}
+              className="rounded-full px-3 py-1.5 text-xs font-bold tracking-widest"
               style={{
-                background: livePhase === 'betting'
-                  ? (liveTimer <= 10 ? 'rgba(220,38,38,0.25)' : 'rgba(22,163,74,0.25)')
-                  : 'rgba(234,88,12,0.25)',
-                color: livePhase === 'betting'
-                  ? (liveTimer <= 10 ? '#fca5a5' : '#4ade80')
-                  : '#fdba74',
-                border: `1px solid ${livePhase === 'betting' ? (liveTimer <= 10 ? '#fca5a5' : '#4ade80') : '#fb923c'}`,
+                background: mode === 'live'
+                  ? 'linear-gradient(180deg, #dc2626 0%, #7f1d1d 100%)'
+                  : 'linear-gradient(180deg, #7c3aed 0%, #4c1d95 100%)',
+                color: '#fff',
+                border: `1px solid ${mode === 'live' ? '#fca5a5' : '#a78bfa'}`,
               }}
+              title={mode === 'live' ? t('game.toggleToRandom') : t('game.toggleToLive')}
             >
-              {livePhase === 'betting' ? `⏱ ${liveTimer}s OPEN` : '🔒 LOCKED — ENTER RESULT'}
-            </span>
-          ) : (
-            <span
-              className="text-sm font-bold tracking-wide hidden sm:block"
-              style={{ color: diceResults.length > 0 && !isRolling && lastWin > 0 ? '#4ade80' : '#e9d5ff' }}
+              {mode === 'live' ? t('game.modeLive') : t('game.modeSelf')}
+            </button>
+            <button
+              onClick={() => { playClick(); ensureBgMusic() }}
+              className="hidden md:inline-flex rounded-full px-4 py-1.5 text-xs font-bold"
+              style={{ background: 'linear-gradient(180deg, #16a34a 0%, #14532d 100%)', color: '#bbf7d0', border: '1px solid #4ade80' }}
             >
-              {message}
-            </span>
-          )}
-          <button
-            onClick={() => { playClick(); ensureBgMusic() }}
-            className="hidden md:inline-flex rounded-full px-4 py-1.5 text-xs font-bold"
-            style={{ background: 'linear-gradient(180deg, #16a34a 0%, #14532d 100%)', color: '#bbf7d0', border: '1px solid #4ade80' }}
-          >
-            {t('game.timeBonus')}
-          </button>
+              {t('game.dailyBonus')}
+            </button>
+            {mode === 'live' ? (
+              <span
+                className="text-sm font-bold tracking-widest hidden sm:block rounded-full px-3 py-1"
+                style={{
+                  background: livePhase === 'betting'
+                    ? (liveTimer <= 10 ? 'rgba(220,38,38,0.25)' : 'rgba(22,163,74,0.25)')
+                    : 'rgba(234,88,12,0.25)',
+                  color: livePhase === 'betting'
+                    ? (liveTimer <= 10 ? '#fca5a5' : '#4ade80')
+                    : '#fdba74',
+                  border: `1px solid ${livePhase === 'betting' ? (liveTimer <= 10 ? '#fca5a5' : '#4ade80') : '#fb923c'}`,
+                }}
+              >
+                {livePhase === 'betting' ? t('live.statusBetting', { n: String(liveTimer) }) : t('live.statusWaitingResult')}
+              </span>
+            ) : (
+              <span
+                className="text-sm font-bold tracking-wide hidden sm:block"
+                style={{ color: diceResults.length > 0 && !isRolling && lastWin > 0 ? '#4ade80' : '#e9d5ff' }}
+              >
+                {message}
+              </span>
+            )}
+            <button
+              onClick={() => { playClick(); ensureBgMusic() }}
+              className="hidden md:inline-flex rounded-full px-4 py-1.5 text-xs font-bold"
+              style={{ background: 'linear-gradient(180deg, #16a34a 0%, #14532d 100%)', color: '#bbf7d0', border: '1px solid #4ade80' }}
+            >
+              {t('game.timeBonus')}
+            </button>
+          </div>
         </div>
 
         <div className="flex items-center gap-3">
-          <LanguageSwitch variant="pill" />
           <button
             onClick={() => { toggleSound() }}
             className="hidden sm:flex h-8 w-8 items-center justify-center rounded-full transition-opacity hover:opacity-80"
@@ -1176,10 +1236,10 @@ export default function FishPrawnCrabGame() {
           >
             {user.activeWallet === 'demo' ? 'DEMO' : 'REAL'}
           </button>
-          <span className="text-lg font-bold tracking-wider" style={{ color: '#fde68a' }}>
-            {balance.toLocaleString()} ₭
+          <span className="text-md font-bold tracking-wider" style={{ color: '#fde68a' }}>
+            {balance.toLocaleString()}₭
           </span>
-          {/* {user.activeWallet === 'demo' && (
+          {user.activeWallet === 'demo' && (
             <button
               onClick={() => {
                 soundEnabled && playCoin()
@@ -1191,17 +1251,18 @@ export default function FishPrawnCrabGame() {
                 resetDemoBalance()
                 setBalance(DEMO_RESET_AMOUNT)
               }}
-              className="flex items-center gap-1 rounded-full px-2.5 py-1 text-[10px] font-bold tracking-widest transition-opacity hover:opacity-90"
+              className="flex h-7 w-7 items-center justify-center rounded-full transition-opacity hover:opacity-90"
               style={{
                 background: 'linear-gradient(135deg, #16a34a, #15803d)',
                 color: '#fff',
                 border: '1px dashed #4ade80',
               }}
               title={`Reset demo balance to ${DEMO_RESET_AMOUNT.toLocaleString()} ₭`}
+              aria-label="Refresh demo balance"
             >
-              +1M
+              <RefreshCw size={12} />
             </button>
-          )} */}
+          )}
         </div>
       </header>
       <main className="flex h-[calc(100vh-52px)] overflow-hidden">
@@ -1267,7 +1328,7 @@ export default function FishPrawnCrabGame() {
                   if (!embed) {
                     return (
                       <div className="flex h-full w-full items-center justify-center text-xs" style={{ color: '#a78bfa' }}>
-                        Waiting for the host to set the stream…
+                        {t('live.waitingHostStream')}
                       </div>
                     )
                   }
@@ -1308,7 +1369,11 @@ export default function FishPrawnCrabGame() {
                     color: '#fff',
                   }}
                 >
-                  {livePhase === 'betting' ? `⏱ ${liveTimer}s BETTING` : livePhase === 'awaiting_result' ? '🔒 WAITING FOR RESULT' : '⏸ ROUND NOT STARTED'}
+                  {livePhase === 'betting'
+                    ? t('live.statusBetting', { n: String(liveTimer) })
+                    : livePhase === 'awaiting_result'
+                      ? t('live.statusWaitingResult')
+                      : t('live.statusNotStarted')}
                 </div>
               </div>
             </div>
@@ -1325,9 +1390,7 @@ export default function FishPrawnCrabGame() {
             {mode === 'live' && livePhase !== 'betting' ? (
               <div className="flex flex-col items-center gap-4 py-6">
                 <div className="text-sm font-semibold text-center" style={{ color: '#c4b5fd' }}>
-                  {livePhase === 'idle'
-                    ? '⏸ Waiting for the host to start the next round…'
-                    : '🔒 Betting closed — host is entering the result.'}
+                  {livePhase === 'idle' ? t('live.waitingHostStart') : t('live.bettingClosed')}
                 </div>
                 {livePhase === 'awaiting_result' && (
                   <>
@@ -1387,7 +1450,7 @@ export default function FishPrawnCrabGame() {
                 {BOARD_LAYOUT.map((symbol, idx) => {
                   const bet = getBetAmount(idx)
                   const pairBet = getPairBetAmount(idx)
-                  const isWinner = diceResults.includes(symbol) && !isRolling
+                  const isWinner = winnerHighlight && diceResults.includes(symbol) && !isRolling
                   const isPending = pendingCell === idx
                   const hasSingle = bet > 0
                   const hasPair = pairBet > 0
@@ -1512,14 +1575,14 @@ export default function FishPrawnCrabGame() {
                         >
                           <span className="inline-block h-2 w-2 rounded-full" style={{ background: won ? '#facc15' : color }} />
                           <span>{SYMBOL_VALUES[p.a]} + {SYMBOL_VALUES[p.b]}</span>
-                          <span style={{ color: won ? '#fde68a' : color }}>×{PAIR_MULTIPLIER}</span>
+                          <span style={{ color: won ? '#fde68a' : color }}>×{loaderData.payoutConfig.pair}</span>
                           <span>{p.amount.toLocaleString()}</span>
                         </div>
                       )
                     })}
                   </div>
                 )}
-                <div className="text-[10px] text-center" style={{ color: '#c4b5fd' }}>
+                <div className="text-[14px] text-center" style={{ color: '#c4b5fd' }}>
                   {t('game.tapAdjacent')}
                 </div>
               </div>
@@ -1528,7 +1591,7 @@ export default function FishPrawnCrabGame() {
               <div className="mx-auto mt-3 grid grid-cols-3 gap-2" style={{ maxWidth: 560 }}>
                 {RANGE_CONFIG.map(r => {
                   const bet = getRangeBetAmount(r.key)
-                  const isWinner = !isRolling && diceResults.length > 0 && diceSum >= r.min && diceSum <= r.max
+                  const isWinner = winnerHighlight && !isRolling && diceResults.length > 0 && diceSum >= r.min && diceSum <= r.max
                   return (
                     <button
                       key={r.key}
@@ -1547,7 +1610,10 @@ export default function FishPrawnCrabGame() {
                         {r.key === 'low' ? t('game.low') : r.key === 'middle' ? t('game.middle') : t('game.high')}{' '}
                         <span className="text-xs opacity-90">({r.range})</span>
                       </div>
-                      <div className="text-[10px] opacity-75">{t('game.pays', { x: r.multiplier })}</div>
+                      {/* UI shows profit-multiplier (total - 1) for ranges so
+                          users read "x1" / "x5" / "x1" instead of the raw 2/6/2.
+                          Pairs and symbols still use total multipliers. */}
+                      <div className="text-[10px] opacity-75">{t('game.pays', { x: rangeMultiplier(r.key, loaderData.payoutConfig) - 1 })}</div>
                       {bet > 0 && (
                         <div
                           className="absolute top-1.5 right-1.5 flex h-7 min-w-[36px] items-center justify-center rounded-full px-2 font-bold shadow-lg text-[10px] whitespace-nowrap"
@@ -1620,7 +1686,7 @@ export default function FishPrawnCrabGame() {
               className="rounded-xl px-5 py-2.5 text-sm font-bold tracking-widest transition-opacity disabled:opacity-40"
               style={{ background: 'linear-gradient(180deg, #f59e0b, #b45309)', color: '#1e0040', border: '1px solid #fcd34d' }}
             >
-              Undo
+              {t('game.undo')}
             </button>
           </div>
         </div>
@@ -1641,7 +1707,7 @@ export default function FishPrawnCrabGame() {
             }}
             aria-label="Roll dice"
           >
-            {isRolling ? '...' : 'ROLL'}
+            {isRolling ? '...' : t('game.roll')}
           </button>
         ) : livePhase === 'betting' && (
           <button
@@ -1666,10 +1732,10 @@ export default function FishPrawnCrabGame() {
         >
           <div className="flex flex-col gap-3 w-full">
             {[
-              { label: 'LAST BET', value: lastBetTotal.toLocaleString(), color: '#fde68a' },
-              { label: 'LAST WIN', value: lastWin.toLocaleString(), color: lastWin > 0 ? '#4ade80' : '#6d28d9' },
-              { label: 'CUR BET', value: totalBet.toLocaleString(), color: '#fde68a' },
-              { label: 'BALANCE', value: balance.toLocaleString(), color: '#fde68a' },
+              { label: t('stats.lastBet'), value: lastBetTotal.toLocaleString(), color: '#fde68a' },
+              { label: t('stats.lastWin'), value: lastWin.toLocaleString(), color: lastWin > 0 ? '#4ade80' : '#6d28d9' },
+              { label: t('stats.curBet'), value: totalBet.toLocaleString(), color: '#fde68a' },
+              { label: t('stats.balance'), value: balance.toLocaleString(), color: '#fde68a' },
             ].map((stat, i, arr) => (
               <div key={stat.label}>
                 <div className="text-center">
@@ -1716,7 +1782,7 @@ export default function FishPrawnCrabGame() {
                       }}
                       title="Custom amount"
                     >
-                      {isCustomChip ? formatAmount(selectedChip) : <><Pencil size={12} /> CUSTOM</>}
+                      {isCustomChip ? formatAmount(selectedChip) : <><Pencil size={12} /> {t('game.custom')}</>}
                     </button>
                   )
                 })()}
@@ -1727,7 +1793,7 @@ export default function FishPrawnCrabGame() {
                 className="flex items-center justify-center gap-2 bg-red-500 w-full rounded-xl p-3 text-xs font-bold tracking-widest transition-opacity disabled:opacity-40 text-white"
               >
                 <Undo size={14} />
-                UNDO
+                {t('game.undo')}
               </button>
             </div>
           )}
@@ -1748,7 +1814,7 @@ export default function FishPrawnCrabGame() {
                   transform: isRolling ? 'scale(0.95)' : 'scale(1)',
                 }}
               >
-                {isRolling ? '...' : 'ROLL'}
+                {isRolling ? '...' : t('game.roll')}
               </button>
             ) : livePhase === 'betting' ? (
               <button
@@ -1775,9 +1841,9 @@ export default function FishPrawnCrabGame() {
                   border: '4px solid #f59e0b',
                   boxShadow: '0 0 22px rgba(234,88,12,0.55)',
                 }}
-                title="Waiting for the host"
+                title={t('live.waitingHostShort')}
               >
-                <span>WAITING</span>
+                <span>{t('game.waiting')}</span>
               </div>
             )}
           </div>
@@ -1791,7 +1857,7 @@ export default function FishPrawnCrabGame() {
         const error = trimmed === '' ? null
           : !Number.isFinite(n) ? 'Enter a valid number.'
             : !Number.isInteger(n) ? 'Enter a whole number.'
-              : n < 1 ? 'Amount must be at least 1 ₭.'
+              : n < MIN_CHIP ? `Amount must be at least ${MIN_CHIP.toLocaleString()} ₭.`
                 : n > MAX_CHIP ? `Maximum ${MAX_CHIP.toLocaleString()} ₭.`
                   : null
         const canSubmit = !error && trimmed !== ''
@@ -1816,9 +1882,9 @@ export default function FishPrawnCrabGame() {
                 boxShadow: '0 10px 40px rgba(124,58,237,0.5)',
               }}
             >
-              <div className="mb-1 text-lg font-bold" style={{ color: '#fde68a' }}>Custom Chip Amount</div>
+              <div className="mb-1 text-lg font-bold" style={{ color: '#fde68a' }}>{t('chip.customTitle')}</div>
               <div className="mb-4 text-xs" style={{ color: '#c4b5fd' }}>
-                Enter any amount from 1 up to {MAX_CHIP.toLocaleString()} ₭.
+                {t('chip.customHint', { min: MIN_CHIP.toLocaleString(), max: MAX_CHIP.toLocaleString() })}
               </div>
               <input
                 type="number"
@@ -1829,15 +1895,15 @@ export default function FishPrawnCrabGame() {
                   if (e.key === 'Escape') setCustomModalOpen(false)
                 }}
                 autoFocus
-                min={1}
+                min={MIN_CHIP}
                 max={MAX_CHIP}
                 step={1}
-                placeholder={`1 – ${MAX_CHIP.toLocaleString()}`}
+                placeholder={t('chip.customPlaceholder', { min: MIN_CHIP.toLocaleString(), max: MAX_CHIP.toLocaleString() })}
                 className="w-full rounded-lg px-4 py-3 text-lg font-bold outline-none"
                 style={{ background: '#2d1b4e', color: '#fde68a', border: `1px solid ${error ? '#f87171' : '#7c3aed'}` }}
               />
               <div className="mt-2 min-h-[16px] text-xs font-semibold" style={{ color: error ? '#f87171' : '#a78bfa' }}>
-                {error ?? (trimmed ? `Preview: ${Number(trimmed).toLocaleString()} ₭` : '\u00a0')}
+                {error ?? (trimmed ? t('chip.customPreview', { amount: Number(trimmed).toLocaleString() }) : '\u00a0')}
               </div>
               <div className="mt-4 flex gap-3">
                 <button
@@ -1845,7 +1911,7 @@ export default function FishPrawnCrabGame() {
                   className="flex-1 rounded-xl py-2.5 text-sm font-bold"
                   style={{ background: '#4c1d95', color: '#c4b5fd', border: '1px solid #6d28d9' }}
                 >
-                  Cancel
+                  {t('common.cancel')}
                 </button>
                 <button
                   onClick={submit}
@@ -1853,7 +1919,7 @@ export default function FishPrawnCrabGame() {
                   className="flex-1 rounded-xl py-2.5 text-sm font-bold transition-opacity disabled:opacity-40"
                   style={{ background: 'linear-gradient(135deg, #16a34a, #15803d)', color: '#fff', border: '1px solid #4ade80' }}
                 >
-                  Set Chip
+                  {t('chip.setChip')}
                 </button>
               </div>
             </div>
@@ -1880,7 +1946,7 @@ export default function FishPrawnCrabGame() {
             >
               {/* Title */}
               <div className="text-center text-xs font-bold tracking-widest text-gray-500">
-                ROUND RESULT
+                {t('result.titleRandom')}
               </div>
 
               {/* Result */}
@@ -1888,7 +1954,23 @@ export default function FishPrawnCrabGame() {
                 className="mt-2 text-center text-2xl font-bold tracking-widest"
                 style={{ color: accent }}
               >
-                {isWin ? '🎉 YOU WIN!' : isEven ? 'BREAK EVEN' : '💔 YOU LOST'}
+                {isWin ? t('result.youWin') : isEven ? t('result.breakEven') : t('result.youLost')}
+              </div>
+
+              {/* Dice + sum */}
+              <div className="mt-3 flex items-center justify-center gap-2">
+                {resultModal.dice.map((s, i) => (
+                  <img
+                    key={i}
+                    src={`/symbols/${s}.jpg`}
+                    alt={s}
+                    className="h-12 w-12 rounded object-contain"
+                    style={{ border: '1px solid #c4b5fd', background: '#f5f5f5' }}
+                  />
+                ))}
+                <span className="ml-2 rounded-full px-3 py-1 text-xs font-bold tracking-widest" style={{ background: '#f3f4f6', color: '#1e0040' }}>
+                  {t('result.sum')} {resultModal.diceSum}
+                </span>
               </div>
 
               {/* +amount or -amount */}
@@ -1899,12 +1981,18 @@ export default function FishPrawnCrabGame() {
                 {amountText}
               </div>
 
+              <BetBreakdown
+                symbolBets={symbolToBreakdown(resultModal.symbolResults)}
+                rangeBets={rangeToBreakdown(resultModal.rangeResults, t)}
+                pairBets={pairToBreakdown(resultModal.pairResults)}
+              />
+
               <div className='w-full border-1 border-primary mt-4'></div>
 
               {/* Total balance */}
               <div className="flex items-center justify-between pt-2">
                 <span className="text-xs font-bold tracking-widest">
-                  TOTAL BALANCE
+                  {t('result.totalBalance')}
                 </span>
                 <span className="text-xl font-bold">
                   {resultModal.newBalance.toLocaleString()}
@@ -1917,7 +2005,7 @@ export default function FishPrawnCrabGame() {
                 className="mt-5 w-full rounded-xl py-3 text-sm font-bold tracking-widest transition-opacity hover:opacity-90 border"
                 autoFocus
               >
-                CONTINUE
+                {t('result.continue')}
               </button>
             </div>
           </div>
@@ -1944,13 +2032,13 @@ export default function FishPrawnCrabGame() {
               className="w-full max-w-sm rounded-md p-6 bg-white"
             >
               <div className="text-center text-xs font-bold tracking-widest text-gray-500">
-                LIVE ROUND RESULT
+                {t('result.titleLive')}
               </div>
               <div
                 className="mt-2 text-center text-2xl font-bold tracking-widest"
                 style={{ color: accent }}
               >
-                {isWin ? '🎉 YOU WIN!' : isEven ? 'BREAK EVEN' : '💔 YOU LOST'}
+                {isWin ? t('result.youWin') : isEven ? t('result.breakEven') : t('result.youLost')}
               </div>
               <div className="mt-3 flex items-center justify-center gap-2">
                 {m.dice.map((s, i) => (
@@ -1963,7 +2051,7 @@ export default function FishPrawnCrabGame() {
                   />
                 ))}
                 <span className="ml-2 rounded-full px-3 py-1 text-xs font-bold tracking-widest" style={{ background: '#f3f4f6', color: '#1e0040' }}>
-                  SUM {m.diceSum}
+                  {t('result.sum')} {m.diceSum}
                 </span>
               </div>
               <div
@@ -1972,46 +2060,19 @@ export default function FishPrawnCrabGame() {
               >
                 {amountText}
               </div>
-              <div className="mt-3 grid grid-cols-2 gap-2 text-center text-[11px] font-bold text-gray-600">
-                <div className="rounded-md px-2 py-2" style={{ background: '#f3f4f6' }}>
-                  <div className="tracking-widest">STAKE</div>
-                  <div className="mt-0.5 text-sm" style={{ color: '#1e0040' }}>{m.stake.toLocaleString()}</div>
-                </div>
-                <div className="rounded-md px-2 py-2" style={{ background: '#f3f4f6' }}>
-                  <div className="tracking-widest">PAYOUT</div>
-                  <div className="mt-0.5 text-sm" style={{ color: '#1e0040' }}>{m.payout.toLocaleString()}</div>
-                </div>
-              </div>
-              {m.bets.length > 0 && (
-                <div className="mt-3 rounded-md px-3 py-2" style={{ background: '#f3f4f6' }}>
-                  <div className="mb-1.5 text-[10px] font-bold tracking-widest text-gray-500">YOUR BETS THIS ROUND</div>
-                  <ul className="flex max-h-44 flex-col gap-1 overflow-y-auto">
-                    {m.bets.map((b, i) => {
-                      const isWin = b.result === 'WIN'
-                      const sign = isWin ? '+' : '-'
-                      const amount = isWin ? b.payout - b.amount : b.amount
-                      return (
-                        <li
-                          key={i}
-                          className="grid grid-cols-[1fr_auto_auto] items-center gap-2 rounded px-2 py-1 text-[11px]"
-                          style={{ background: '#fff' }}
-                        >
-                          <span className="truncate text-gray-700">{describeSettledBet(b)}</span>
-                          <span className="text-[10px] font-bold tracking-widest" style={{ color: isWin ? '#16a34a' : '#dc2626' }}>
-                            {b.result}
-                          </span>
-                          <span className="text-right font-bold" style={{ color: isWin ? '#16a34a' : '#dc2626' }}>
-                            {sign}{amount.toLocaleString()}
-                          </span>
-                        </li>
-                      )
-                    })}
-                  </ul>
-                </div>
-              )}
+              {m.bets.length > 0 && (() => {
+                const split = settledToBreakdown(m.bets, t)
+                return (
+                  <BetBreakdown
+                    symbolBets={split.symbolBets}
+                    rangeBets={split.rangeBets}
+                    pairBets={split.pairBets}
+                  />
+                )
+              })()}
               <div className='w-full border-1 border-primary mt-4'></div>
               <div className="flex items-center justify-between pt-2">
-                <span className="text-xs font-bold tracking-widest">TOTAL BALANCE</span>
+                <span className="text-xs font-bold tracking-widest">{t('result.totalBalance')}</span>
                 <span className="text-xl font-bold">{m.newBalance.toLocaleString()}</span>
               </div>
               <button
@@ -2019,7 +2080,7 @@ export default function FishPrawnCrabGame() {
                 className="mt-5 w-full rounded-xl py-3 text-sm font-bold tracking-widest transition-opacity hover:opacity-90 border"
                 autoFocus
               >
-                CONTINUE
+                {t('result.continue')}
               </button>
             </div>
           </div>
@@ -2080,10 +2141,22 @@ function DiceReveal({ dice }: { dice: (SymbolKey | null)[] }) {
   )
 }
 
-// Shared bet-description formatter used by both MyBetsList (awaiting result)
-// and the settlement modal (after settlement). Shows symbol+value for SYMBOL,
-// the two symbols for PAIR, and the range label+range for RANGE.
-function describeBetGeneric(b: { kind: string; symbol: string | null; range: string | null; pairA: string | null; pairB: string | null }): string {
+type Translate = ReturnType<typeof useT>
+
+// Translated range label, e.g. RANGE 'LOW' → 'ຕໍ່າ (3-8)' / 'LOW (3-8)'.
+function translatedRangeLabel(range: string, t: Translate): string {
+  const cfg = RANGE_LABELS[range]
+  if (!cfg) return range
+  const label = range === 'LOW' ? t('game.low') : range === 'MIDDLE' ? t('game.middle') : t('game.high')
+  return `${label} (${cfg.range})`
+}
+
+// Text-only formatter used in spots that can't render JSX (e.g. tooltips,
+// the awaiting-result MyBetsList). Pass `t` so range labels translate.
+function describeBetGeneric(
+  b: { kind: string; symbol: string | null; range: string | null; pairA: string | null; pairB: string | null },
+  t: Translate,
+): string {
   if (b.kind === 'SYMBOL' && b.symbol) {
     const k = b.symbol.toLowerCase() as SymbolKey
     return `${b.symbol} (${SYMBOL_VALUE_BY_KEY[k]})`
@@ -2094,26 +2167,36 @@ function describeBetGeneric(b: { kind: string; symbol: string | null; range: str
     return `${b.pairA} (${SYMBOL_VALUE_BY_KEY[a]}) + ${b.pairB} (${SYMBOL_VALUE_BY_KEY[c]})`
   }
   if (b.kind === 'RANGE' && b.range) {
-    const cfg = RANGE_LABELS[b.range]
-    return cfg ? `${cfg.label} (${cfg.range})` : b.range
+    return translatedRangeLabel(b.range, t)
   }
   return b.kind
 }
 
-function describeSettledBet(b: { kind: string; symbol: string | null; range: string | null; pairA: string | null; pairB: string | null; amount: number }): string {
-  return `${describeBetGeneric(b)} · ${b.amount.toLocaleString()}`
+// JSX label used inside the BetBreakdown rows. Single + Pair render as small
+// symbol icons (no text); Range renders as a translated text pill.
+function symbolIcon(symbol: SymbolKey | string) {
+  const key = symbol.toLowerCase()
+  return (
+    <img
+      src={`/symbols/${key}.jpg`}
+      alt={key}
+      className="h-6 w-6 rounded object-contain"
+      style={{ border: '1px solid #d4d4d8', background: '#fff' }}
+    />
+  )
 }
 
 function MyBetsList({ bets }: { bets: MyLiveBet[] }) {
+  const t = useT()
   const total = bets.reduce((s, b) => s + b.amount, 0)
-  const describe = describeBetGeneric
+  const describe = (b: MyLiveBet) => describeBetGeneric(b, t)
   return (
     <div
       className="w-full max-w-sm rounded-xl p-4"
       style={{ background: '#1e0040', border: '1px solid #4c1d95' }}
     >
       <div className="mb-2 text-[10px] font-bold tracking-widest" style={{ color: '#a78bfa' }}>
-        YOUR BETS THIS ROUND
+        {t('result.yourBetsThisRound')}
       </div>
       <ul className="flex flex-col gap-1">
         {bets.map(b => (
@@ -2133,9 +2216,154 @@ function MyBetsList({ bets }: { bets: MyLiveBet[] }) {
         className="mt-2 flex items-center justify-between border-t pt-2 text-xs font-bold"
         style={{ borderColor: '#4c1d95', color: '#fde68a' }}
       >
-        <span>TOTAL</span>
+        <span>{t('result.total')}</span>
         <span>{total.toLocaleString()} ₭</span>
       </div>
     </div>
   )
+}
+
+// Shared per-bet breakdown rendered inside the RANDOM and LIVE result modals.
+// Each section only renders when there are bets of that kind.
+type BreakdownBet = {
+  label: React.ReactNode  // either translated text (range) or a small icon (single/pair)
+  amount: number   // stake
+  payout: number   // 0 if lost; gross-payout including stake if won
+  won: boolean
+}
+type BetBreakdownProps = {
+  symbolBets: BreakdownBet[]
+  rangeBets: BreakdownBet[]
+  pairBets: BreakdownBet[]
+}
+
+function BetBreakdown({ symbolBets, rangeBets, pairBets }: BetBreakdownProps) {
+  const t = useT()
+  const sections: { title: string; bets: BreakdownBet[] }[] = [
+    { title: t('result.singleBets'), bets: symbolBets },
+    { title: t('result.rangeBets'), bets: rangeBets },
+    { title: t('result.pairBets'), bets: pairBets },
+  ].filter(s => s.bets.length > 0)
+
+  const allBets = [...symbolBets, ...rangeBets, ...pairBets]
+  const totalStake = allBets.reduce((s, b) => s + b.amount, 0)
+  // Profit on winning bets only — matches the +/- amount shown per row.
+  const totalWon = allBets.filter(b => b.won).reduce((s, b) => s + (b.payout - b.amount), 0)
+  const totalLost = allBets.filter(b => !b.won).reduce((s, b) => s + b.amount, 0)
+
+  return (
+    <div className="mt-3 flex flex-col gap-3">
+      {sections.map(s => (
+        <div key={s.title} className="rounded-md px-3 py-2" style={{ background: '#f3f4f6' }}>
+          <div className="mb-1.5 text-[10px] font-bold tracking-widest text-gray-500">{s.title}</div>
+          <ul className="flex flex-col gap-1">
+            {s.bets.map((b, i) => {
+              const sign = b.won ? '+' : '-'
+              const amount = b.won ? b.payout - b.amount : b.amount
+              return (
+                <li
+                  key={i}
+                  className="grid grid-cols-[1fr_auto_auto] items-center gap-2 rounded px-2 py-1 text-[11px]"
+                  style={{ background: '#fff' }}
+                >
+                  <span className="flex min-w-0 items-center gap-1.5 text-gray-700">
+                    <span className="inline-flex items-center">{b.label}</span>
+                    <span className="truncate">· {b.amount.toLocaleString()}</span>
+                  </span>
+                  <span className="text-[10px] font-bold tracking-widest" style={{ color: b.won ? '#16a34a' : '#dc2626' }}>
+                    {b.won ? t('result.win') : t('result.loss')}
+                  </span>
+                  <span className="text-right font-bold" style={{ color: b.won ? '#16a34a' : '#dc2626' }}>
+                    {sign}{amount.toLocaleString()}
+                  </span>
+                </li>
+              )
+            })}
+          </ul>
+        </div>
+      ))}
+
+      {/* Totals card — always rendered so the customer sees the round shape
+          even when only one section has bets. */}
+      <div className="rounded-md px-3 py-2 text-[11px]" style={{ background: '#f3f4f6' }}>
+        <div className="flex items-center justify-between">
+          <span className="font-bold tracking-widest text-gray-600">{t('result.totalStake')}</span>
+          <span className="font-bold" style={{ color: '#1e0040' }}>{totalStake.toLocaleString()}</span>
+        </div>
+        <div className="mt-1 flex items-center justify-between">
+          <span className="font-bold tracking-widest text-gray-600">{t('result.totalWon')}</span>
+          <span className="font-bold" style={{ color: '#16a34a' }}>+{totalWon.toLocaleString()}</span>
+        </div>
+        <div className="mt-1 flex items-center justify-between">
+          <span className="font-bold tracking-widest text-gray-600">{t('result.totalLost')}</span>
+          <span className="font-bold" style={{ color: '#dc2626' }}>-{totalLost.toLocaleString()}</span>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// Renders the small symbol-pair label: "[A] + [B]" using two icons.
+function pairIcons(a: SymbolKey | string, b: SymbolKey | string) {
+  return (
+    <span className="inline-flex items-center gap-1">
+      {symbolIcon(a)}
+      <span className="px-0.5 text-gray-500">+</span>
+      {symbolIcon(b)}
+    </span>
+  )
+}
+
+// Helpers that convert each result-list shape into the BreakdownBet[] form
+// the BetBreakdown component expects. Single + Pair render as small symbol
+// icons; Range renders as a translated text pill.
+function symbolToBreakdown(
+  bets: { symbol: SymbolKey; amount: number; payout: number; won: boolean }[],
+): BreakdownBet[] {
+  return bets.map(b => ({
+    label: symbolIcon(b.symbol),
+    amount: b.amount, payout: b.payout, won: b.won,
+  }))
+}
+function rangeToBreakdown(
+  bets: { range: RangeKey; amount: number; payout: number; won: boolean }[],
+  t: Translate,
+): BreakdownBet[] {
+  return bets.map(b => ({
+    label: translatedRangeLabel(b.range.toUpperCase(), t),
+    amount: b.amount, payout: b.payout, won: b.won,
+  }))
+}
+function pairToBreakdown(
+  bets: { a: SymbolKey; b: SymbolKey; amount: number; payout: number; won: boolean }[],
+): BreakdownBet[] {
+  return bets.map(b => ({
+    label: pairIcons(b.a, b.b),
+    amount: b.amount, payout: b.payout, won: b.won,
+  }))
+}
+
+// Settlement-payload shape (LIVE modal) → BreakdownBet[] sections.
+function settledToBreakdown(
+  bets: { kind: 'SYMBOL' | 'RANGE' | 'PAIR'; amount: number; symbol: string | null; range: string | null; pairA: string | null; pairB: string | null; payout: number; result: 'WIN' | 'LOSS' }[],
+  t: Translate,
+): { symbolBets: BreakdownBet[]; rangeBets: BreakdownBet[]; pairBets: BreakdownBet[] } {
+  const out = { symbolBets: [] as BreakdownBet[], rangeBets: [] as BreakdownBet[], pairBets: [] as BreakdownBet[] }
+  for (const b of bets) {
+    let label: React.ReactNode
+    if (b.kind === 'SYMBOL' && b.symbol) label = symbolIcon(b.symbol)
+    else if (b.kind === 'PAIR' && b.pairA && b.pairB) label = pairIcons(b.pairA, b.pairB)
+    else if (b.kind === 'RANGE' && b.range) label = translatedRangeLabel(b.range, t)
+    else label = b.kind
+    const entry: BreakdownBet = {
+      label,
+      amount: b.amount,
+      payout: b.payout,
+      won: b.result === 'WIN',
+    }
+    if (b.kind === 'SYMBOL') out.symbolBets.push(entry)
+    else if (b.kind === 'RANGE') out.rangeBets.push(entry)
+    else if (b.kind === 'PAIR') out.pairBets.push(entry)
+  }
+  return out
 }

@@ -1,6 +1,6 @@
 import { useFetcher, useLocation } from 'react-router'
 import { Globe } from 'lucide-react'
-import { LOCALES, LOCALE_LABEL, type Locale } from '~/lib/i18n'
+import { LOCALES, LOCALE_FLAG, LOCALE_LABEL, type Locale } from '~/lib/i18n'
 import { useLocale } from '~/lib/use-t'
 
 interface Props {
@@ -35,6 +35,7 @@ export function LanguageSwitch({ variant = 'inline' }: Props) {
         style={{ background: '#4c1d95', color: '#fde68a', border: '1px solid #7c3aed' }}
       >
         <Globe size={11} />
+        <span aria-hidden>{LOCALE_FLAG[next]}</span>
         {LOCALE_LABEL[next]}
       </button>
     )
@@ -49,14 +50,15 @@ export function LanguageSwitch({ variant = 'inline' }: Props) {
             key={l}
             type="button"
             onClick={() => pick(l)}
-            className="flex-1 rounded-lg px-4 py-2 text-sm font-bold tracking-widest transition-opacity hover:opacity-90"
+            className="flex flex-1 items-center justify-center gap-1.5 rounded-lg px-4 py-2 text-sm font-bold tracking-widest transition-opacity hover:opacity-90"
             style={{
               background: active ? '#7c3aed' : '#2d1b4e',
               color: active ? '#fff' : '#c4b5fd',
               border: `1.5px solid ${active ? '#fde68a' : '#4c1d95'}`,
             }}
           >
-            {LOCALE_LABEL[l]}
+            <span aria-hidden className="text-base leading-none">{LOCALE_FLAG[l]}</span>
+            <span>{LOCALE_LABEL[l]}</span>
           </button>
         )
       })}

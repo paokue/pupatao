@@ -603,20 +603,20 @@ export default function WalletPage() {
       const isCredit = payload.type === 'DEPOSIT' || payload.type === 'TRANSFER_IN'
       const sign = isCredit ? '+' : '-'
       const verbApproved = payload.type === 'DEPOSIT'
-        ? 'Deposit approved'
+        ? t('wallet.toast.depositApproved')
         : payload.type === 'WITHDRAW'
-          ? 'Withdraw approved'
-          : 'Transfer received'
+          ? t('wallet.toast.withdrawApproved')
+          : t('wallet.toast.transferReceived')
       const verbRejected = payload.type === 'DEPOSIT'
-        ? 'Deposit rejected'
-        : 'Withdraw rejected'
+        ? t('wallet.toast.depositRejected')
+        : t('wallet.toast.withdrawRejected')
       if (payload.status === 'COMPLETED') {
         toast.success(verbApproved, {
           description: `${sign}${payload.amount.toLocaleString()} ₭`,
         })
       } else {
         toast.error(verbRejected, {
-          description: payload.note ?? `${payload.amount.toLocaleString()} ₭ — request not approved`,
+          description: payload.note ?? t('wallet.toast.notApproved', { amount: payload.amount.toLocaleString() }),
         })
       }
       revalidator.revalidate()

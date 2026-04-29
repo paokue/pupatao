@@ -6,6 +6,7 @@ import type { Route } from './+types/admin.live'
 import { requireAdmin } from '~/lib/admin-auth.server'
 import { prisma } from '~/lib/prisma.server'
 import { notifyAdmin, notifyPresenceLive, notifyUser } from '~/lib/pusher.server'
+import { getPayoutConfig, type PayoutConfig } from '~/lib/payouts.server'
 import {
   ADMIN_CHANNEL,
   PRESENCE_LIVE,
@@ -18,32 +19,38 @@ import { usePresenceMembers, usePusherEvent } from '~/hooks/use-pusher'
 const SYMBOL_VALUE: Record<DiceSymbol, number> = {
   PRAWN: 1, CRAB: 2, FISH: 3, ROOSTER: 4, FROG: 5, GOURD: 6,
 }
-const RANGE_BOUNDS: Record<'LOW' | 'MIDDLE' | 'HIGH', { min: number; max: number; multiplier: number }> = {
-  LOW: { min: 3, max: 8, multiplier: 2 },
-  MIDDLE: { min: 9, max: 10, multiplier: 4 },
-  HIGH: { min: 11, max: 18, multiplier: 2 },
+const RANGE_BOUNDS: Record<'LOW' | 'MIDDLE' | 'HIGH', { min: number; max: number }> = {
+  LOW: { min: 3, max: 8 },
+  MIDDLE: { min: 9, max: 10 },
+  HIGH: { min: 11, max: 18 },
 }
-const PAIR_MULTIPLIER = 6
 
 // Mirrors the per-bet payout math in api.play-round.tsx so server-side resolve
 // produces the same numbers as a client-rolled RANDOM round would.
+// Multipliers come from getPayoutConfig() so a single env change tunes both.
 function computeBetPayout(
   b: { kind: string; amount: number; symbol: string | null; range: string | null; pairA: string | null; pairB: string | null },
   dice: DiceSymbol[],
   diceSum: number,
+  cfg: PayoutConfig,
 ): number {
   if (b.kind === 'SYMBOL' && b.symbol) {
     const matches = dice.filter(d => d === b.symbol).length
-    return matches > 0 ? b.amount * (matches + 1) : 0
+    if (matches === 1) return b.amount * cfg.symbol1
+    if (matches === 2) return b.amount * cfg.symbol2
+    if (matches === 3) return b.amount * cfg.symbol3
+    return 0
   }
   if (b.kind === 'RANGE' && b.range) {
-    const cfg = RANGE_BOUNDS[b.range as 'LOW' | 'MIDDLE' | 'HIGH']
-    if (!cfg) return 0
-    return diceSum >= cfg.min && diceSum <= cfg.max ? b.amount * cfg.multiplier : 0
+    const bounds = RANGE_BOUNDS[b.range as 'LOW' | 'MIDDLE' | 'HIGH']
+    if (!bounds) return 0
+    if (diceSum < bounds.min || diceSum > bounds.max) return 0
+    const mul = b.range === 'LOW' ? cfg.rangeLow : b.range === 'MIDDLE' ? cfg.rangeMiddle : cfg.rangeHigh
+    return b.amount * mul
   }
   if (b.kind === 'PAIR' && b.pairA && b.pairB) {
     return dice.includes(b.pairA as DiceSymbol) && dice.includes(b.pairB as DiceSymbol)
-      ? b.amount * PAIR_MULTIPLIER
+      ? b.amount * cfg.pair
       : 0
   }
   return 0
@@ -317,9 +324,10 @@ export async function action({ request }: Route.ActionArgs) {
         select: { id: true, userId: true, walletId: true, kind: true, amount: true, symbol: true, range: true, pairA: true, pairB: true, user: { select: { tel: true, firstName: true, lastName: true } } },
       })
 
+      const cfg = getPayoutConfig()
       type Resolved = { id: string; payout: number; result: 'WIN' | 'LOSS' }
       const betUpdates: Resolved[] = bets.map(b => {
-        const payout = computeBetPayout(b, dice, diceSum)
+        const payout = computeBetPayout(b, dice, diceSum, cfg)
         return { id: b.id, payout, result: payout > 0 ? 'WIN' : 'LOSS' }
       })
 

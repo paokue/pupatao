@@ -3,18 +3,18 @@ import type { DiceSymbol, RangeKey, BetResult } from '@prisma/client'
 import { prisma } from '~/lib/prisma.server'
 import { notifyAdmin, notifyUser } from '~/lib/pusher.server'
 import type { BetPlacedPayload } from '~/lib/pusher-channels'
+import { getPayoutConfig, type PayoutConfig } from '~/lib/payouts.server'
 
 const SYMBOL_VALUES: Record<DiceSymbol, number> = {
   PRAWN: 1, CRAB: 2, FISH: 3, ROOSTER: 4, FROG: 5, GOURD: 6,
 }
 const VALID_SYMBOLS: ReadonlyArray<DiceSymbol> = ['PRAWN', 'CRAB', 'FISH', 'ROOSTER', 'FROG', 'GOURD']
-const RANGE_BOUNDS: Record<RangeKey, { min: number; max: number; multiplier: number }> = {
-  LOW: { min: 3, max: 8, multiplier: 2 },
-  MIDDLE: { min: 9, max: 10, multiplier: 4 },
-  HIGH: { min: 11, max: 18, multiplier: 2 },
+const RANGE_BOUNDS: Record<RangeKey, { min: number; max: number }> = {
+  LOW: { min: 3, max: 8 },
+  MIDDLE: { min: 9, max: 10 },
+  HIGH: { min: 11, max: 18 },
 }
 const VALID_RANGES: ReadonlyArray<RangeKey> = ['LOW', 'MIDDLE', 'HIGH']
-const PAIR_MULTIPLIER = 6
 const MAX_BET_PER_ROUND = 10_000_000  // sanity cap, prevents abuse
 
 type Mode = 'RANDOM' | 'LIVE'
@@ -75,17 +75,23 @@ function parsePayload(raw: unknown): PlayRoundPayload | { error: string } {
 }
 
 // Computes win for a single bet given the rolled dice. Returns total payout
-// (includes stake on a win), 0 on a loss.
-function payoutForSymbol(b: SymbolBetIn, dice: DiceSymbol[]): number {
+// (includes stake on a win), 0 on a loss. Multipliers come from getPayoutConfig()
+// so they can be tuned via env without a code change.
+function payoutForSymbol(b: SymbolBetIn, dice: DiceSymbol[], cfg: PayoutConfig): number {
   const matches = dice.filter(d => d === b.symbol).length
-  return matches > 0 ? b.amount * (matches + 1) : 0
+  if (matches === 1) return b.amount * cfg.symbol1
+  if (matches === 2) return b.amount * cfg.symbol2
+  if (matches === 3) return b.amount * cfg.symbol3
+  return 0
 }
-function payoutForRange(b: RangeBetIn, sum: number): number {
-  const cfg = RANGE_BOUNDS[b.range]
-  return sum >= cfg.min && sum <= cfg.max ? b.amount * cfg.multiplier : 0
+function payoutForRange(b: RangeBetIn, sum: number, cfg: PayoutConfig): number {
+  const bounds = RANGE_BOUNDS[b.range]
+  if (sum < bounds.min || sum > bounds.max) return 0
+  const mul = b.range === 'LOW' ? cfg.rangeLow : b.range === 'MIDDLE' ? cfg.rangeMiddle : cfg.rangeHigh
+  return b.amount * mul
 }
-function payoutForPair(b: PairBetIn, dice: DiceSymbol[]): number {
-  return dice.includes(b.symbolA) && dice.includes(b.symbolB) ? b.amount * PAIR_MULTIPLIER : 0
+function payoutForPair(b: PairBetIn, dice: DiceSymbol[], cfg: PayoutConfig): number {
+  return dice.includes(b.symbolA) && dice.includes(b.symbolB) ? b.amount * cfg.pair : 0
 }
 
 export async function action({ request }: Route.ActionArgs) {
@@ -170,10 +176,11 @@ async function handleRandomRound(args: {
   pairBets: PairBetIn[]
 }) {
   const { user, wallet, totalStake, dice, symbolBets, rangeBets, pairBets } = args
+  const cfg = getPayoutConfig()
   const diceSum = SYMBOL_VALUES[dice[0]] + SYMBOL_VALUES[dice[1]] + SYMBOL_VALUES[dice[2]]
-  const symbolPayouts = symbolBets.map(b => payoutForSymbol(b, dice))
-  const rangePayouts = rangeBets.map(b => payoutForRange(b, diceSum))
-  const pairPayouts = pairBets.map(b => payoutForPair(b, dice))
+  const symbolPayouts = symbolBets.map(b => payoutForSymbol(b, dice, cfg))
+  const rangePayouts = rangeBets.map(b => payoutForRange(b, diceSum, cfg))
+  const pairPayouts = pairBets.map(b => payoutForPair(b, dice, cfg))
   const totalPayout =
     symbolPayouts.reduce((a, b) => a + b, 0) +
     rangePayouts.reduce((a, b) => a + b, 0) +
