@@ -119,7 +119,7 @@ function StatCard({
       className="block rounded-xl p-4 transition-opacity hover:opacity-90"
       style={{ background: 'linear-gradient(135deg, #1e1b4b, #0f172a)', border: `1px solid ${accent ?? '#4338ca'}` }}
     >
-      <div className="mb-2 flex items-center gap-2 text-[10px] font-bold tracking-widest" style={{ color: '#a5b4fc' }}>
+      <div className="mb-2 flex items-center gap-2 text-[10px] font-bold " style={{ color: '#a5b4fc' }}>
         <Icon size={12} />
         {label.toUpperCase()}
       </div>

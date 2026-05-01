@@ -160,7 +160,7 @@ export function WithdrawModal({ open, onClose, amount, existingBankQrUrl, onSucc
             <X size={18} />
           </button>
 
-          <div className="mb-1 text-center text-xs font-bold tracking-widest" style={{ color: '#a78bfa' }}>
+          <div className="mb-1 text-center text-xs font-bold " style={{ color: '#a78bfa' }}>
             {step === 'qr' ? t('withdraw.step1') : currentQr && existingBankQrUrl ? t('withdraw.confirmTitle') : t('withdraw.step2')}
           </div>
           <h2 className="mb-4 text-center text-2xl font-bold" style={{ color: '#fde68a' }}>
@@ -209,7 +209,7 @@ export function WithdrawModal({ open, onClose, amount, existingBankQrUrl, onSucc
                   type="button"
                   onClick={() => fileInputRef.current?.click()}
                   disabled={uploading}
-                  className="flex items-center gap-2 rounded-lg px-4 py-2 text-xs font-bold tracking-widest transition-opacity hover:opacity-90 disabled:opacity-50"
+                  className="flex items-center gap-2 rounded-lg px-4 py-2 text-xs font-bold  transition-opacity hover:opacity-90 disabled:opacity-50"
                   style={{ background: '#4c1d95', color: '#fde68a', border: '1.5px solid #7c3aed' }}
                 >
                   <Upload size={14} />
@@ -252,7 +252,7 @@ export function WithdrawModal({ open, onClose, amount, existingBankQrUrl, onSucc
                   type="button"
                   onClick={() => setStep('qr')}
                   disabled={submitting}
-                  className="inline-flex items-center gap-1 rounded-md px-3 py-1.5 text-[10px] font-bold tracking-widest transition-opacity hover:opacity-90 disabled:opacity-40"
+                  className="inline-flex items-center gap-1 rounded-md px-3 py-1.5 text-[10px] font-bold  transition-opacity hover:opacity-90 disabled:opacity-40"
                   style={{ background: '#4c1d95', color: '#e9d5ff', border: '1px solid #7c3aed' }}
                 >
                   <Pencil size={10} />
@@ -276,7 +276,7 @@ export function WithdrawModal({ open, onClose, amount, existingBankQrUrl, onSucc
                 <button
                   type="submit"
                   disabled={submitting}
-                  className="flex w-full items-center justify-center gap-2 rounded-xl py-3 text-sm font-bold tracking-widest transition-opacity disabled:opacity-40"
+                  className="flex w-full items-center justify-center gap-2 rounded-xl py-3 text-sm font-bold  transition-opacity disabled:opacity-40"
                   style={{
                     background: 'linear-gradient(135deg, #b45309, #78350f)',
                     color: '#fff',
@@ -296,7 +296,7 @@ export function WithdrawModal({ open, onClose, amount, existingBankQrUrl, onSucc
             <button
               type="button"
               onClick={() => setStep('confirm')}
-              className="mt-2 flex w-full items-center justify-center gap-1 rounded-xl py-2.5 text-xs font-bold tracking-widest"
+              className="mt-2 flex w-full items-center justify-center gap-1 rounded-xl py-2.5 text-xs font-bold "
               style={{ background: '#4c1d95', color: '#fde68a', border: '1.5px solid #7c3aed' }}
             >
               {t('withdraw.keepCurrentQr')}
@@ -307,7 +307,7 @@ export function WithdrawModal({ open, onClose, amount, existingBankQrUrl, onSucc
             <button
               type="button"
               onClick={() => setStep('qr')}
-              className="mt-2 flex w-full items-center justify-center gap-1 rounded-xl py-2.5 text-xs font-bold tracking-widest"
+              className="mt-2 flex w-full items-center justify-center gap-1 rounded-xl py-2.5 text-xs font-bold "
               style={{ background: 'transparent', color: '#c4b5fd', border: '1px solid #4c1d95' }}
             >
               <ArrowLeft size={14} />

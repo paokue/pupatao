@@ -17,7 +17,7 @@ import {
 import { usePresenceMembers, usePusherEvent } from '~/hooks/use-pusher'
 
 const SYMBOL_VALUE: Record<DiceSymbol, number> = {
-  PRAWN: 1, CRAB: 2, FISH: 3, ROOSTER: 4, FROG: 5, GOURD: 6,
+  PRAWN: 1, FISH: 2, CRAB: 3, ROOSTER: 4, FROG: 5, GOURD: 6,
 }
 const RANGE_BOUNDS: Record<'LOW' | 'MIDDLE' | 'HIGH', { min: number; max: number }> = {
   LOW: { min: 3, max: 8 },
@@ -84,11 +84,11 @@ export async function loader({ request }: Route.LoaderArgs) {
   // Bets already placed in the current round — seeds the realtime feed.
   const currentBets = current
     ? await prisma.bet.findMany({
-        where: { roundId: current.id },
-        orderBy: { createdAt: 'desc' },
-        take: 100,
-        include: { user: { select: { tel: true, firstName: true, lastName: true } } },
-      })
+      where: { roundId: current.id },
+      orderBy: { createdAt: 'desc' },
+      take: 100,
+      include: { user: { select: { tel: true, firstName: true, lastName: true } } },
+    })
     : []
 
   // Round history — most recent finished/cancelled rounds (and any extra
@@ -321,7 +321,7 @@ export async function action({ request }: Route.ActionArgs) {
       // guard above.
       const bets = await prisma.bet.findMany({
         where: { roundId },
-        select: { id: true, userId: true, walletId: true, kind: true, amount: true, symbol: true, range: true, pairA: true, pairB: true, user: { select: { tel: true, firstName: true, lastName: true } } },
+        select: { id: true, userId: true, walletId: true, kind: true, amount: true, symbol: true, range: true, pairA: true, pairB: true, user: { select: { tel: true, firstName: true, lastName: true } }, wallet: { select: { type: true } } },
       })
 
       const cfg = getPayoutConfig()
@@ -331,15 +331,20 @@ export async function action({ request }: Route.ActionArgs) {
         return { id: b.id, payout, result: payout > 0 ? 'WIN' : 'LOSS' }
       })
 
-      // Per-player aggregates — used both for the wallet credit (winning
-      // wallets only) and the admin summary panel (everyone who bet).
+      // Per-player aggregates — used both for the wallet credits and the
+      // admin summary panel. Grouped by (userId, walletId) so a player betting
+      // from multiple wallets in the same round is settled correctly.
+      // `winningStake` only counts the stake portion of winning bets, which
+      // is what PROMO refunds to the source wallet (profit goes to REAL).
       type Group = {
         userId: string
         walletId: string
+        walletType: 'DEMO' | 'REAL' | 'PROMO'
         userTel: string
         userName: string | null
-        stake: number   // sum of all stakes this user placed
-        payout: number  // sum of winning payouts (0 if all lost)
+        stake: number          // sum of all stakes this user placed in this wallet
+        winningStake: number   // sum of stakes of winning bets
+        payout: number         // sum of gross payouts of winning bets (stake + profit)
       }
       const playerGroups = new Map<string, Group>()
       bets.forEach((b, i) => {
@@ -350,15 +355,20 @@ export async function action({ request }: Route.ActionArgs) {
           grp = {
             userId: b.userId,
             walletId: b.walletId,
+            walletType: b.wallet.type as 'DEMO' | 'REAL' | 'PROMO',
             userTel: b.user.tel,
             userName: [b.user.firstName, b.user.lastName].filter(Boolean).join(' ') || null,
             stake: 0,
+            winningStake: 0,
             payout: 0,
           }
           playerGroups.set(key, grp)
         }
         grp.stake += b.amount
-        if (u.payout > 0) grp.payout += u.payout
+        if (u.payout > 0) {
+          grp.winningStake += b.amount
+          grp.payout += u.payout
+        }
       })
 
       const resolvedAt = new Date()
@@ -379,20 +389,64 @@ export async function action({ request }: Route.ActionArgs) {
           if (!w) continue
           balances[grp.userId] = w.balance  // default to current balance (no win)
           if (grp.payout <= 0) continue
-          const newBalance = w.balance + grp.payout
-          await db.wallet.update({
-            where: { id: grp.walletId },
-            data: { balance: newBalance, version: { increment: 1 } },
-          })
-          await db.transaction.create({
-            data: {
-              userId: grp.userId, walletId: grp.walletId, type: 'WIN',
-              amount: grp.payout, balanceBefore: w.balance, balanceAfter: newBalance,
-              status: 'COMPLETED', roundId, idempotencyKey: crypto.randomUUID(),
-              note: `Live round payout (#${roundId.slice(-6)})`,
-            },
-          })
-          balances[grp.userId] = newBalance
+
+          if (grp.walletType === 'PROMO') {
+            // PROMO rule: refund winning stakes to PROMO; credit profit to REAL.
+            const profit = grp.payout - grp.winningStake
+            const newPromoBalance = w.balance + grp.winningStake
+            if (grp.winningStake > 0) {
+              await db.wallet.update({
+                where: { id: grp.walletId },
+                data: { balance: newPromoBalance, version: { increment: 1 } },
+              })
+              await db.transaction.create({
+                data: {
+                  userId: grp.userId, walletId: grp.walletId, type: 'WIN',
+                  amount: grp.winningStake, balanceBefore: w.balance, balanceAfter: newPromoBalance,
+                  status: 'COMPLETED', roundId, idempotencyKey: crypto.randomUUID(),
+                  note: `Live round — PROMO stake refund (#${roundId.slice(-6)})`,
+                },
+              })
+            }
+            if (profit > 0) {
+              const realWallet = await db.wallet.findUnique({
+                where: { userId_type: { userId: grp.userId, type: 'REAL' } },
+              })
+              if (realWallet) {
+                const newRealBalance = realWallet.balance + profit
+                await db.wallet.update({
+                  where: { id: realWallet.id },
+                  data: { balance: newRealBalance, version: { increment: 1 } },
+                })
+                await db.transaction.create({
+                  data: {
+                    userId: grp.userId, walletId: realWallet.id, type: 'WIN',
+                    amount: profit, balanceBefore: realWallet.balance, balanceAfter: newRealBalance,
+                    status: 'COMPLETED', roundId, idempotencyKey: crypto.randomUUID(),
+                    note: `Live round — PROMO profit credited to REAL (#${roundId.slice(-6)})`,
+                  },
+                })
+              }
+            }
+            // For settlement summary purposes, "newBalance" reports the source
+            // (PROMO) wallet's resulting balance, not REAL — matches DEMO/REAL.
+            balances[grp.userId] = newPromoBalance
+          } else {
+            const newBalance = w.balance + grp.payout
+            await db.wallet.update({
+              where: { id: grp.walletId },
+              data: { balance: newBalance, version: { increment: 1 } },
+            })
+            await db.transaction.create({
+              data: {
+                userId: grp.userId, walletId: grp.walletId, type: 'WIN',
+                amount: grp.payout, balanceBefore: w.balance, balanceAfter: newBalance,
+                status: 'COMPLETED', roundId, idempotencyKey: crypto.randomUUID(),
+                note: `Live round payout (#${roundId.slice(-6)})`,
+              },
+            })
+            balances[grp.userId] = newBalance
+          }
         }
         await db.auditLog.create({
           data: {
@@ -637,7 +691,7 @@ export default function AdminLive() {
         <h1 className="text-xl font-bold" style={{ color: '#fde68a' }}>Live play</h1>
         {current && (
           <span
-            className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold tracking-widest"
+            className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold "
             style={{ background: 'rgba(220,38,38,0.2)', color: '#f87171', border: '1px solid #fca5a5' }}
           >
             <Radio size={10} className="animate-pulse" /> ROUND IN FLIGHT
@@ -674,7 +728,7 @@ export default function AdminLive() {
 
       {/* ─── Round history ───────────────────────────────────────────── */}
       <section>
-        <h2 className="mb-2 text-sm font-bold tracking-widest" style={{ color: '#a5b4fc' }}>ROUND HISTORY</h2>
+        <h2 className="mb-2 text-sm font-bold " style={{ color: '#a5b4fc' }}>ROUND HISTORY</h2>
         {history.length === 0 ? (
           <div
             className="rounded-xl p-6 text-center text-xs"
@@ -698,13 +752,13 @@ function SettledSummaryPanel({ summary, onClose }: { summary: ResolveSummary; on
   return (
     <div className="rounded-xl p-4" style={{ background: '#0f172a', border: '1px solid #4ade80' }}>
       <div className="mb-3 flex items-center justify-between">
-        <span className="inline-flex items-center gap-2 text-[10px] font-bold tracking-widest" style={{ color: '#4ade80' }}>
+        <span className="inline-flex items-center gap-2 text-[10px] font-bold " style={{ color: '#4ade80' }}>
           <Check size={12} /> ROUND SETTLED · #{summary.roundId.slice(-6)}
         </span>
         <button
           type="button"
           onClick={onClose}
-          className="rounded-md px-3 py-1 text-[10px] font-bold tracking-widest"
+          className="rounded-md px-3 py-1 text-[10px] font-bold "
           style={{ background: '#1e1b4b', color: '#a5b4fc', border: '1px solid #4338ca' }}
         >
           CLOSE
@@ -721,7 +775,7 @@ function SettledSummaryPanel({ summary, onClose }: { summary: ResolveSummary; on
             style={{ border: '1px solid #312e81', background: '#1e1b4b' }}
           />
         ))}
-        <span className="ml-2 rounded-md px-3 py-1 text-[11px] font-bold tracking-widest" style={{ background: '#1e1b4b', color: '#fde68a', border: '1px solid #4338ca' }}>
+        <span className="ml-2 rounded-md px-3 py-1 text-[11px] font-bold " style={{ background: '#1e1b4b', color: '#fde68a', border: '1px solid #4338ca' }}>
           SUM {summary.diceSum}
         </span>
       </div>
@@ -734,7 +788,7 @@ function SettledSummaryPanel({ summary, onClose }: { summary: ResolveSummary; on
           { label: 'HOUSE NET', value: `${summary.houseNet >= 0 ? '+' : ''}${summary.houseNet.toLocaleString()}`, color: summary.houseNet >= 0 ? '#4ade80' : '#f87171' },
         ].map(s => (
           <div key={s.label} className="rounded-md px-2 py-2 text-center" style={{ background: '#1e1b4b' }}>
-            <div className="text-[9px] font-bold tracking-widest" style={{ color: '#a5b4fc' }}>{s.label}</div>
+            <div className="text-[9px] font-bold " style={{ color: '#a5b4fc' }}>{s.label}</div>
             <div className="mt-0.5 text-sm font-bold" style={{ color: s.color ?? '#fde68a' }}>{s.value}</div>
           </div>
         ))}
@@ -769,7 +823,7 @@ function ViewersPanel({ viewers }: { viewers: ReturnType<typeof usePresenceMembe
   return (
     <div className="rounded-xl p-4" style={{ background: '#0f172a', border: '1px solid #1e1b4b' }}>
       <div className="mb-3 flex items-center justify-between">
-        <span className="inline-flex items-center gap-2 text-[10px] font-bold tracking-widest" style={{ color: '#a5b4fc' }}>
+        <span className="inline-flex items-center gap-2 text-[10px] font-bold " style={{ color: '#a5b4fc' }}>
           <UsersIcon size={12} /> VIEWERS
         </span>
         <span className="text-[10px] font-bold" style={{ color: '#fde68a' }}>{viewers.length}</span>
@@ -809,7 +863,7 @@ function LiveBetsPanel({
   return (
     <div className="rounded-xl p-4" style={{ background: '#0f172a', border: '1px solid #1e1b4b' }}>
       <div className="mb-3 flex items-center justify-between">
-        <span className="inline-flex items-center gap-2 text-[10px] font-bold tracking-widest" style={{ color: '#a5b4fc' }}>
+        <span className="inline-flex items-center gap-2 text-[10px] font-bold " style={{ color: '#a5b4fc' }}>
           <Radio size={12} /> LIVE BETS{roundId && <span className="text-[9px] font-mono" style={{ color: '#475569' }}>#{roundId.slice(-6)}</span>}
         </span>
         <span className="text-[10px]" style={{ color: '#fde68a' }}>
@@ -939,11 +993,11 @@ function ActiveRoundPanel({
       {/* Stream embed */}
       <div className="rounded-xl p-4" style={{ background: '#0f172a', border: '1px solid #1e1b4b' }}>
         <div className="mb-2 flex items-center justify-between">
-          <span className="text-[10px] font-bold tracking-widest" style={{ color: '#a5b4fc' }}>LIVE STREAM</span>
+          <span className="text-[10px] font-bold " style={{ color: '#a5b4fc' }}>LIVE STREAM</span>
           <div className="flex items-center gap-2">
             {remainingSeconds != null && (
               <span
-                className="rounded-full px-2.5 py-0.5 text-[10px] font-bold tracking-widest"
+                className="rounded-full px-2.5 py-0.5 text-[10px] font-bold "
                 style={{
                   background: bettingExpired ? 'rgba(234,88,12,0.2)' : remainingSeconds <= 10 ? 'rgba(220,38,38,0.2)' : 'rgba(22,163,74,0.2)',
                   color: bettingExpired ? '#fdba74' : remainingSeconds <= 10 ? '#fca5a5' : '#4ade80',
@@ -970,7 +1024,7 @@ function ActiveRoundPanel({
           <button
             type="submit"
             disabled={loading}
-            className="rounded-md px-3 py-1.5 text-[10px] font-bold tracking-widest disabled:opacity-50"
+            className="rounded-md px-3 py-1.5 text-[10px] font-bold  disabled:opacity-50"
             style={{ background: '#4338ca', color: '#fff', border: '1px solid #818cf8' }}
           >
             UPDATE STREAM
@@ -981,7 +1035,7 @@ function ActiveRoundPanel({
       {/* Result entry */}
       <div className="rounded-xl p-4" style={{ background: '#0f172a', border: '1px solid #1e1b4b' }}>
         <div className="mb-3 flex items-center justify-between">
-          <span className="text-[10px] font-bold tracking-widest" style={{ color: '#a5b4fc' }}>ROUND RESULT</span>
+          <span className="text-[10px] font-bold " style={{ color: '#a5b4fc' }}>ROUND RESULT</span>
           <span className="text-[10px]" style={{ color: '#818cf8' }}>{round.bets} bets · #{round.id.slice(-6)}</span>
         </div>
 
@@ -1018,7 +1072,7 @@ function ActiveRoundPanel({
               <button
                 type="submit"
                 disabled={loading}
-                className="inline-flex items-center gap-1 rounded-md px-3 py-1.5 text-[10px] font-bold tracking-widest disabled:opacity-50"
+                className="inline-flex items-center gap-1 rounded-md px-3 py-1.5 text-[10px] font-bold  disabled:opacity-50"
                 style={{ background: '#1e1b4b', color: '#fdba74', border: '1px solid #fb923c' }}
               >
                 {loading ? <Loader size={10} className="animate-spin" /> : <Lock size={10} />}
@@ -1031,7 +1085,7 @@ function ActiveRoundPanel({
             type="button"
             onClick={settle}
             disabled={!allPicked || submitting}
-            className="inline-flex items-center gap-1 rounded-md px-3 py-1.5 text-[10px] font-bold tracking-widest disabled:opacity-30"
+            className="inline-flex items-center gap-1 rounded-md px-3 py-1.5 text-[10px] font-bold  disabled:opacity-30"
             style={{ background: '#14532d', color: '#fff', border: '1px solid #4ade80' }}
             title={allPicked ? 'Settle the round and credit winners' : 'Pick all 3 dice first'}
           >
@@ -1045,7 +1099,7 @@ function ActiveRoundPanel({
             <button
               type="submit"
               disabled={loading || submitting}
-              className="inline-flex items-center gap-1 rounded-md px-3 py-1.5 text-[10px] font-bold tracking-widest disabled:opacity-50"
+              className="inline-flex items-center gap-1 rounded-md px-3 py-1.5 text-[10px] font-bold  disabled:opacity-50"
               style={{ background: '#7f1d1d', color: '#fff', border: '1px solid #fca5a5' }}
             >
               {loading ? <Loader size={10} className="animate-spin" /> : <X size={10} />}
@@ -1083,13 +1137,13 @@ type ResolveSummary = {
 function StartRoundPanel({ defaultStreamUrl, loading }: { defaultStreamUrl: string; loading: boolean }) {
   return (
     <div className="rounded-xl p-4" style={{ background: '#0f172a', border: '1px solid #1e1b4b' }}>
-      <div className="mb-3 flex items-center gap-2 text-[10px] font-bold tracking-widest" style={{ color: '#a5b4fc' }}>
+      <div className="mb-3 flex items-center gap-2 text-[10px] font-bold " style={{ color: '#a5b4fc' }}>
         <Radio size={12} /> START NEW LIVE ROUND
       </div>
       <Form method="post" className="flex flex-col gap-3">
         <input type="hidden" name="op" value="startRound" />
 
-        <label className="text-[10px] font-semibold tracking-widest" style={{ color: '#a5b4fc' }}>STREAM URL</label>
+        <label className="text-[10px] font-semibold " style={{ color: '#a5b4fc' }}>STREAM URL</label>
         <input
           name="streamUrl"
           defaultValue={defaultStreamUrl}
@@ -1098,7 +1152,7 @@ function StartRoundPanel({ defaultStreamUrl, loading }: { defaultStreamUrl: stri
           style={{ background: '#1e1b4b', color: '#fde68a', border: '1px solid #4338ca' }}
         />
 
-        <label className="text-[10px] font-semibold tracking-widest" style={{ color: '#a5b4fc' }}>BETTING WINDOW (SECONDS)</label>
+        <label className="text-[10px] font-semibold " style={{ color: '#a5b4fc' }}>BETTING WINDOW (SECONDS)</label>
         <input
           name="seconds"
           type="number"
@@ -1112,7 +1166,7 @@ function StartRoundPanel({ defaultStreamUrl, loading }: { defaultStreamUrl: stri
         <button
           type="submit"
           disabled={loading}
-          className="mt-1 inline-flex items-center justify-center gap-1.5 rounded-lg py-2.5 text-xs font-bold tracking-widest disabled:opacity-50"
+          className="mt-1 inline-flex items-center justify-center gap-1.5 rounded-lg py-2.5 text-xs font-bold  disabled:opacity-50"
           style={{ background: 'linear-gradient(135deg, #16a34a, #15803d)', color: '#fff', border: '1.5px solid #4ade80' }}
         >
           {loading ? <Loader size={14} className="animate-spin" /> : <PlayCircle size={14} />}
@@ -1137,7 +1191,7 @@ function DiceSlot({
       className="flex flex-col gap-2 rounded-lg p-2"
       style={{ background: '#1e1b4b', border: '1px solid #312e81' }}
     >
-      <div className="text-center text-[10px] font-bold tracking-widest" style={{ color: '#a5b4fc' }}>{label}</div>
+      <div className="text-center text-[10px] font-bold " style={{ color: '#a5b4fc' }}>{label}</div>
       {/* Mobile: 6 symbols in a single row. md+: 2 rows of 3 (preserves prior compact look). */}
       <div className="grid grid-cols-6 gap-1 md:grid-cols-3">
         {SYMBOLS.map(s => {
@@ -1159,7 +1213,7 @@ function DiceSlot({
                 alt={s}
                 className="aspect-square w-full max-w-[44px] rounded object-contain"
               />
-              <span className="mt-0.5 text-[9px] font-bold tracking-widest" style={{ color: selected ? '#fde68a' : '#818cf8' }}>
+              <span className="mt-0.5 text-[9px] font-bold " style={{ color: selected ? '#fde68a' : '#818cf8' }}>
                 {SYMBOL_VALUE[s]}
               </span>
             </button>
@@ -1241,7 +1295,7 @@ function HistoryRow({ r }: { r: HistoryRound }) {
               />
             ))}
           </div>
-          <span className="rounded-md px-2 py-0.5 text-[10px] font-bold tracking-widest" style={{ background: '#1e1b4b', color: '#fde68a', border: '1px solid #4338ca' }}>
+          <span className="rounded-md px-2 py-0.5 text-[10px] font-bold " style={{ background: '#1e1b4b', color: '#fde68a', border: '1px solid #4338ca' }}>
             SUM {r.diceSum ?? '—'}
           </span>
         </div>
@@ -1263,7 +1317,7 @@ function StatusPill({ status }: { status: string }) {
   const s = map[status] ?? map.RESOLVED
   return (
     <span
-      className="inline-block rounded-full px-2 py-0.5 text-[10px] font-bold tracking-widest"
+      className="inline-block rounded-full px-2 py-0.5 text-[10px] font-bold "
       style={{ background: s.bg, color: s.color }}
     >
       {status.replace('_', ' ')}

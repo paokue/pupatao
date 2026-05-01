@@ -153,7 +153,7 @@ export function TransferModal({ open, onClose, amount, senderTel, onSuccess }: T
           <X size={18} />
         </button>
 
-        <div className="mb-1 text-center text-xs font-bold tracking-widest" style={{ color: '#a78bfa' }}>
+        <div className="mb-1 text-center text-xs font-bold " style={{ color: '#a78bfa' }}>
           {step === 'form' ? t('transfer.title') : t('transfer.confirmTitle')}
         </div>
         <h2 className="mb-4 text-center text-2xl font-bold" style={{ color: '#fde68a' }}>
@@ -172,7 +172,7 @@ export function TransferModal({ open, onClose, amount, senderTel, onSuccess }: T
                     key={m}
                     type="button"
                     onClick={() => setMethod(m)}
-                    className="flex items-center justify-center gap-2 rounded-lg py-2.5 text-xs font-bold tracking-widest transition-opacity hover:opacity-90"
+                    className="flex items-center justify-center gap-2 rounded-lg py-2.5 text-xs font-bold  transition-opacity hover:opacity-90"
                     style={{
                       background: active ? '#7c3aed' : '#1e0040',
                       color: active ? '#fff' : '#a78bfa',
@@ -187,7 +187,7 @@ export function TransferModal({ open, onClose, amount, senderTel, onSuccess }: T
             </div>
 
             {/* Recipient phone */}
-            <label className="mb-1 block text-[10px] font-bold tracking-widest" style={{ color: '#a78bfa' }}>
+            <label className="mb-1 block text-[10px] font-bold " style={{ color: '#a78bfa' }}>
               {t('transfer.recipient')}
             </label>
             <div className="mb-2 flex gap-2">
@@ -207,7 +207,7 @@ export function TransferModal({ open, onClose, amount, senderTel, onSuccess }: T
                 type="button"
                 onClick={lookup}
                 disabled={!tel.trim() || looking}
-                className="rounded-lg px-3 py-2 text-xs font-bold tracking-widest disabled:opacity-50"
+                className="rounded-lg px-3 py-2 text-xs font-bold  disabled:opacity-50"
                 style={{ background: '#4c1d95', color: '#fde68a', border: '1.5px solid #7c3aed' }}
               >
                 {looking ? <Loader size={14} className="animate-spin" /> : <Search size={14} />}
@@ -247,7 +247,7 @@ export function TransferModal({ open, onClose, amount, senderTel, onSuccess }: T
             {/* Locked-method code field */}
             {method === 'locked' && (
               <>
-                <label className="mb-1 mt-1 block text-[10px] font-bold tracking-widest" style={{ color: '#a78bfa' }}>
+                <label className="mb-1 mt-1 block text-[10px] font-bold " style={{ color: '#a78bfa' }}>
                   {t('transfer.code')}
                 </label>
 
@@ -263,7 +263,7 @@ export function TransferModal({ open, onClose, amount, senderTel, onSuccess }: T
                           setCodeMode(m)
                           if (m === 'random') setCode(randomCode())
                         }}
-                        className="rounded-md py-1.5 text-[10px] font-bold tracking-widest"
+                        className="rounded-md py-1.5 text-[10px] font-bold "
                         style={{
                           background: active ? '#1e0040' : 'transparent',
                           color: active ? '#fde68a' : '#7c3aed',
@@ -294,7 +294,7 @@ export function TransferModal({ open, onClose, amount, senderTel, onSuccess }: T
                     <button
                       type="button"
                       onClick={() => setCode(randomCode())}
-                      className="flex items-center gap-1 rounded-lg px-3 py-2 text-[10px] font-bold tracking-widest hover:opacity-90"
+                      className="flex items-center gap-1 rounded-lg px-3 py-2 text-[10px] font-bold  hover:opacity-90"
                       style={{ background: '#4c1d95', color: '#fde68a', border: '1.5px solid #7c3aed' }}
                       title={t('transfer.regenerate')}
                     >
@@ -317,7 +317,7 @@ export function TransferModal({ open, onClose, amount, senderTel, onSuccess }: T
             <button
               type="button"
               onClick={nextToConfirm}
-              className="flex w-full items-center justify-center gap-2 rounded-xl py-3 text-sm font-bold tracking-widest transition-opacity hover:opacity-90"
+              className="flex w-full items-center justify-center gap-2 rounded-xl py-3 text-sm font-bold  transition-opacity hover:opacity-90"
               style={{
                 background: 'linear-gradient(135deg, #16a34a, #15803d)',
                 color: '#fff',
@@ -364,7 +364,7 @@ export function TransferModal({ open, onClose, amount, senderTel, onSuccess }: T
                 type="button"
                 onClick={() => setStep('form')}
                 disabled={submitting}
-                className="flex items-center gap-1 rounded-xl px-4 py-3 text-xs font-bold tracking-widest hover:opacity-90 disabled:opacity-40"
+                className="flex items-center gap-1 rounded-xl px-4 py-3 text-xs font-bold  hover:opacity-90 disabled:opacity-40"
                 style={{ background: '#4c1d95', color: '#e9d5ff', border: '1.5px solid #7c3aed' }}
               >
                 <ArrowLeft size={14} />
@@ -374,7 +374,7 @@ export function TransferModal({ open, onClose, amount, senderTel, onSuccess }: T
                 type="button"
                 onClick={submit}
                 disabled={submitting}
-                className="flex flex-1 items-center justify-center gap-2 rounded-xl py-3 text-sm font-bold tracking-widest disabled:opacity-40"
+                className="flex flex-1 items-center justify-center gap-2 rounded-xl py-3 text-sm font-bold  disabled:opacity-40"
                 style={{
                   background: 'linear-gradient(135deg, #16a34a, #15803d)',
                   color: '#fff',

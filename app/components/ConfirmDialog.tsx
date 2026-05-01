@@ -123,7 +123,7 @@ export function ConfirmDialog({
             type="button"
             onClick={onClose}
             disabled={submitting}
-            className="rounded-md px-3 py-1.5 text-xs font-bold tracking-widest disabled:opacity-50"
+            className="rounded-md px-3 py-1.5 text-xs font-bold  disabled:opacity-50"
             style={{ background: 'transparent', color: '#a5b4fc', border: '1px solid #4338ca' }}
           >
             CANCEL
@@ -131,7 +131,7 @@ export function ConfirmDialog({
           <button
             type="submit"
             disabled={submitting}
-            className="inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-bold tracking-widest disabled:opacity-50"
+            className="inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-bold  disabled:opacity-50"
             style={{ background: toneStyle.bg, color: toneStyle.color, border: `1px solid ${toneStyle.border}` }}
           >
             {submitting && <Loader size={12} className="animate-spin" />}

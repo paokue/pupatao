@@ -20,7 +20,7 @@ import {
   type RoundStartedPayload,
   type TxUpdatedPayload,
 } from '~/lib/pusher-channels'
-import { LogOut, Pencil, ReceiptText, RefreshCw, Undo, User, Volume2, VolumeOff, Wallet } from 'lucide-react'
+import { Check, ChevronDown, LogOut, Pencil, ReceiptText, RefreshCw, Undo, User, Volume2, VolumeOff, Wallet } from 'lucide-react'
 
 type SymbolKey = 'fish' | 'prawn' | 'crab' | 'rooster' | 'gourd' | 'frog'
 
@@ -35,12 +35,12 @@ const SYMBOLS: SymbolKey[] = ['gourd', 'frog', 'rooster', 'prawn', 'crab', 'fish
 // Board layout (may repeat symbols visually without affecting dice odds)
 const BOARD_LAYOUT: SymbolKey[] = [
   'gourd', 'frog', 'rooster', 'gourd',
-  'prawn', 'crab', 'fish', 'prawn',
+  'prawn', 'fish', 'crab', 'prawn',
 ]
 
 // Symbol-to-value map for dice sum (low/middle/high bets)
 const SYMBOL_VALUES: Record<SymbolKey, number> = {
-  prawn: 1, crab: 2, fish: 3, rooster: 4, frog: 5, gourd: 6,
+  prawn: 1, fish: 2, crab: 3, rooster: 4, frog: 5, gourd: 6,
 }
 
 type RangeKey = 'low' | 'middle' | 'high'
@@ -223,7 +223,7 @@ function ProfileDropdown({ name, onClose }: ProfileDropdownProps) {
       <div className="mx-4" style={{ height: 1, background: '#4c1d95' }} />
 
       <div className="px-4 py-3">
-        <div className="mb-2 text-[10px] font-bold tracking-widest" style={{ color: '#a78bfa' }}>
+        <div className="mb-2 text-[10px] font-bold " style={{ color: '#a78bfa' }}>
           {t('menu.language')}
         </div>
         <LanguageSwitch variant="inline" />
@@ -244,6 +244,60 @@ function ProfileDropdown({ name, onClose }: ProfileDropdownProps) {
             <div className="text-sm font-semibold" style={{ color: '#f87171' }}>Logout</div>
           </button>
         </Form>
+      </div>
+    </div>
+  )
+}
+
+// Small generic single-section picker. Reused by both the mode toggle (left
+// header slot) and the wallet selector (right header slot).
+interface PickerDropdownProps {
+  items: { key: string; label: string }[]
+  active: string
+  onSelect: (key: string) => void
+  onClose: () => void
+  align?: 'left' | 'right'
+}
+
+function PickerDropdown({ items, active, onSelect, onClose, align = 'left' }: PickerDropdownProps) {
+  const ref = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    function handler(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) onClose()
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [onClose])
+
+  return (
+    <div
+      ref={ref}
+      className={`absolute ${align === 'right' ? 'right-0' : 'left-0'} top-full z-50 mt-1 rounded-md overflow-hidden shadow-2xl`}
+      style={{
+        minWidth: 160,
+        background: '#1e0040',
+        border: '1px solid #a78bfa',
+        boxShadow: '0 8px 40px rgba(124,58,237,0.5)',
+      }}
+    >
+      <div className="py-1">
+        {items.map(item => {
+          const isActive = item.key === active
+          return (
+            <button
+              key={item.key}
+              onClick={() => { playClick(); onSelect(item.key); onClose() }}
+              className="flex w-full items-center justify-between gap-3 px-4 py-2.5 text-left transition-all"
+              style={{ background: isActive ? '#2d1b4e' : 'transparent' }}
+              onMouseEnter={e => (e.currentTarget.style.background = '#2d1b4e')}
+              onMouseLeave={e => (e.currentTarget.style.background = isActive ? '#2d1b4e' : 'transparent')}
+            >
+              <span className="text-sm font-semibold" style={{ color: isActive ? '#fde68a' : '#e9d5ff' }}>{item.label}</span>
+              {isActive && <Check size={14} style={{ color: '#fde68a' }} />}
+            </button>
+          )
+        })}
       </div>
     </div>
   )
@@ -383,8 +437,8 @@ export default function FishPrawnCrabGame() {
   // they arrive (post-login, after revalidation, etc.). For anonymous visitors
   // we leave the demo defaults alone so they can still try the game.
   useEffect(() => {
-    if (serverWallets) hydrateBalances(serverWallets.demo, serverWallets.real)
-  }, [serverWallets?.demo, serverWallets?.real])
+    if (serverWallets) hydrateBalances(serverWallets.demo, serverWallets.real, serverWallets.promo)
+  }, [serverWallets?.demo, serverWallets?.real, serverWallets?.promo])
   const { startRollSound, stopRollSound, playWin, playLose } = useSoundEngine()
 
   // Display name + initials from the authenticated session. Falls back to the
@@ -442,6 +496,8 @@ export default function FishPrawnCrabGame() {
   const [history, setHistory] = useState<SymbolKey[][]>([])
   const [message, setMessage] = useState<string>(t('game.placeBet'))
   const [profileOpen, setProfileOpen] = useState(false)
+  const [modeOpen, setModeOpen] = useState(false)
+  const [walletOpen, setWalletOpen] = useState(false)
   const [bgStarted, setBgStarted] = useState(false)
   const [soundEnabled, setSoundEnabled] = useState(true)
 
@@ -747,8 +803,8 @@ export default function FishPrawnCrabGame() {
       const matches = finalResults.filter(r => r === bet.symbol).length
       const payout = matches === 1 ? bet.amount * pc.symbol1
         : matches === 2 ? bet.amount * pc.symbol2
-        : matches === 3 ? bet.amount * pc.symbol3
-        : 0
+          : matches === 3 ? bet.amount * pc.symbol3
+            : 0
       return { symbol: bet.symbol, amount: bet.amount, payout, won: payout > 0 }
     })
     const rangeResults = currentRangeBets.map(rb => {
@@ -823,7 +879,7 @@ export default function FishPrawnCrabGame() {
     if (authUser && betTotal > 0) {
       const payload = {
         mode: mode === 'live' ? 'LIVE' : 'RANDOM',
-        wallet: user.activeWallet === 'real' ? 'REAL' : 'DEMO',
+        wallet: user.activeWallet === 'real' ? 'REAL' : user.activeWallet === 'promo' ? 'PROMO' : 'DEMO',
         dice: finalResults.map(s => s.toUpperCase()),
         bets: {
           symbol: snapshot.symbol.map(b => ({
@@ -943,27 +999,36 @@ export default function FishPrawnCrabGame() {
     })
   }, [mode, livePhase, authUser, hasAnyBet, currentBets, currentRangeBets, currentPairBets, user.activeWallet, playRoundFetcher, soundEnabled, t])
 
-  // Show server errors (insufficient balance, no open round, betting closed) as a toast,
-  // and revalidate after a successful LIVE submission so myLiveBets reflects the new rows.
+  // Show server errors (insufficient balance, no open round, betting closed)
+  // only for LIVE bet placement — that's where the toast actually informs the
+  // user the bet didn't happen. In RANDOM mode the local result modal has
+  // already shown the outcome by the time this submission resolves; a stray
+  // toast over the modal is confusing, so we just revalidate to pull the
+  // server's true balance and stay in sync silently.
   useEffect(() => {
     if (playRoundFetcher.state !== 'idle') return
     const data = playRoundFetcher.data
     if (!data) return
     if (data.error) {
-      toast.error(t('live.betNotPlaced'), { description: data.error })
+      if (mode === 'live') {
+        toast.error(t('live.betNotPlaced'), { description: data.error })
+      } else {
+        console.warn('[play-round] server rejected RANDOM submission:', data.error)
+        revalidator.revalidate()
+      }
     } else if (data.ok) {
       revalidator.revalidate()
     }
-  }, [playRoundFetcher.state, playRoundFetcher.data, revalidator, t])
+  }, [playRoundFetcher.state, playRoundFetcher.data, revalidator, t, mode])
 
   // Mode toggle: switching modes clears any staged bets to avoid mixing
   // RANDOM (client-rolled) and LIVE (server-attached) bets. Switching INTO
   // LIVE also forces a loader revalidation so we pick up the admin's current
   // round state (a `round:started` event might have fired before we joined
   // presence-live, in which case the local snapshot is already stale).
-  const toggleMode = useCallback(() => {
+  const selectMode = useCallback((next: 'random' | 'live') => {
     setMode(prev => {
-      const next = prev === 'random' ? 'live' : 'random'
+      if (prev === next) return prev
       if (next === 'live') revalidator.revalidate()
       return next
     })
@@ -1027,7 +1092,7 @@ export default function FishPrawnCrabGame() {
       </div>
       {!isRolling && diceResults.length > 0 && (
         <div
-          className="rounded-full px-4 py-0.5 text-xs font-bold tracking-widest"
+          className="rounded-full px-4 py-0.5 text-xs font-bold "
           style={{ background: 'rgba(30,0,64,0.6)', color: '#fde68a', border: '1px solid #a78bfa' }}
         >
           SUM: {diceSum}
@@ -1138,20 +1203,38 @@ export default function FishPrawnCrabGame() {
           </div>
 
           <div className="flex items-center gap-3">
-            <button
-              onClick={() => { playClick(); toggleMode() }}
-              className="rounded-full px-3 py-1.5 text-xs font-bold tracking-widest"
-              style={{
-                background: mode === 'live'
-                  ? 'linear-gradient(180deg, #dc2626 0%, #7f1d1d 100%)'
-                  : 'linear-gradient(180deg, #7c3aed 0%, #4c1d95 100%)',
-                color: '#fff',
-                border: `1px solid ${mode === 'live' ? '#fca5a5' : '#a78bfa'}`,
-              }}
-              title={mode === 'live' ? t('game.toggleToRandom') : t('game.toggleToLive')}
-            >
-              {mode === 'live' ? t('game.modeLive') : t('game.modeSelf')}
-            </button>
+            {/* Mode dropdown — Self-play / Live, with the same accent colors
+                the old toggle button used. */}
+            <div className="relative">
+              <button
+                onClick={() => { playClick(); setModeOpen(v => !v) }}
+                className="flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-bold"
+                style={{
+                  background: mode === 'live'
+                    ? 'linear-gradient(180deg, #dc2626 0%, #7f1d1d 100%)'
+                    : 'linear-gradient(180deg, #7c3aed 0%, #4c1d95 100%)',
+                  color: '#fff',
+                  border: `1px solid ${mode === 'live' ? '#fca5a5' : '#a78bfa'}`,
+                }}
+                title={t('menu.mode')}
+                aria-haspopup="menu"
+                aria-expanded={modeOpen}
+              >
+                <span>{mode === 'live' ? t('game.modeLive') : t('game.modeSelf')}</span>
+                <ChevronDown size={12} style={{ transform: modeOpen ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 120ms' }} />
+              </button>
+              {modeOpen && (
+                <PickerDropdown
+                  items={[
+                    { key: 'random', label: t('game.modeSelf') },
+                    { key: 'live', label: t('game.modeLive') },
+                  ]}
+                  active={mode}
+                  onSelect={key => selectMode(key as 'random' | 'live')}
+                  onClose={() => setModeOpen(false)}
+                />
+              )}
+            </div>
             <button
               onClick={() => { playClick(); ensureBgMusic() }}
               className="hidden md:inline-flex rounded-full px-4 py-1.5 text-xs font-bold"
@@ -1161,7 +1244,7 @@ export default function FishPrawnCrabGame() {
             </button>
             {mode === 'live' ? (
               <span
-                className="text-sm font-bold tracking-widest hidden sm:block rounded-full px-3 py-1"
+                className="text-sm font-bold  hidden sm:block rounded-full px-3 py-1"
                 style={{
                   background: livePhase === 'betting'
                     ? (liveTimer <= 10 ? 'rgba(220,38,38,0.25)' : 'rgba(22,163,74,0.25)')
@@ -1205,37 +1288,63 @@ export default function FishPrawnCrabGame() {
               <VolumeOff size={14} className='text-red-500' />
             )}
           </button>
-          {/* Wallet toggle: anonymous users cannot use REAL — tapping opens the login modal. */}
-          <button
-            onClick={() => {
-              soundEnabled && playClick()
-              ensureBgMusic()
-              if (isAnonymous) {
-                setLoginHint(t('auth.signInToUseRealWallet'))
-                setLoginOpen(true)
-                return
-              }
-              const next = user.activeWallet === 'demo' ? 'real' : 'demo'
-              // Clear in-progress bets from the outgoing wallet (they belong to the old balance).
-              setCurrentBets([])
-              setCurrentRangeBets([])
-              setCurrentPairBets([])
-              setPendingCell(null)
-              switchWallet(next)
-              setBalance(user.balances[next])
-            }}
-            className="flex items-center gap-1 rounded-full px-2.5 py-1 text-[10px] font-bold tracking-widest transition-opacity hover:opacity-90"
-            style={{
-              background: user.activeWallet === 'demo'
-                ? 'linear-gradient(135deg, #4c1d95, #2d1b4e)'
-                : 'linear-gradient(135deg, #b45309, #78350f)',
-              color: user.activeWallet === 'demo' ? '#c4b5fd' : '#fde68a',
-              border: `1px ${user.activeWallet === 'demo' ? 'dashed #a78bfa' : 'solid #fcd34d'}`,
-            }}
-            title={`Current wallet: ${user.activeWallet.toUpperCase()} — click to switch`}
-          >
-            {user.activeWallet === 'demo' ? 'DEMO' : 'REAL'}
-          </button>
+          {/* Combined account + mode dropdown — anonymous users can't pick
+              REAL, so tapping the trigger opens the login modal instead. */}
+          <div className="relative">
+            <button
+              onClick={() => {
+                soundEnabled && playClick()
+                ensureBgMusic()
+                if (isAnonymous) {
+                  setLoginHint(t('auth.signInToUseRealWallet'))
+                  setLoginOpen(true)
+                  return
+                }
+                setWalletOpen(v => !v)
+              }}
+              className="flex items-center gap-1.5 rounded-full px-3 py-1 text-[10px] font-bold transition-opacity hover:opacity-90"
+              style={{
+                background: user.activeWallet === 'demo'
+                  ? 'linear-gradient(135deg, #4c1d95, #2d1b4e)'
+                  : user.activeWallet === 'real'
+                    ? 'linear-gradient(135deg, #b45309, #78350f)'
+                    : 'linear-gradient(135deg, #16a34a, #15803d)',
+                color: user.activeWallet === 'demo' ? '#c4b5fd' : '#fde68a',
+                border: `1px ${user.activeWallet === 'demo' ? 'dashed #a78bfa' : user.activeWallet === 'real' ? 'solid #fcd34d' : 'solid #4ade80'}`,
+              }}
+              title={t('menu.account')}
+              aria-haspopup="menu"
+              aria-expanded={walletOpen}
+            >
+              <span>{user.activeWallet === 'demo' ? 'DEMO' : user.activeWallet === 'real' ? 'REAL' : 'PROMO'}</span>
+              <ChevronDown size={12} style={{ transform: walletOpen ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 120ms' }} />
+            </button>
+            {walletOpen && (() => {
+              const items: { key: string; label: string }[] = [
+                { key: 'real', label: t('menu.realAccount') },
+                { key: 'demo', label: t('menu.demoAccount') },
+              ]
+              if ((user.balances.promo ?? 0) > 0) items.push({ key: 'promo', label: t('menu.promoAccount') })
+              return (
+                <PickerDropdown
+                  items={items}
+                  active={user.activeWallet}
+                  align="right"
+                  onSelect={key => {
+                    const next = key as 'demo' | 'real' | 'promo'
+                    // Clear in-progress bets from the outgoing wallet (they belong to the old balance).
+                    setCurrentBets([])
+                    setCurrentRangeBets([])
+                    setCurrentPairBets([])
+                    setPendingCell(null)
+                    switchWallet(next)
+                    setBalance(user.balances[next])
+                  }}
+                  onClose={() => setWalletOpen(false)}
+                />
+              )
+            })()}
+          </div>
           <span className="text-md font-bold tracking-wider" style={{ color: '#fde68a' }}>
             {balance.toLocaleString()}₭
           </span>
@@ -1352,14 +1461,14 @@ export default function FishPrawnCrabGame() {
                   )
                 })()}
                 <div
-                  className="absolute top-2 left-2 flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-bold tracking-widest"
+                  className="absolute top-2 left-2 flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-bold "
                   style={{ background: 'rgba(220,38,38,0.9)', color: '#fff' }}
                 >
                   <span className="h-1.5 w-1.5 rounded-full bg-white animate-pulse" />
                   LIVE
                 </div>
                 <div
-                  className="absolute top-2 right-2 rounded-md px-3 py-1 text-xs font-bold tracking-widest"
+                  className="absolute top-2 right-2 rounded-md px-3 py-1 text-xs font-bold "
                   style={{
                     background: livePhase === 'betting'
                       ? (liveTimer <= 10 ? 'rgba(220,38,38,0.9)' : 'rgba(22,163,74,0.9)')
@@ -1509,8 +1618,12 @@ export default function FishPrawnCrabGame() {
                         />
                       </div>
 
+                      {/* Dice value badge — top row puts it in the top-right
+                          corner, bottom row puts it in the bottom-left, so it
+                          never collides with the bet-amount badge on the
+                          tile's "outside" corner. */}
                       <div
-                        className="absolute bottom-1 left-1/2 -translate-x-1/2 flex h-6 w-6 items-center justify-center rounded-full text-xs font-bold"
+                        className={`absolute flex h-4 w-4 items-center justify-center rounded-full text-[9px] font-bold ${idx < 4 ? 'top-1 right-1' : 'bottom-1 left-1'}`}
                         style={{ background: 'rgba(76,29,149,0.92)', color: '#fde68a', border: '1px solid #a78bfa' }}
                       >
                         {SYMBOL_VALUES[symbol]}
@@ -1518,7 +1631,7 @@ export default function FishPrawnCrabGame() {
 
                       {bet > 0 && (
                         <div
-                          className="absolute top-1.5 right-1.5 flex h-7 min-w-[36px] items-center justify-center rounded-full px-2 font-bold shadow-lg text-[10px] whitespace-nowrap"
+                          className={`absolute flex h-7 min-w-[36px] items-center justify-center rounded-full px-2 font-bold shadow-lg text-[10px] whitespace-nowrap ${idx < 4 ? 'bottom-1.5 right-1.5' : 'top-1.5 right-1.5'}`}
                           style={{
                             background: 'linear-gradient(135deg, #dc2626, #991b1b)',
                             color: '#fff',
@@ -1554,8 +1667,32 @@ export default function FishPrawnCrabGame() {
                 })}
               </div>
 
-              {/* Pair bets summary + hint */}
+              {/* Single + pair bets summary + hint */}
               <div className="mx-auto mt-2 flex flex-col items-center gap-1" style={{ maxWidth: 560 }}>
+                {currentBets.length > 0 && (
+                  <div className="flex flex-wrap justify-center gap-1.5">
+                    {currentBets.map(b => {
+                      const won = !isRolling && diceResults.length > 0 && diceResults.includes(b.symbol)
+                      return (
+                        <div
+                          key={`single-${b.cell}`}
+                          className="flex items-center gap-1.5 rounded-full px-3 py-1 text-[11px] font-bold"
+                          style={{
+                            background: won ? 'rgba(250,204,21,0.25)' : '#1e0040',
+                            border: `1px solid ${won ? '#facc15' : '#dc2626'}`,
+                            color: won ? '#fde68a' : '#e9d5ff',
+                          }}
+                        >
+                          <span className="inline-flex items-center gap-1">
+                            <img src={`/symbols/${b.symbol}.jpg`} alt={b.symbol} className="h-3 w-3 rounded object-contain bg-white" />
+                            <span>{SYMBOL_VALUES[b.symbol]}</span>
+                          </span>
+                          <span>{b.amount.toLocaleString()}</span>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
                 {currentPairBets.length > 0 && (
                   <div className="flex flex-wrap justify-center gap-1.5">
                     {currentPairBets.map(p => {
@@ -1573,8 +1710,13 @@ export default function FishPrawnCrabGame() {
                             color: won ? '#fde68a' : '#e9d5ff',
                           }}
                         >
-                          <span className="inline-block h-2 w-2 rounded-full" style={{ background: won ? '#facc15' : color }} />
-                          <span>{SYMBOL_VALUES[p.a]} + {SYMBOL_VALUES[p.b]}</span>
+                          <span className="inline-flex items-center gap-1">
+                            <img src={`/symbols/${p.a}.jpg`} alt={p.a} className="h-3 w-3 rounded object-contain bg-white" />
+                            <span>{SYMBOL_VALUES[p.a]}</span>
+                            <span className="px-0.5 opacity-70">+</span>
+                            <img src={`/symbols/${p.b}.jpg`} alt={p.b} className="h-3 w-3 rounded object-contain bg-white" />
+                            <span>{SYMBOL_VALUES[p.b]}</span>
+                          </span>
                           <span style={{ color: won ? '#fde68a' : color }}>×{loaderData.payoutConfig.pair}</span>
                           <span>{p.amount.toLocaleString()}</span>
                         </div>
@@ -1606,7 +1748,7 @@ export default function FishPrawnCrabGame() {
                         cursor: bettingLocked || balance < selectedChip ? 'not-allowed' : 'pointer',
                       }}
                     >
-                      <div className="text-sm font-semibold tracking-widest">
+                      <div className="text-sm font-semibold ">
                         {r.key === 'low' ? t('game.low') : r.key === 'middle' ? t('game.middle') : t('game.high')}{' '}
                         <span className="text-xs opacity-90">({r.range})</span>
                       </div>
@@ -1683,7 +1825,7 @@ export default function FishPrawnCrabGame() {
             <button
               onClick={undoBet}
               disabled={bettingLocked || (!hasAnyBet && pendingCell === null)}
-              className="rounded-xl px-5 py-2.5 text-sm font-bold tracking-widest transition-opacity disabled:opacity-40"
+              className="rounded-xl px-5 py-2.5 text-sm font-bold  transition-opacity disabled:opacity-40"
               style={{ background: 'linear-gradient(180deg, #f59e0b, #b45309)', color: '#1e0040', border: '1px solid #fcd34d' }}
             >
               {t('game.undo')}
@@ -1696,7 +1838,7 @@ export default function FishPrawnCrabGame() {
           <button
             onClick={rollDice}
             disabled={isRolling || !hasAnyBet}
-            className="fixed bottom-4 right-4 z-40 flex h-16 w-16 items-center justify-center rounded-full font-bold tracking-widest text-sm transition-all disabled:opacity-40 md:hidden"
+            className="fixed bottom-4 right-4 z-40 flex h-16 w-16 items-center justify-center rounded-full font-bold  text-sm transition-all disabled:opacity-40 md:hidden"
             style={{
               background: isRolling
                 ? 'linear-gradient(135deg, #15803d, #14532d)'
@@ -1713,7 +1855,7 @@ export default function FishPrawnCrabGame() {
           <button
             onClick={placeLiveBets}
             disabled={!hasAnyBet || playRoundFetcher.state !== 'idle'}
-            className="fixed bottom-4 right-4 z-40 flex h-16 w-16 items-center justify-center rounded-full font-bold tracking-widest text-xs transition-all disabled:opacity-40 md:hidden"
+            className="fixed bottom-4 right-4 z-40 flex h-16 w-16 items-center justify-center rounded-full font-bold  text-xs transition-all disabled:opacity-40 md:hidden"
             style={{
               background: 'linear-gradient(135deg, #16a34a, #15803d)',
               color: '#fff',
@@ -1739,7 +1881,7 @@ export default function FishPrawnCrabGame() {
             ].map((stat, i, arr) => (
               <div key={stat.label}>
                 <div className="text-center">
-                  <div className="text-[9px] font-bold tracking-widest mb-0.5" style={{ color: '#c4b5fd' }}>{stat.label}</div>
+                  <div className="text-[9px] font-bold  mb-0.5" style={{ color: '#c4b5fd' }}>{stat.label}</div>
                   <div className="text-sm font-bold" style={{ color: stat.color }}>{stat.value}</div>
                 </div>
                 {i < arr.length - 1 && <div className="h-px mt-2" style={{ background: '#6d28d9' }} />}
@@ -1790,7 +1932,7 @@ export default function FishPrawnCrabGame() {
               <button
                 onClick={undoBet}
                 disabled={bettingLocked || (!hasAnyBet && pendingCell === null)}
-                className="flex items-center justify-center gap-2 bg-red-500 w-full rounded-xl p-3 text-xs font-bold tracking-widest transition-opacity disabled:opacity-40 text-white"
+                className="flex items-center justify-center gap-2 bg-red-500 w-full rounded-xl p-3 text-xs font-bold  transition-opacity disabled:opacity-40 text-white"
               >
                 <Undo size={14} />
                 {t('game.undo')}
@@ -1803,7 +1945,7 @@ export default function FishPrawnCrabGame() {
               <button
                 onClick={rollDice}
                 disabled={isRolling || !hasAnyBet}
-                className="flex h-20 w-20 items-center justify-center rounded-full font-bold tracking-widest text-lg transition-all disabled:opacity-40"
+                className="flex h-20 w-20 items-center justify-center rounded-full font-bold  text-lg transition-all disabled:opacity-40"
                 style={{
                   background: isRolling
                     ? 'linear-gradient(135deg, #15803d, #14532d)'
@@ -1820,7 +1962,7 @@ export default function FishPrawnCrabGame() {
               <button
                 onClick={placeLiveBets}
                 disabled={!hasAnyBet || playRoundFetcher.state !== 'idle'}
-                className="flex h-20 w-20 flex-col items-center justify-center rounded-full text-center font-bold tracking-widest text-[10px] transition-all disabled:opacity-40"
+                className="flex h-20 w-20 flex-col items-center justify-center rounded-full text-center font-bold  text-[10px] transition-all disabled:opacity-40"
                 style={{
                   background: 'linear-gradient(135deg, #16a34a, #15803d)',
                   color: '#fff',
@@ -1834,7 +1976,7 @@ export default function FishPrawnCrabGame() {
               </button>
             ) : (
               <div
-                className="flex h-20 w-20 flex-col items-center justify-center rounded-full text-center font-bold tracking-widest text-[9px]"
+                className="flex h-20 w-20 flex-col items-center justify-center rounded-full text-center font-bold  text-[9px]"
                 style={{
                   background: 'linear-gradient(135deg, #b45309, #78350f)',
                   color: '#fde68a',
@@ -1945,13 +2087,13 @@ export default function FishPrawnCrabGame() {
               className="w-full max-w-sm rounded-md p-6 bg-white"
             >
               {/* Title */}
-              <div className="text-center text-xs font-bold tracking-widest text-gray-500">
+              <div className="text-center text-xs font-bold  text-gray-500">
                 {t('result.titleRandom')}
               </div>
 
               {/* Result */}
               <div
-                className="mt-2 text-center text-2xl font-bold tracking-widest"
+                className="mt-2 text-center text-2xl font-bold "
                 style={{ color: accent }}
               >
                 {isWin ? t('result.youWin') : isEven ? t('result.breakEven') : t('result.youLost')}
@@ -1968,7 +2110,7 @@ export default function FishPrawnCrabGame() {
                     style={{ border: '1px solid #c4b5fd', background: '#f5f5f5' }}
                   />
                 ))}
-                <span className="ml-2 rounded-full px-3 py-1 text-xs font-bold tracking-widest" style={{ background: '#f3f4f6', color: '#1e0040' }}>
+                <span className="ml-2 rounded-full px-3 py-1 text-xs font-bold " style={{ background: '#f3f4f6', color: '#1e0040' }}>
                   {t('result.sum')} {resultModal.diceSum}
                 </span>
               </div>
@@ -1991,7 +2133,7 @@ export default function FishPrawnCrabGame() {
 
               {/* Total balance */}
               <div className="flex items-center justify-between pt-2">
-                <span className="text-xs font-bold tracking-widest">
+                <span className="text-xs font-bold ">
                   {t('result.totalBalance')}
                 </span>
                 <span className="text-xl font-bold">
@@ -2002,7 +2144,7 @@ export default function FishPrawnCrabGame() {
               {/* Continue */}
               <button
                 onClick={() => setResultModal(null)}
-                className="mt-5 w-full rounded-xl py-3 text-sm font-bold tracking-widest transition-opacity hover:opacity-90 border"
+                className="mt-5 w-full rounded-xl py-3 text-sm font-bold  transition-opacity hover:opacity-90 border"
                 autoFocus
               >
                 {t('result.continue')}
@@ -2031,11 +2173,11 @@ export default function FishPrawnCrabGame() {
               onClick={e => e.stopPropagation()}
               className="w-full max-w-sm rounded-md p-6 bg-white"
             >
-              <div className="text-center text-xs font-bold tracking-widest text-gray-500">
+              <div className="text-center text-xs font-bold  text-gray-500">
                 {t('result.titleLive')}
               </div>
               <div
-                className="mt-2 text-center text-2xl font-bold tracking-widest"
+                className="mt-2 text-center text-2xl font-bold "
                 style={{ color: accent }}
               >
                 {isWin ? t('result.youWin') : isEven ? t('result.breakEven') : t('result.youLost')}
@@ -2050,7 +2192,7 @@ export default function FishPrawnCrabGame() {
                     style={{ border: '1px solid #c4b5fd', background: '#f5f5f5' }}
                   />
                 ))}
-                <span className="ml-2 rounded-full px-3 py-1 text-xs font-bold tracking-widest" style={{ background: '#f3f4f6', color: '#1e0040' }}>
+                <span className="ml-2 rounded-full px-3 py-1 text-xs font-bold " style={{ background: '#f3f4f6', color: '#1e0040' }}>
                   {t('result.sum')} {m.diceSum}
                 </span>
               </div>
@@ -2072,12 +2214,12 @@ export default function FishPrawnCrabGame() {
               })()}
               <div className='w-full border-1 border-primary mt-4'></div>
               <div className="flex items-center justify-between pt-2">
-                <span className="text-xs font-bold tracking-widest">{t('result.totalBalance')}</span>
+                <span className="text-xs font-bold ">{t('result.totalBalance')}</span>
                 <span className="text-xl font-bold">{m.newBalance.toLocaleString()}</span>
               </div>
               <button
                 onClick={() => setLiveSettleModal(null)}
-                className="mt-5 w-full rounded-xl py-3 text-sm font-bold tracking-widest transition-opacity hover:opacity-90 border"
+                className="mt-5 w-full rounded-xl py-3 text-sm font-bold  transition-opacity hover:opacity-90 border"
                 autoFocus
               >
                 {t('result.continue')}
@@ -2112,7 +2254,7 @@ export default function FishPrawnCrabGame() {
 // ─── Awaiting-result UI helpers (LIVE mode) ─────────────────────────────────
 
 const SYMBOL_VALUE_BY_KEY: Record<SymbolKey, number> = {
-  prawn: 1, crab: 2, fish: 3, rooster: 4, frog: 5, gourd: 6,
+  prawn: 1, fish: 2, crab: 3, rooster: 4, frog: 5, gourd: 6,
 }
 
 const RANGE_LABELS: Record<string, { label: string; range: string }> = {
@@ -2195,7 +2337,7 @@ function MyBetsList({ bets }: { bets: MyLiveBet[] }) {
       className="w-full max-w-sm rounded-xl p-4"
       style={{ background: '#1e0040', border: '1px solid #4c1d95' }}
     >
-      <div className="mb-2 text-[10px] font-bold tracking-widest" style={{ color: '#a78bfa' }}>
+      <div className="mb-2 text-[10px] font-bold " style={{ color: '#a78bfa' }}>
         {t('result.yourBetsThisRound')}
       </div>
       <ul className="flex flex-col gap-1">
@@ -2255,7 +2397,7 @@ function BetBreakdown({ symbolBets, rangeBets, pairBets }: BetBreakdownProps) {
     <div className="mt-3 flex flex-col gap-3">
       {sections.map(s => (
         <div key={s.title} className="rounded-md px-3 py-2" style={{ background: '#f3f4f6' }}>
-          <div className="mb-1.5 text-[10px] font-bold tracking-widest text-gray-500">{s.title}</div>
+          <div className="mb-1.5 text-[10px] font-bold  text-gray-500">{s.title}</div>
           <ul className="flex flex-col gap-1">
             {s.bets.map((b, i) => {
               const sign = b.won ? '+' : '-'
@@ -2270,7 +2412,7 @@ function BetBreakdown({ symbolBets, rangeBets, pairBets }: BetBreakdownProps) {
                     <span className="inline-flex items-center">{b.label}</span>
                     <span className="truncate">· {b.amount.toLocaleString()}</span>
                   </span>
-                  <span className="text-[10px] font-bold tracking-widest" style={{ color: b.won ? '#16a34a' : '#dc2626' }}>
+                  <span className="text-[10px] font-bold " style={{ color: b.won ? '#16a34a' : '#dc2626' }}>
                     {b.won ? t('result.win') : t('result.loss')}
                   </span>
                   <span className="text-right font-bold" style={{ color: b.won ? '#16a34a' : '#dc2626' }}>
@@ -2287,15 +2429,15 @@ function BetBreakdown({ symbolBets, rangeBets, pairBets }: BetBreakdownProps) {
           even when only one section has bets. */}
       <div className="rounded-md px-3 py-2 text-[11px]" style={{ background: '#f3f4f6' }}>
         <div className="flex items-center justify-between">
-          <span className="font-bold tracking-widest text-gray-600">{t('result.totalStake')}</span>
+          <span className="font-bold  text-gray-600">{t('result.totalStake')}</span>
           <span className="font-bold" style={{ color: '#1e0040' }}>{totalStake.toLocaleString()}</span>
         </div>
         <div className="mt-1 flex items-center justify-between">
-          <span className="font-bold tracking-widest text-gray-600">{t('result.totalWon')}</span>
+          <span className="font-bold  text-gray-600">{t('result.totalWon')}</span>
           <span className="font-bold" style={{ color: '#16a34a' }}>+{totalWon.toLocaleString()}</span>
         </div>
         <div className="mt-1 flex items-center justify-between">
-          <span className="font-bold tracking-widest text-gray-600">{t('result.totalLost')}</span>
+          <span className="font-bold  text-gray-600">{t('result.totalLost')}</span>
           <span className="font-bold" style={{ color: '#dc2626' }}>-{totalLost.toLocaleString()}</span>
         </div>
       </div>

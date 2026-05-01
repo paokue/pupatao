@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import {
   Form,
-  redirect,
   useFetcher,
   useLoaderData,
   useNavigate,
@@ -9,13 +8,14 @@ import {
   useActionData,
 } from 'react-router'
 import type { Route } from './+types/profile'
-import { ArrowLeft, Camera, Loader, Phone, Save, Upload, UserRound, X } from 'lucide-react'
+import { ArrowLeft, Camera, Gift, Loader, Phone, Save, Share2, Upload, UserRound, X } from 'lucide-react'
 import { toast } from 'sonner'
 import { requireUser } from '~/lib/auth.server'
 import { prisma } from '~/lib/prisma.server'
+import { buildReferralShareUrl, generateUniqueReferralCode } from '~/lib/referral.server'
 import { playClick } from '~/hooks/use-sound-engine'
 import { useT } from '~/lib/use-t'
-import { LanguageSwitch } from '~/components/LanguageSwitch'
+import { ReferralModal, ReferralsList } from '~/components/ReferralModal'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // LOADER — return the full authenticated user profile (sans password hash).
@@ -27,6 +27,32 @@ export async function loader({ request }: Route.LoaderArgs) {
     where: { userId: user.id },
     select: { qrUrl: true },
   })
+
+  // Defensive backfill: existing users from before the referral schema
+  // migration may not have a code yet. Generate one on first profile view
+  // so the referral modal always has something to show.
+  let referralCode = user.referralCode
+  if (!referralCode) {
+    referralCode = await generateUniqueReferralCode()
+    await prisma.user.update({ where: { id: user.id }, data: { referralCode } })
+  }
+  const referralShareUrl = buildReferralShareUrl(request, referralCode)
+
+  // Everyone this user has invited. `firstTopupApprovedAt` tells the modal
+  // whether the 10,000 ₭ referral bonus has already paid out for that referee.
+  const referrals = await prisma.user.findMany({
+    where: { referredById: user.id },
+    orderBy: { createdAt: 'desc' },
+    select: {
+      id: true,
+      tel: true,
+      firstName: true,
+      lastName: true,
+      createdAt: true,
+      firstTopupApprovedAt: true,
+    },
+  })
+
   return {
     user: {
       id: user.id,
@@ -40,6 +66,15 @@ export async function loader({ request }: Route.LoaderArgs) {
       createdAt: user.createdAt.toISOString(),
     },
     bankQrUrl: bank?.qrUrl ?? null,
+    referralCode,
+    referralShareUrl,
+    referrals: referrals.map(r => ({
+      id: r.id,
+      tel: r.tel,
+      name: [r.firstName, r.lastName].filter(Boolean).join(' ') || null,
+      joinedAt: r.createdAt.toISOString(),
+      bonusPaid: !!r.firstTopupApprovedAt,
+    })),
   }
 }
 
@@ -103,12 +138,13 @@ type AvatarResponse = { url?: string; path?: string; error?: string }
 type BankQrResponse = { url?: string; qrUrl?: string; error?: string }
 
 export default function ProfilePage() {
-  const { user, bankQrUrl } = useLoaderData<typeof loader>()
+  const { user, bankQrUrl, referralCode, referralShareUrl, referrals } = useLoaderData<typeof loader>()
   const actionData = useActionData<typeof action>()
   const navigate = useNavigate()
   const navigation = useNavigation()
   const avatarFetcher = useFetcher<AvatarResponse>()
   const t = useT()
+  const [referralOpen, setReferralOpen] = useState(false)
 
   const saving = navigation.state === 'submitting'
   const uploading = avatarFetcher.state !== 'idle'
@@ -275,9 +311,24 @@ export default function ProfilePage() {
           <input type="hidden" name="profile" value={avatarUrl} />
 
           <section
-            className="flex flex-col gap-5 rounded-2xl px-5 py-6 sm:px-6"
+            className="relative flex flex-col gap-5 rounded-2xl px-5 py-6 sm:px-6"
             style={{ background: 'linear-gradient(135deg, #4c1d95, #1e0040)', border: '1px solid #a78bfa' }}
           >
+            {/* Top-right referral button — opens a modal with the share link
+                + QR. Type=button so it doesn't submit the surrounding profile
+                form. */}
+            <button
+              type="button"
+              onClick={() => { playClick(); setReferralOpen(true) }}
+              className="absolute right-3 top-3 flex items-center gap-1 rounded-full px-3 py-1.5 text-[10px] font-bold  transition-opacity hover:opacity-90"
+              style={{ background: 'linear-gradient(135deg, #f59e0b, #b45309)', color: '#1e0040', border: '1.5px solid #fcd34d' }}
+              aria-label={t('referral.title')}
+              title={t('referral.title')}
+            >
+              <Share2 size={12} />
+              {t('referral.invite')}
+            </button>
+
             {/* Avatar + identity */}
             <div className="flex flex-col items-center gap-3">
               <div className="relative">
@@ -432,7 +483,7 @@ export default function ProfilePage() {
               <button
                 type="submit"
                 disabled={saving || uploading}
-                className="flex items-center justify-center gap-2 rounded-xl px-5 py-2.5 text-sm font-bold tracking-widest transition-opacity disabled:opacity-50"
+                className="flex items-center justify-center gap-2 rounded-xl px-5 py-2.5 text-sm font-bold  transition-opacity disabled:opacity-50"
                 style={{
                   background: 'linear-gradient(135deg, #16a34a, #15803d)',
                   color: '#fff',
@@ -454,7 +505,7 @@ export default function ProfilePage() {
         >
           <div className="flex items-center justify-between">
             <div className="text-sm font-bold" style={{ color: '#e9d5ff' }}>{t('profile.bankQr')}</div>
-            <span className="text-[10px] font-bold tracking-widest" style={{ color: '#a78bfa' }}>
+            <span className="text-[10px] font-bold " style={{ color: '#a78bfa' }}>
               {currentBankQr ? t('profile.current') : t('profile.notSet')}
             </span>
           </div>
@@ -500,7 +551,7 @@ export default function ProfilePage() {
               type="button"
               onClick={() => bankFileInputRef.current?.click()}
               disabled={bankUploading}
-              className="flex items-center gap-2 rounded-lg px-4 py-2 text-xs font-bold tracking-widest transition-opacity hover:opacity-90 disabled:opacity-50"
+              className="flex items-center gap-2 rounded-lg px-4 py-2 text-xs font-bold  transition-opacity hover:opacity-90 disabled:opacity-50"
               style={{ background: '#4c1d95', color: '#fde68a', border: '1.5px solid #7c3aed' }}
             >
               <Upload size={14} />
@@ -518,16 +569,40 @@ export default function ProfilePage() {
           )}
         </section>
 
-        {/* Language switch — single source of truth for picking app locale. */}
+        {/* Referrals — same list rendered inside the share modal, mirrored
+            here so the user sees their invite progress without opening the
+            modal. */}
         <section
-          className="flex flex-col gap-3 rounded-2xl px-5 py-6 sm:px-6"
+          className="flex flex-col gap-4 rounded-2xl px-5 py-6 sm:px-6"
           style={{ background: 'linear-gradient(135deg, #4c1d95, #1e0040)', border: '1px solid #a78bfa' }}
         >
-          <div className="text-sm font-bold" style={{ color: '#e9d5ff' }}>{t('profile.language')}</div>
-          <p className="text-xs" style={{ color: '#c4b5fd' }}>{t('profile.languageDesc')}</p>
-          <LanguageSwitch variant="inline" />
+          <div className="flex items-center justify-between">
+            <div className="text-sm font-bold" style={{ color: '#e9d5ff' }}>{t('referral.title')}</div>
+            <button
+              type="button"
+              onClick={() => { playClick(); setReferralOpen(true) }}
+              className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[11px] font-bold  transition-opacity hover:opacity-90"
+              style={{ background: '#7c3aed', color: '#fff', border: '1px solid #a78bfa' }}
+            >
+              <Gift size={12} />
+              {t('referral.invite')}
+            </button>
+          </div>
+          <p className="text-xs" style={{ color: '#c4b5fd' }}>
+            {t('referral.description')}
+          </p>
+          <ReferralsList referrals={referrals} />
         </section>
+
       </div>
+
+      <ReferralModal
+        open={referralOpen}
+        onClose={() => setReferralOpen(false)}
+        shareUrl={referralShareUrl}
+        code={referralCode ?? ''}
+        referrals={referrals}
+      />
 
       {bankLightbox && (
         <div

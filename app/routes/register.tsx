@@ -4,6 +4,7 @@ import type { Route } from './+types/register'
 import { prisma } from '~/lib/prisma.server'
 import { createUserSession, getCurrentUser, hashPassword } from '~/lib/auth.server'
 import { notifyAdmin } from '~/lib/pusher.server'
+import { generateUniqueReferralCode, resolveReferralCode } from '~/lib/referral.server'
 import { LoginModal } from '~/components/LoginModal'
 import { RegisterModal } from '~/components/RegisterModal'
 
@@ -32,16 +33,24 @@ export async function action({ request }: Route.ActionArgs) {
     if (existing) return { error: 'This phone number is already registered.' }
 
     const passwordHash = await hashPassword(password)
+    const referralCode = await generateUniqueReferralCode()
+    // Optional referrer — ignored silently if the code doesn't resolve.
+    const refRaw = String(formData.get('ref') ?? '').trim() || null
+    const referredById = await resolveReferralCode(refRaw)
 
-    // Every new user gets BOTH wallets. Demo starts at 1M for practice; Real starts at 0.
+    // Every new user gets THREE wallets. DEMO starts at 1M for practice; REAL
+    // and PROMO start at 0. PROMO is funded only by first-topup admin approval.
     const user = await prisma.user.create({
       data: {
         tel,
         passwordHash,
+        referralCode,
+        referredById,
         wallets: {
           create: [
             { type: 'DEMO', balance: 1_000_000 },
             { type: 'REAL', balance: 0 },
+            { type: 'PROMO', balance: 0 },
           ],
         },
       },

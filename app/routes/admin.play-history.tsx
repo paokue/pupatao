@@ -1,20 +1,29 @@
 import { Link, useLoaderData, useRevalidator, useSearchParams } from 'react-router'
 import type { Route } from './+types/admin.play-history'
+import type { WalletType } from '@prisma/client'
 import { requireAdmin } from '~/lib/admin-auth.server'
 import { prisma } from '~/lib/prisma.server'
 import { ADMIN_CHANNEL, type BetPlacedPayload, type RoundResolvedPayload } from '~/lib/pusher-channels'
 import { usePusherEvent } from '~/hooks/use-pusher'
 
 const PAGE_SIZE = 30
+const WALLET_TABS: ReadonlyArray<Extract<WalletType, 'REAL' | 'DEMO'>> = ['REAL', 'DEMO']
 
 export async function loader({ request }: Route.LoaderArgs) {
   await requireAdmin(request)
   const url = new URL(request.url)
   const page = Math.max(1, parseInt(url.searchParams.get('page') ?? '1', 10) || 1)
+  const walletParam = url.searchParams.get('wallet')
+  const walletType: 'REAL' | 'DEMO' = walletParam === 'DEMO' ? 'DEMO' : 'REAL'
+
+  // Filter bets by the wallet they were placed against, so REAL and DEMO
+  // play streams are auditable separately.
+  const where = { wallet: { is: { type: walletType } } }
 
   const [total, bets] = await Promise.all([
-    prisma.bet.count(),
+    prisma.bet.count({ where }),
     prisma.bet.findMany({
+      where,
       orderBy: { createdAt: 'desc' },
       skip: (page - 1) * PAGE_SIZE,
       take: PAGE_SIZE,
@@ -29,6 +38,7 @@ export async function loader({ request }: Route.LoaderArgs) {
     page,
     total,
     pageSize: PAGE_SIZE,
+    walletType,
     bets: bets.map(b => ({
       id: b.id,
       kind: b.kind,
@@ -46,11 +56,11 @@ export async function loader({ request }: Route.LoaderArgs) {
       },
       round: b.round
         ? {
-            mode: b.round.mode,
-            status: b.round.status,
-            dice: [b.round.dice1, b.round.dice2, b.round.dice3].filter(Boolean) as string[],
-            diceSum: b.round.diceSum,
-          }
+          mode: b.round.mode,
+          status: b.round.status,
+          dice: [b.round.dice1, b.round.dice2, b.round.dice3].filter(Boolean) as string[],
+          diceSum: b.round.diceSum,
+        }
         : null,
     })),
   }
@@ -79,11 +89,38 @@ export default function AdminPlayHistory() {
     return `?${next.toString()}`
   }
 
+  function walletHref(w: 'REAL' | 'DEMO') {
+    const next = new URLSearchParams(params)
+    next.set('wallet', w)
+    next.delete('page') // switching wallet resets pagination
+    return `?${next.toString()}`
+  }
+
   return (
     <div className="flex flex-col gap-4">
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-bold" style={{ color: '#fde68a' }}>Play history</h1>
         <span className="text-xs" style={{ color: '#a5b4fc' }}>{data.total.toLocaleString()} bets</span>
+      </div>
+
+      {/* ─── Wallet tabs — REAL vs DEMO ───────────────────────────────── */}
+      <div className="flex rounded-xl overflow-hidden" style={{ border: '1px solid #4338ca' }}>
+        {WALLET_TABS.map(w => {
+          const active = data.walletType === w
+          return (
+            <Link
+              key={w}
+              to={walletHref(w)}
+              className="flex-1 py-2 text-center text-xs font-bold  transition-all"
+              style={{
+                background: active ? '#4338ca' : '#0f172a',
+                color: active ? '#fff' : '#a5b4fc',
+              }}
+            >
+              {w === 'REAL' ? 'REAL ACCOUNT' : 'DEMO ACCOUNT'}
+            </Link>
+          )
+        })}
       </div>
 
       {data.bets.length === 0 && (
@@ -109,7 +146,7 @@ export default function AdminPlayHistory() {
         <div className="hidden overflow-x-auto rounded-xl md:block" style={{ background: '#0f172a', border: '1px solid #1e1b4b' }}>
           <table className="w-full text-left text-sm">
             <thead style={{ color: '#a5b4fc' }}>
-              <tr className="text-[10px] font-bold tracking-widest" style={{ background: '#1e1b4b' }}>
+              <tr className="text-[10px] font-bold " style={{ background: '#1e1b4b' }}>
                 <th className="px-3 py-2">WHEN</th>
                 <th className="px-3 py-2">PLAYER</th>
                 <th className="px-3 py-2">BET</th>
@@ -185,11 +222,11 @@ function BetCard({ b }: { b: Bet }) {
       </div>
       <div className="mt-2 grid grid-cols-2 gap-2">
         <div className="rounded-md px-2 py-1.5" style={{ background: '#1e1b4b' }}>
-          <div className="text-[9px] font-bold tracking-widest" style={{ color: '#a5b4fc' }}>STAKE</div>
+          <div className="text-[9px] font-bold " style={{ color: '#a5b4fc' }}>STAKE</div>
           <div className="font-semibold" style={{ color: '#fde68a' }}>{b.amount.toLocaleString()}</div>
         </div>
         <div className="rounded-md px-2 py-1.5" style={{ background: '#1e1b4b' }}>
-          <div className="text-[9px] font-bold tracking-widest" style={{ color: '#a5b4fc' }}>PAYOUT</div>
+          <div className="text-[9px] font-bold " style={{ color: '#a5b4fc' }}>PAYOUT</div>
           <div className="font-semibold" style={{ color: b.payout && b.payout > 0 ? '#4ade80' : '#a5b4fc' }}>
             {b.payout != null ? b.payout.toLocaleString() : '—'}
           </div>
@@ -204,7 +241,7 @@ function ResultPill({ result }: { result: string | null }) {
   const isWin = result === 'WIN'
   return (
     <span
-      className="inline-block rounded-full px-2 py-0.5 text-[10px] font-bold tracking-widest"
+      className="inline-block rounded-full px-2 py-0.5 text-[10px] font-bold "
       style={{
         background: isWin ? 'rgba(22,163,74,0.2)' : 'rgba(220,38,38,0.2)',
         color: isWin ? '#4ade80' : '#f87171',

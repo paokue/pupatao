@@ -6,7 +6,7 @@ import type { BetPlacedPayload } from '~/lib/pusher-channels'
 import { getPayoutConfig, type PayoutConfig } from '~/lib/payouts.server'
 
 const SYMBOL_VALUES: Record<DiceSymbol, number> = {
-  PRAWN: 1, CRAB: 2, FISH: 3, ROOSTER: 4, FROG: 5, GOURD: 6,
+  PRAWN: 1, FISH: 2, CRAB: 3, ROOSTER: 4, FROG: 5, GOURD: 6,
 }
 const VALID_SYMBOLS: ReadonlyArray<DiceSymbol> = ['PRAWN', 'CRAB', 'FISH', 'ROOSTER', 'FROG', 'GOURD']
 const RANGE_BOUNDS: Record<RangeKey, { min: number; max: number }> = {
@@ -18,7 +18,7 @@ const VALID_RANGES: ReadonlyArray<RangeKey> = ['LOW', 'MIDDLE', 'HIGH']
 const MAX_BET_PER_ROUND = 10_000_000  // sanity cap, prevents abuse
 
 type Mode = 'RANDOM' | 'LIVE'
-type WalletKey = 'DEMO' | 'REAL'
+type WalletKey = 'DEMO' | 'REAL' | 'PROMO'
 
 interface SymbolBetIn { symbol: DiceSymbol; cell: number; amount: number }
 interface RangeBetIn { range: RangeKey; amount: number }
@@ -41,7 +41,7 @@ function parsePayload(raw: unknown): PlayRoundPayload | { error: string } {
   if (!raw || typeof raw !== 'object') return { error: 'Invalid payload.' }
   const p = raw as Partial<PlayRoundPayload>
   if (p.mode !== 'RANDOM' && p.mode !== 'LIVE') return { error: 'mode must be RANDOM or LIVE.' }
-  if (p.wallet !== 'DEMO' && p.wallet !== 'REAL') return { error: 'wallet must be DEMO or REAL.' }
+  if (p.wallet !== 'DEMO' && p.wallet !== 'REAL' && p.wallet !== 'PROMO') return { error: 'wallet must be DEMO, REAL or PROMO.' }
   if (p.mode === 'RANDOM') {
     if (!Array.isArray(p.dice) || p.dice.length !== 3) return { error: 'dice must be 3 symbols.' }
     for (const d of p.dice) {
@@ -175,7 +175,7 @@ async function handleRandomRound(args: {
   rangeBets: RangeBetIn[]
   pairBets: PairBetIn[]
 }) {
-  const { user, wallet, totalStake, dice, symbolBets, rangeBets, pairBets } = args
+  const { user, wallet, walletKey, totalStake, dice, symbolBets, rangeBets, pairBets } = args
   const cfg = getPayoutConfig()
   const diceSum = SYMBOL_VALUES[dice[0]] + SYMBOL_VALUES[dice[1]] + SYMBOL_VALUES[dice[2]]
   const symbolPayouts = symbolBets.map(b => payoutForSymbol(b, dice, cfg))
@@ -185,8 +185,35 @@ async function handleRandomRound(args: {
     symbolPayouts.reduce((a, b) => a + b, 0) +
     rangePayouts.reduce((a, b) => a + b, 0) +
     pairPayouts.reduce((a, b) => a + b, 0)
+
+  // PROMO wallet rule: winning stakes return to PROMO; profit credits REAL.
+  // Losing stakes are forfeit. Effective per-bet:
+  //   WIN:  PROMO unchanged for stake  (stake refunded), REAL +profit
+  //   LOSS: PROMO −stake, REAL unchanged.
+  // For DEMO/REAL: existing behavior — gross payout returns to the same wallet.
+  const isPromo = walletKey === 'PROMO'
+  let realProfit = 0       // only used when isPromo — sum of profit from winning bets
+  let promoStakeReturn = 0 // only used when isPromo — sum of stakes from winning bets
+  if (isPromo) {
+    symbolBets.forEach((b, i) => {
+      const p = symbolPayouts[i]
+      if (p > 0) { promoStakeReturn += b.amount; realProfit += p - b.amount }
+    })
+    rangeBets.forEach((b, i) => {
+      const p = rangePayouts[i]
+      if (p > 0) { promoStakeReturn += b.amount; realProfit += p - b.amount }
+    })
+    pairBets.forEach((b, i) => {
+      const p = pairPayouts[i]
+      if (p > 0) { promoStakeReturn += b.amount; realProfit += p - b.amount }
+    })
+  }
   const netDelta = totalPayout - totalStake
-  const newBalance = wallet.balance + netDelta
+  // newBalance is the source-wallet's resulting balance — for PROMO that's
+  // (start − totalStake + promoStakeReturn); for DEMO/REAL it's start + netDelta.
+  const newBalance = isPromo
+    ? wallet.balance - totalStake + promoStakeReturn
+    : wallet.balance + netDelta
 
   const result = await prisma.$transaction(async db => {
     const round = await db.gameRound.create({
@@ -236,6 +263,7 @@ async function handleRandomRound(args: {
     })
     await Promise.all(betWrites)
 
+    // Source wallet (DEMO/REAL/PROMO) — debit/credit per the rule above.
     await db.wallet.update({
       where: { id: wallet.id },
       data: { balance: newBalance, version: { increment: 1 } },
@@ -250,7 +278,40 @@ async function handleRandomRound(args: {
         note: 'Self-play round stake',
       },
     })
-    if (totalPayout > 0) {
+
+    if (isPromo) {
+      // PROMO win → refund stake portion to PROMO, profit goes to REAL.
+      if (promoStakeReturn > 0) {
+        await db.transaction.create({
+          data: {
+            userId: user.id, walletId: wallet.id, type: 'WIN',
+            amount: promoStakeReturn, balanceBefore: balanceAfterStake, balanceAfter: newBalance,
+            status: 'COMPLETED', roundId: round.id, idempotencyKey: crypto.randomUUID(),
+            note: 'Self-play round — PROMO stake refund (winning bets)',
+          },
+        })
+      }
+      if (realProfit > 0) {
+        const realWallet = await db.wallet.findUnique({
+          where: { userId_type: { userId: user.id, type: 'REAL' } },
+        })
+        if (realWallet) {
+          const newRealBalance = realWallet.balance + realProfit
+          await db.wallet.update({
+            where: { id: realWallet.id },
+            data: { balance: newRealBalance, version: { increment: 1 } },
+          })
+          await db.transaction.create({
+            data: {
+              userId: user.id, walletId: realWallet.id, type: 'WIN',
+              amount: realProfit, balanceBefore: realWallet.balance, balanceAfter: newRealBalance,
+              status: 'COMPLETED', roundId: round.id, idempotencyKey: crypto.randomUUID(),
+              note: 'Self-play round — PROMO profit credited to REAL',
+            },
+          })
+        }
+      }
+    } else if (totalPayout > 0) {
       await db.transaction.create({
         data: {
           userId: user.id, walletId: wallet.id, type: 'WIN',

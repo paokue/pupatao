@@ -78,6 +78,13 @@ export async function loader({ request }: Route.LoaderArgs) {
     // Shouldn't happen — register creates both wallets — but be defensive.
     throw new Response('Real wallet not found for this account.', { status: 500 })
   }
+  // PROMO is read-only here (no deposit/withdraw/transfer affordances).
+  // Just surface the balance so customers see the bonus they can play with.
+  const promoWallet = await prisma.wallet.findUnique({
+    where: { userId_type: { userId: user.id, type: 'PROMO' } },
+    select: { balance: true },
+  })
+  const promoBalance = promoWallet?.balance ?? 0
 
   // Aggregates + history per tab + bank QR + pending locked transfers (sent
   // and received). Pending transfers drive the receive list and sender's
@@ -151,6 +158,7 @@ export async function loader({ request }: Route.LoaderArgs) {
   return {
     me: { id: user.id, tel: user.tel },
     balance: wallet.balance,
+    promoBalance,
     totalDeposit: depositAgg._sum.amount ?? 0,
     totalWithdraw: withdrawAgg._sum.amount ?? 0,
     deposits: deposits.map(serialize),
@@ -756,7 +764,7 @@ export default function WalletPage() {
             {balanceHidden ? <EyeOff size={16} className="text-purple-300" /> : <Eye size={16} className="text-purple-300" />}
           </button>
 
-          <div className="mb-1 text-center text-xs font-bold tracking-widest" style={{ color: '#c4b5fd' }}>
+          <div className="mb-1 text-center text-xs font-bold " style={{ color: '#c4b5fd' }}>
             {t('wallet.totalAvailable')}
           </div>
           <div className="mb-1 text-center text-4xl font-bold" style={{ color: '#fde68a' }}>
@@ -766,18 +774,36 @@ export default function WalletPage() {
 
           <div className="grid grid-cols-2 gap-3 border-t pt-4" style={{ borderColor: '#6d28d9' }}>
             <div className="text-center">
-              <div className="text-[10px] font-bold tracking-widest" style={{ color: '#a78bfa' }}>{t('wallet.totalDeposit')}</div>
+              <div className="text-[10px] font-bold " style={{ color: '#a78bfa' }}>{t('wallet.totalDeposit')}</div>
               <div className="mt-1 text-lg font-bold" style={{ color: '#4ade80' }}>
                 {balanceHidden ? HIDDEN : `+${loaderData.totalDeposit.toLocaleString()}`}
               </div>
             </div>
             <div className="text-center">
-              <div className="text-[10px] font-bold tracking-widest" style={{ color: '#a78bfa' }}>{t('wallet.totalWithdraw')}</div>
+              <div className="text-[10px] font-bold " style={{ color: '#a78bfa' }}>{t('wallet.totalWithdraw')}</div>
               <div className="mt-1 text-lg font-bold" style={{ color: '#f87171' }}>
                 {balanceHidden ? HIDDEN : `-${loaderData.totalWithdraw.toLocaleString()}`}
               </div>
             </div>
           </div>
+
+          {/* PROMO wallet — read-only here. Bonus credit, only spendable via
+              betting; the play page is where customers pick PROMO as the
+              source wallet. */}
+          {loaderData.promoBalance > 0 && (
+            <div
+              className="mt-3 flex items-center justify-between rounded-xl px-3 py-2 text-xs"
+              style={{ background: 'rgba(245,158,11,0.1)', border: '1px dashed #f59e0b' }}
+            >
+              <div className="flex flex-col">
+                <span className="text-[10px] font-bold " style={{ color: '#fcd34d' }}>{t('wallet.promoWallet')}</span>
+                <span className="text-[10px]" style={{ color: '#c4b5fd' }}>{t('wallet.promoNote')}</span>
+              </div>
+              <span className="text-base font-bold" style={{ color: '#fde68a' }}>
+                {balanceHidden ? HIDDEN : `${loaderData.promoBalance.toLocaleString()} ₭`}
+              </span>
+            </div>
+          )}
         </div>
 
         {inlineError && (
@@ -814,7 +840,7 @@ export default function WalletPage() {
             <button
               onClick={openDeposit}
               disabled={!amount}
-              className="w-full rounded-xl py-4 text-base font-bold tracking-widest transition-all disabled:opacity-50"
+              className="w-full rounded-xl py-4 text-base font-bold  transition-all disabled:opacity-50"
               style={{
                 background: 'linear-gradient(135deg, #16a34a, #15803d)',
                 color: '#fff',
@@ -835,7 +861,7 @@ export default function WalletPage() {
             <button
               onClick={openWithdraw}
               disabled={!amount}
-              className="w-full rounded-xl py-4 text-base font-bold tracking-widest transition-all disabled:opacity-50"
+              className="w-full rounded-xl py-4 text-base font-bold  transition-all disabled:opacity-50"
               style={{
                 background: 'linear-gradient(135deg, #b45309, #78350f)',
                 color: '#fff',
@@ -856,7 +882,7 @@ export default function WalletPage() {
             <button
               onClick={openTransfer}
               disabled={!amount}
-              className="w-full rounded-xl py-4 text-base font-bold tracking-widest transition-all disabled:opacity-50"
+              className="w-full rounded-xl py-4 text-base font-bold  transition-all disabled:opacity-50"
               style={{
                 background: 'linear-gradient(135deg, #2563eb, #1d4ed8)',
                 color: '#fff',
@@ -869,7 +895,7 @@ export default function WalletPage() {
 
             {/* Pending — to receive (locked transfers waiting for this user) */}
             <section className="mt-2">
-              <div className="mb-2 text-sm font-bold tracking-widest" style={{ color: '#a78bfa' }}>
+              <div className="mb-2 text-sm font-bold " style={{ color: '#a78bfa' }}>
                 {t('transfer.pendingReceived')}
               </div>
               {loaderData.pendingReceived.length === 0 ? (
@@ -888,7 +914,7 @@ export default function WalletPage() {
             {/* Pending — sent (locked transfers waiting for the receiver) */}
             {loaderData.pendingSent.length > 0 && (
               <section>
-                <div className="mb-2 text-sm font-bold tracking-widest" style={{ color: '#a78bfa' }}>
+                <div className="mb-2 text-sm font-bold " style={{ color: '#a78bfa' }}>
                   {t('transfer.pendingSent')}
                 </div>
                 <div className="flex flex-col gap-2">
@@ -904,7 +930,7 @@ export default function WalletPage() {
         {/* ─── Per-tab history ─────────────────────────────────────────── */}
         <section>
           <div className="mb-2 flex items-center justify-between">
-            <div className="text-sm font-bold tracking-widest" style={{ color: '#a78bfa' }}>
+            <div className="text-sm font-bold " style={{ color: '#a78bfa' }}>
               {tab === 'deposit' ? t('wallet.history.deposit') : tab === 'withdraw' ? t('wallet.history.withdraw') : t('wallet.history.transfer')}
             </div>
             {isRevalidating && <Loader size={14} className="animate-spin" style={{ color: '#c4b5fd' }} />}
@@ -923,7 +949,7 @@ export default function WalletPage() {
               <button
                 type="button"
                 onClick={loadMoreTab}
-                className="rounded-xl py-3 text-sm font-bold tracking-widest transition-opacity hover:opacity-90"
+                className="rounded-xl py-3 text-sm font-bold  transition-opacity hover:opacity-90"
                 style={{ background: '#4c1d95', color: '#e9d5ff', border: '2px dashed #7c3aed' }}
               >
                 {t('common.loadMoreCount', { n: Math.min(VISIBLE_STEP, tabRemaining) })}
@@ -979,7 +1005,7 @@ export default function WalletPage() {
 // ─── Pending transfer cards ──────────────────────────────────────────────────
 
 type PendingReceived = ReturnType<typeof useLoaderData<typeof loader>>['pendingReceived'][number]
-type PendingSent     = ReturnType<typeof useLoaderData<typeof loader>>['pendingSent'][number]
+type PendingSent = ReturnType<typeof useLoaderData<typeof loader>>['pendingSent'][number]
 
 function PendingReceivedRow({ p, onClaim }: { p: PendingReceived; onClaim: () => void }) {
   const t = useT()
@@ -1011,7 +1037,7 @@ function PendingReceivedRow({ p, onClaim }: { p: PendingReceived; onClaim: () =>
           type="button"
           onClick={onClaim}
           disabled={isLocked}
-          className="rounded-md px-3 py-1 text-[10px] font-bold tracking-widest disabled:opacity-40"
+          className="rounded-md px-3 py-1 text-[10px] font-bold  disabled:opacity-40"
           style={{ background: '#16a34a', color: '#fff', border: '1px solid #4ade80' }}
         >
           {t('transfer.receive')}
@@ -1050,7 +1076,7 @@ function PendingSentRow({ p, onCancel }: { p: PendingSent; onCancel: () => void 
         <button
           type="button"
           onClick={onCancel}
-          className="rounded-md px-3 py-1 text-[10px] font-bold tracking-widest"
+          className="rounded-md px-3 py-1 text-[10px] font-bold "
           style={{ background: '#7f1d1d', color: '#fff', border: '1px solid #fca5a5' }}
         >
           {t('transfer.cancel')}
@@ -1123,8 +1149,8 @@ function TxRow({ tx }: { tx: TxRowTx }) {
   const statusLabel =
     tx.status === 'COMPLETED' ? t('common.status.completed')
       : tx.status === 'PENDING' ? t('common.status.pending')
-      : tx.status === 'CANCELLED' ? t('common.status.cancelled')
-      : t('common.status.failed')
+        : tx.status === 'CANCELLED' ? t('common.status.cancelled')
+          : t('common.status.failed')
 
   return (
     <div

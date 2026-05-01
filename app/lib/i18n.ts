@@ -92,6 +92,11 @@ export const STRINGS = {
   "wallet.title": { lo: "ກະເປົາເງິນ", en: "Wallet" },
   "wallet.totalAvailable": { lo: "ຍອດທີ່ມີ", en: "TOTAL AVAILABLE" },
   "wallet.realWallet": { lo: "ກະເປົາຈິງ", en: "Real wallet" },
+  "wallet.promoWallet": { lo: "ກະເປົາໂປຣໂມ", en: "PROMO wallet" },
+  "wallet.promoNote": {
+    lo: "ໃຊ້ສຳລັບແທງເທົ່ານັ້ນ — ຖອນບໍ່ໄດ້",
+    en: "Bettable only — not withdrawable",
+  },
   "wallet.totalDeposit": { lo: "ຝາກທັງໝົດ", en: "TOTAL DEPOSIT" },
   "wallet.totalWithdraw": { lo: "ຖອນທັງໝົດ", en: "TOTAL WITHDRAW" },
   "wallet.tab.deposit": { lo: "ຝາກ", en: "Deposit" },
@@ -317,6 +322,33 @@ export const STRINGS = {
   "menu.profileDesc": { lo: "ແກ້ໄຂຂໍ້ມູນຂອງທ່ານ", en: "Edit your information" },
   "menu.loggedIn": { lo: "ເຂົ້າສູ່ລະບົບແລ້ວ", en: "Logged in" },
   "menu.language": { lo: "ພາສາ", en: "Language" },
+  "menu.account": { lo: "ບັນຊີ", en: "ACCOUNT" },
+  "menu.mode": { lo: "ໂໝດ", en: "MODE" },
+  "menu.realAccount": { lo: "ບັນຊີຈິງ", en: "Real account" },
+  "menu.demoAccount": { lo: "ບັນຊີທົດລອງ", en: "Demo account" },
+  "menu.promoAccount": { lo: "ບັນຊີໂປຣໂມ", en: "Promo account" },
+
+  // ─── Referral modal (opens from the profile card) ────────────────────
+  "referral.title": { lo: "ແນະນໍາເພື່ອນ", en: "Invite a friend" },
+  "referral.invite": { lo: "ແນະນໍາ", en: "Invite" },
+  "referral.description": {
+    lo: "ຮັບ 10,000 ກີບ ຕໍ່ຜູ້ຖືກແນະນໍາ ທີ່ລົງທະບຽນ ແລະ ຝາກຄັ້ງທຳອິດສຳເລັດ.",
+    en: "Got 10,000 Kip per referred friend who registers and completes their first top-up.",
+  },
+  "referral.codeLabel": { lo: "ລະຫັດແນະນໍາ", en: "Code" },
+  "referral.copy": { lo: "ສຳເນົາ", en: "Copy" },
+  "referral.copied": { lo: "ສຳເນົາແລ້ວ", en: "Copied" },
+  "referral.linkAria": { lo: "ລິ້ງແນະນໍາ", en: "Referral link" },
+  "referral.yourReferrals": {
+    lo: "ຄົນທີ່ທ່ານແນະນໍາ",
+    en: "PEOPLE YOU INVITED",
+  },
+  "referral.empty": {
+    lo: "ຍັງບໍ່ມີຄົນເຂົ້າຮ່ວມ. ແບ່ງປັນລະຫັດຂອງທ່ານເພື່ອຮັບ 10,000 ກີບ ຕໍ່ຄົນ.",
+    en: "No invites yet. Share your code to earn 10,000 ₭ per friend.",
+  },
+  "referral.bonusPaid": { lo: "ຮັບໂບນັດແລ້ວ", en: "BONUS PAID" },
+  "referral.pending": { lo: "ລໍຖ້າຝາກຄັ້ງທຳອິດ", en: "AWAITING TOPUP" },
 
   // ─── Game board action buttons ───────────────────────────────────────
   "game.custom": { lo: "ໃສ່ຈໍານວນເອງ", en: "CUSTOM" },
@@ -332,7 +364,10 @@ export const STRINGS = {
     en: "Enter any amount from {min} up to {max} ₭.",
   },
   "chip.customPlaceholder": { lo: "{min} – {max}", en: "{min} – {max}" },
-  "chip.customPreview": { lo: "ຕົວຢ່າງ: {amount} ₭", en: "Preview: {amount} ₭" },
+  "chip.customPreview": {
+    lo: "ຕົວຢ່າງ: {amount} ₭",
+    en: "Preview: {amount} ₭",
+  },
   "chip.setChip": { lo: "ຕັ້ງເຫຼຽນ", en: "Set Chip" },
 
   // ─── LIVE-mode status badges + waiting messages ──────────────────────
@@ -385,10 +420,10 @@ export const STRINGS = {
 
   // ─── Round result modal (RANDOM + LIVE) ──────────────────────────────
   "result.titleRandom": { lo: "ຜົນຂອງຮອບ", en: "ROUND RESULT" },
-  "result.titleLive": { lo: "ຜົນຮອບສົດ", en: "LIVE ROUND RESULT" },
+  "result.titleLive": { lo: "ຜົນຮອບໄລຟສົດ", en: "LIVE ROUND RESULT" },
   "result.youWin": { lo: "🎉 ທ່ານຊະນະ!", en: "🎉 YOU WIN!" },
-  "result.youLost": { lo: "💔 ທ່ານແພ້", en: "💔 YOU LOST" },
-  "result.breakEven": { lo: "ເສີມຍອດ", en: "BREAK EVEN" },
+  "result.youLost": { lo: "💔 ທ່ານເສຍແລ້ວ", en: "💔 YOU LOST" },
+  "result.breakEven": { lo: "ສະເໝີ", en: "BREAK EVEN" },
   "result.stake": { lo: "ແທງ", en: "STAKE" },
   "result.payout": { lo: "ໄດ້ຮັບ", en: "PAYOUT" },
   "result.totalBalance": { lo: "ຍອດເງິນທັງໝົດ", en: "TOTAL BALANCE" },
@@ -439,9 +474,25 @@ export const STRINGS = {
     lo: "ປະຫວັດການຫຼິ້ນ (ກະເປົາຈິງ)",
     en: "Play History (Real)",
   },
+  "history.titleDemo": {
+    lo: "ປະຫວັດການຫຼິ້ນ (ກະເປົາທົດລອງ)",
+    en: "Play History (Demo)",
+  },
+  "history.tab.real": {
+    lo: "ກະເປົາຈິງ",
+    en: "REAL",
+  },
+  "history.tab.demo": {
+    lo: "ກະເປົາທົດລອງ",
+    en: "DEMO",
+  },
   "history.lifetimeStats": {
     lo: "ສະຖິຕິລວມ · ກະເປົາຈິງ",
     en: "LIFETIME STATS · REAL WALLET",
+  },
+  "history.lifetimeStatsDemo": {
+    lo: "ສະຖິຕິລວມ · ກະເປົາທົດລອງ",
+    en: "LIFETIME STATS · DEMO WALLET",
   },
   "history.totalGames": { lo: "ຈຳນວນເກມ", en: "TOTAL GAMES" },
   "history.winRate": { lo: "ອັດຕາຊະນະ", en: "WIN RATE" },

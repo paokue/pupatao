@@ -100,7 +100,7 @@ export function ClaimTransferModal({ open, onClose, transfer, onSuccess }: Claim
           <X size={18} />
         </button>
 
-        <div className="mb-1 text-center text-xs font-bold tracking-widest" style={{ color: '#a78bfa' }}>
+        <div className="mb-1 text-center text-xs font-bold " style={{ color: '#a78bfa' }}>
           {t('transfer.claimTitle')}
         </div>
         <h2 className="mb-1 text-center text-2xl font-bold" style={{ color: '#fde68a' }}>
@@ -111,7 +111,7 @@ export function ClaimTransferModal({ open, onClose, transfer, onSuccess }: Claim
         </p>
 
         <form onSubmit={submit} className="flex flex-col gap-3">
-          <label className="text-[10px] font-bold tracking-widest" style={{ color: '#a78bfa' }}>
+          <label className="text-[10px] font-bold " style={{ color: '#a78bfa' }}>
             {t('transfer.code')}
           </label>
           <div className="relative">
@@ -137,7 +137,7 @@ export function ClaimTransferModal({ open, onClose, transfer, onSuccess }: Claim
           <button
             type="submit"
             disabled={submitting || code.length !== 6}
-            className="mt-1 flex w-full items-center justify-center gap-2 rounded-xl py-3 text-sm font-bold tracking-widest transition-opacity disabled:opacity-40"
+            className="mt-1 flex w-full items-center justify-center gap-2 rounded-xl py-3 text-sm font-bold  transition-opacity disabled:opacity-40"
             style={{
               background: 'linear-gradient(135deg, #16a34a, #15803d)',
               color: '#fff',

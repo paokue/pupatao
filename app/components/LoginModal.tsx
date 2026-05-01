@@ -83,7 +83,7 @@ export function LoginModal({ open, onClose, next, hint, onSwitchToRegister }: Lo
           <X size={18} />
         </button>
 
-        <div className="mb-1 text-center text-xs font-bold tracking-widest" style={{ color: '#a78bfa' }}>
+        <div className="mb-1 text-center text-xs font-bold " style={{ color: '#a78bfa' }}>
           {t('auth.titleLogin')}
         </div>
         <h2 className="mb-1 text-center text-2xl font-bold" style={{ color: '#fde68a' }}>
@@ -129,7 +129,7 @@ export function LoginModal({ open, onClose, next, hint, onSwitchToRegister }: Lo
           <button
             type="submit"
             disabled={submitting}
-            className="flex items-center justify-center gap-2 mt-2 w-full rounded-xl py-3 text-sm font-bold tracking-widest disabled:opacity-50"
+            className="flex items-center justify-center gap-2 mt-2 w-full rounded-xl py-3 text-sm font-bold  disabled:opacity-50"
             style={{
               background: 'linear-gradient(135deg, #16a34a, #15803d)',
               color: '#fff',

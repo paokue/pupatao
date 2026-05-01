@@ -121,14 +121,14 @@ export default function AdminLayout() {
         <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-3">
           <div className="flex items-center gap-2">
             <ShieldCheck size={18} style={{ color: '#a5b4fc' }} />
-            <span className="text-sm font-bold tracking-widest" style={{ color: '#fde68a' }}>
+            <span className="text-sm font-bold " style={{ color: '#fde68a' }}>
               PUPATAO · ADMIN
             </span>
           </div>
           <div className="flex items-center gap-3">
             <div className="hidden flex-col text-right sm:flex">
               <span className="text-xs font-semibold" style={{ color: '#e9d5ff' }}>{fullName}</span>
-              <span className="text-[10px] font-bold tracking-widest" style={{ color: '#a5b4fc' }}>{admin.role}</span>
+              <span className="text-[10px] font-bold " style={{ color: '#a5b4fc' }}>{admin.role}</span>
             </div>
             <Form method="post" action="/admin/logout">
               <button

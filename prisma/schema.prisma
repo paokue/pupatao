@@ -64,6 +64,20 @@ model User {
   createdAt    DateTime      @default(now())
   updatedAt    DateTime      @updatedAt
 
+  // Referral — every user gets a short unique code at registration. New
+  // sign-ups arriving from /register?ref=CODE attach `referredById`.
+  // Nullable on the schema so an initial `db push` against an existing
+  // database doesn't fail; the seed script backfills codes, and new
+  // registrations always set it. App code treats it as required.
+  referralCode String? @unique
+  referredById String? @db.ObjectId
+  referredBy   User?   @relation("UserReferrals", fields: [referredById], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  referrals    User[]  @relation("UserReferrals")
+
+  // Set the first time the admin approves any DEPOSIT for this user. Drives
+  // both the new-user PROMO tier bonus and the referrer's REAL referral bonus.
+  firstTopupApprovedAt DateTime?
+
   wallets              Wallet[]
   bets                 Bet[]
   sessions             Session[]
@@ -75,6 +89,7 @@ model User {
 
   @@index([role])
   @@index([status])
+  @@index([referredById])
 }
 
 // Staff account. Separate from User for auth segregation (email+2FA) and
@@ -223,8 +238,12 @@ model Wallet {
 }
 
 enum WalletType {
-  DEMO // reset-to-1M allowed; play-money only — no deposit/withdraw/transfer
-  REAL // deposit/withdraw/transfer; never reset
+  DEMO  // reset-to-1M allowed; play-money only — no deposit/withdraw/transfer
+  REAL  // deposit/withdraw/transfer; never reset
+  PROMO // bonus credit — bettable but never withdrawable. On a winning PROMO
+        //   bet, the stake stays in PROMO and the profit credits REAL. On a
+        //   losing PROMO bet, the stake is forfeit. Funded by first-topup tier
+        //   bonus and admin adjustments only.
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -267,12 +286,14 @@ model Transaction {
 enum TransactionType {
   DEPOSIT
   WITHDRAW
-  TRANSFER_OUT // sender row — debit
-  TRANSFER_IN  // recipient row — credit
-  WIN          // bet won — credit
-  LOSS         // bet lost — debit (stake forfeit)
-  DEMO_RESET   // audit entry when demo wallet reset to 1M (not strictly a balance op)
-  ADJUSTMENT   // manual admin correction (+ or - per sign of `amount` if you relax the rule)
+  TRANSFER_OUT     // sender row — debit
+  TRANSFER_IN      // recipient row — credit
+  WIN              // bet won — credit
+  LOSS             // bet lost — debit (stake forfeit)
+  DEMO_RESET       // audit entry when demo wallet reset to 1M (not strictly a balance op)
+  ADJUSTMENT       // manual admin correction (+ or - per sign of `amount` if you relax the rule)
+  PROMO_BONUS      // first-topup tier bonus credited to PROMO wallet
+  REFERRAL_BONUS   // 10k credit to a referrer's REAL wallet when their referee's first topup is approved
 }
 
 enum TransactionStatus {
@@ -330,9 +351,9 @@ enum RoundStatus {
 }
 
 enum DiceSymbol {
-  FISH    // value 3
+  FISH    // value 2
   PRAWN   // value 1
-  CRAB    // value 2
+  CRAB    // value 3
   ROOSTER // value 4
   GOURD   // value 6
   FROG    // value 5

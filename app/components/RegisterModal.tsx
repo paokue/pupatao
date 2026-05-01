@@ -76,7 +76,7 @@ export function RegisterModal({ open, onClose, next, hint, onSwitchToLogin }: Re
           <X size={18} />
         </button>
 
-        <div className="mb-1 text-center text-xs font-bold tracking-widest" style={{ color: '#a78bfa' }}>
+        <div className="mb-1 text-center text-xs font-bold " style={{ color: '#a78bfa' }}>
           {t('auth.titleRegister')}
         </div>
         <h2 className="mb-1 text-center text-2xl font-bold" style={{ color: '#fde68a' }}>
@@ -88,6 +88,13 @@ export function RegisterModal({ open, onClose, next, hint, onSwitchToLogin }: Re
 
         <fetcher.Form method="post" action="/register" className="flex flex-col gap-3">
           <input type="hidden" name="next" value={nextPath} />
+          {/* Forward ?ref=CODE from the URL so the action can attach
+              referredById. Hidden — link-share only, per spec. */}
+          <input
+            type="hidden"
+            name="ref"
+            value={typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('ref') ?? '' : ''}
+          />
 
           <label className="flex gap-1 text-xs font-semibold" style={{ color: '#c4b5fd' }}>
             {t('auth.phone')} <span className='text-rose-500'>*</span>
@@ -124,7 +131,7 @@ export function RegisterModal({ open, onClose, next, hint, onSwitchToLogin }: Re
           <button
             type="submit"
             disabled={submitting}
-            className="flex items-center justify-center gap-2 mt-2 w-full rounded-xl py-3 text-sm font-bold tracking-widest disabled:opacity-50"
+            className="flex items-center justify-center gap-2 mt-2 w-full rounded-xl py-3 text-sm font-bold  disabled:opacity-50"
             style={{
               background: 'linear-gradient(135deg, #16a34a, #15803d)',
               color: '#fff',

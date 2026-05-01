@@ -2,7 +2,7 @@
 // Simple in-memory user store with localStorage persistence (client-side demo)
 // In production, replace with a real auth/database backend.
 
-export type WalletKey = 'demo' | 'real'
+export type WalletKey = 'demo' | 'real' | 'promo'
 
 // Amount granted by the demo-reset button (demo wallet only).
 export const DEMO_RESET_AMOUNT = 1_000_000
@@ -38,7 +38,7 @@ export interface UserProfile {
   avatar: string              // initials or url
   balance: number             // mirror of balances[activeWallet] (kept in sync)
   activeWallet: WalletKey
-  balances: { demo: number; real: number }
+  balances: { demo: number; real: number; promo: number }
   joinedAt: number
   transactions: Transaction[]
   playHistory: PlayRecord[]
@@ -50,7 +50,7 @@ const DEFAULT_USER: UserProfile = {
   email: 'player@example.com',
   avatar: 'LP',
   activeWallet: 'demo',
-  balances: { demo: DEMO_RESET_AMOUNT, real: 0 },
+  balances: { demo: DEMO_RESET_AMOUNT, real: 0, promo: 0 },
   balance: DEMO_RESET_AMOUNT,
   joinedAt: Date.now() - 1000 * 60 * 60 * 24 * 30,
   transactions: [
@@ -73,9 +73,11 @@ function loadUser(): UserProfile {
     const raw = localStorage.getItem('fpc_user')
     if (!raw) return { ...DEFAULT_USER }
     const parsed = JSON.parse(raw) as Partial<UserProfile> & { balance?: number }
-    // Migration: old single-balance format → dual-wallet.
+    // Migration: old single-balance format → dual-wallet, dual-wallet → triple.
     if (!parsed.balances) {
-      parsed.balances = { demo: parsed.balance ?? DEMO_RESET_AMOUNT, real: 0 }
+      parsed.balances = { demo: parsed.balance ?? DEMO_RESET_AMOUNT, real: 0, promo: 0 }
+    } else if (typeof (parsed.balances as { promo?: number }).promo !== 'number') {
+      parsed.balances = { ...parsed.balances, promo: 0 }
     }
     if (!parsed.activeWallet) parsed.activeWallet = 'demo'
     parsed.balance = parsed.balances[parsed.activeWallet]
@@ -273,20 +275,24 @@ export function setBalance(newBalance: number) {
   notify()
 }
 
-// Sync both wallet balances from the server (called after login / on mount when
+// Sync all wallet balances from the server (called after login / on mount when
 // the root loader provides DB-backed wallet rows). The active wallet's mirrored
 // `balance` field is also updated so the play page reflects the real value.
-export function hydrateBalances(demo: number, real: number) {
+export function hydrateBalances(demo: number, real: number, promo: number) {
   const u = getUser()
   const next: UserProfile = {
     ...u,
-    balances: { demo, real },
-    balance: u.activeWallet === 'demo' ? demo : real,
+    balances: { demo, real, promo },
+    balance:
+      u.activeWallet === 'demo' ? demo
+        : u.activeWallet === 'real' ? real
+          : promo,
   }
   // Skip the persist+notify churn if nothing actually changed.
   if (
     next.balances.demo === u.balances.demo &&
     next.balances.real === u.balances.real &&
+    next.balances.promo === u.balances.promo &&
     next.balance === u.balance
   ) {
     return

@@ -18,12 +18,12 @@ export async function loader({ request }: Route.LoaderArgs) {
 
   const where = q
     ? {
-        OR: [
-          { tel: { contains: q, mode: 'insensitive' as const } },
-          { firstName: { contains: q, mode: 'insensitive' as const } },
-          { lastName: { contains: q, mode: 'insensitive' as const } },
-        ],
-      }
+      OR: [
+        { tel: { contains: q, mode: 'insensitive' as const } },
+        { firstName: { contains: q, mode: 'insensitive' as const } },
+        { lastName: { contains: q, mode: 'insensitive' as const } },
+      ],
+    }
     : {}
 
   const [total, users] = await Promise.all([
@@ -131,7 +131,7 @@ export default function AdminCustomers() {
         </div>
         <button
           type="submit"
-          className="rounded-lg px-3 py-2 text-xs font-bold tracking-widest"
+          className="rounded-lg px-3 py-2 text-xs font-bold "
           style={{ background: '#4338ca', color: '#fff', border: '1.5px solid #818cf8' }}
         >
           {loading ? <Loader size={14} className="animate-spin" /> : 'SEARCH'}
@@ -153,7 +153,7 @@ export default function AdminCustomers() {
       >
         <table className="w-full text-left text-sm">
           <thead style={{ color: '#a5b4fc' }}>
-            <tr className="text-[10px] font-bold tracking-widest" style={{ background: '#1e1b4b' }}>
+            <tr className="text-[10px] font-bold " style={{ background: '#1e1b4b' }}>
               <th className="px-3 py-2">PHONE</th>
               <th className="px-3 py-2">NAME</th>
               <th className="px-3 py-2 text-right">REAL</th>
@@ -251,11 +251,11 @@ function CustomerCard({ u, onAction }: { u: CustomerRow; onAction: (u: CustomerR
       </div>
       <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
         <div className="rounded-md px-2 py-1.5" style={{ background: '#1e1b4b' }}>
-          <div className="text-[9px] font-bold tracking-widest" style={{ color: '#a5b4fc' }}>REAL</div>
+          <div className="text-[9px] font-bold " style={{ color: '#a5b4fc' }}>REAL</div>
           <div className="font-semibold" style={{ color: '#fde68a' }}>{u.real.toLocaleString()}</div>
         </div>
         <div className="rounded-md px-2 py-1.5" style={{ background: '#1e1b4b' }}>
-          <div className="text-[9px] font-bold tracking-widest" style={{ color: '#a5b4fc' }}>DEMO</div>
+          <div className="text-[9px] font-bold " style={{ color: '#a5b4fc' }}>DEMO</div>
           <div className="font-semibold" style={{ color: '#a5b4fc' }}>{u.demo.toLocaleString()}</div>
         </div>
       </div>
@@ -273,7 +273,7 @@ function ActionButton({ u, onClick, disabled }: { u: CustomerRow; onClick: () =>
       type="button"
       onClick={onClick}
       disabled={disabled}
-      className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[10px] font-bold tracking-widest disabled:opacity-50"
+      className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[10px] font-bold  disabled:opacity-50"
       style={{
         background: isActive ? '#7f1d1d' : '#14532d',
         color: '#fff',
@@ -306,7 +306,7 @@ function StatusPill({ status }: { status: string }) {
   const s = map[status] ?? map.ACTIVE
   return (
     <span
-      className="inline-block rounded-full px-2 py-0.5 text-[10px] font-bold tracking-widest"
+      className="inline-block rounded-full px-2 py-0.5 text-[10px] font-bold "
       style={{ background: s.bg, color: s.color }}
     >
       {status}

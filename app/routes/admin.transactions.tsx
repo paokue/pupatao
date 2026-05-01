@@ -110,7 +110,16 @@ export async function action({ request }: Route.ActionArgs) {
     // Approve: re-read wallet inside the transaction so balanceBefore/After are
     // computed against the live balance (in case other writes happened between
     // the user's submit and admin's approval).
-    const updated = await prisma.$transaction(async db => {
+    //
+    // First-topup bonuses (DEPOSIT only):
+    //   New user themselves — tier bonus credited to PROMO wallet
+    //     100,000 ≤ deposit < 500,000  → +10,000
+    //     500,000 ≤ deposit < 1,000,000 → +50,000
+    //     deposit ≥ 1,000,000           → +100,000
+    //   Referrer (if any)  — flat 10,000 credited to their REAL wallet.
+    // Both apply only on the *first* admin-approved DEPOSIT for the user
+    // (User.firstTopupApprovedAt is null → first; non-null → already done).
+    const result = await prisma.$transaction(async db => {
       const wallet = await db.wallet.findUnique({ where: { id: tx.walletId } })
       if (!wallet) throw new Error('Wallet not found.')
 
@@ -139,8 +148,89 @@ export async function action({ request }: Route.ActionArgs) {
           metadata: { amount: tx.amount, walletId: tx.walletId, newBalance },
         },
       })
-      return u
+
+      const bonus = { promo: 0, promoNewBalance: 0, referrer: { userId: '', amount: 0, newRealBalance: 0 } }
+      if (tx.type === 'DEPOSIT') {
+        const user = await db.user.findUnique({
+          where: { id: tx.userId },
+          select: { id: true, firstTopupApprovedAt: true, referredById: true },
+        })
+        const isFirstApproval = user && !user.firstTopupApprovedAt
+        if (isFirstApproval) {
+          // Mark the user so subsequent DEPOSIT approvals don't re-grant.
+          await db.user.update({
+            where: { id: tx.userId },
+            data: { firstTopupApprovedAt: new Date() },
+          })
+
+          // Tier bonus to the new user's PROMO wallet.
+          const promoBonus = tx.amount >= 1_000_000 ? 100_000
+            : tx.amount >= 500_000 ? 50_000
+              : tx.amount >= 100_000 ? 10_000
+                : 0
+          if (promoBonus > 0) {
+            const promoWallet = await db.wallet.findUnique({
+              where: { userId_type: { userId: tx.userId, type: 'PROMO' } },
+            })
+            if (promoWallet) {
+              const newPromo = promoWallet.balance + promoBonus
+              await db.wallet.update({
+                where: { id: promoWallet.id },
+                data: { balance: newPromo, version: { increment: 1 } },
+              })
+              await db.transaction.create({
+                data: {
+                  userId: tx.userId,
+                  walletId: promoWallet.id,
+                  type: 'PROMO_BONUS',
+                  amount: promoBonus,
+                  balanceBefore: promoWallet.balance,
+                  balanceAfter: newPromo,
+                  status: 'COMPLETED',
+                  idempotencyKey: crypto.randomUUID(),
+                  note: `First-topup bonus (deposit ${tx.amount.toLocaleString()} ₭ → +${promoBonus.toLocaleString()} ₭ promo)`,
+                },
+              })
+              bonus.promo = promoBonus
+              bonus.promoNewBalance = newPromo
+            }
+          }
+
+          // Referrer's 10,000 ₭ to their REAL wallet (withdrawable).
+          if (user.referredById) {
+            const refReal = await db.wallet.findUnique({
+              where: { userId_type: { userId: user.referredById, type: 'REAL' } },
+            })
+            if (refReal) {
+              const refNew = refReal.balance + 10_000
+              await db.wallet.update({
+                where: { id: refReal.id },
+                data: { balance: refNew, version: { increment: 1 } },
+              })
+              await db.transaction.create({
+                data: {
+                  userId: user.referredById,
+                  walletId: refReal.id,
+                  type: 'REFERRAL_BONUS',
+                  amount: 10_000,
+                  balanceBefore: refReal.balance,
+                  balanceAfter: refNew,
+                  status: 'COMPLETED',
+                  targetUserId: tx.userId,
+                  idempotencyKey: crypto.randomUUID(),
+                  note: `Referral bonus — referee ${tx.userId.slice(-6)} first-topup approved`,
+                },
+              })
+              bonus.referrer = { userId: user.referredById, amount: 10_000, newRealBalance: refNew }
+            }
+          }
+        }
+      }
+
+      return { updated: u, bonus }
     })
+
+    const { updated, bonus } = result
 
     notifyUser(tx.userId, 'transaction:updated', {
       id: updated.id,
@@ -151,6 +241,29 @@ export async function action({ request }: Route.ActionArgs) {
       note: updated.note,
     })
     notifyAdmin('transaction:resolved', { id: updated.id })
+
+    // Bonus toasts piggyback on the existing transaction:updated channel
+    // so the customer's wallet/header re-reads its balance.
+    if (bonus.promo > 0) {
+      notifyUser(tx.userId, 'transaction:updated', {
+        id: `promo-bonus:${updated.id}`,
+        status: 'COMPLETED',
+        type: 'DEPOSIT',
+        amount: bonus.promo,
+        balanceAfter: bonus.promoNewBalance,
+        note: `First-topup bonus +${bonus.promo.toLocaleString()} ₭ to promo wallet`,
+      })
+    }
+    if (bonus.referrer.userId) {
+      notifyUser(bonus.referrer.userId, 'transaction:updated', {
+        id: `referral-bonus:${updated.id}`,
+        status: 'COMPLETED',
+        type: 'DEPOSIT',
+        amount: bonus.referrer.amount,
+        balanceAfter: bonus.referrer.newRealBalance,
+        note: `Referral bonus +${bonus.referrer.amount.toLocaleString()} ₭ — your referee just joined`,
+      })
+    }
 
     return { ok: true }
   } catch (err) {
@@ -222,7 +335,7 @@ export default function AdminTransactions() {
           <Link
             key={t}
             to={tabHref(t)}
-            className="rounded-lg px-4 py-1.5 text-xs font-bold tracking-widest capitalize"
+            className="rounded-lg px-4 py-1.5 text-xs font-bold  capitalize"
             style={{
               background: data.tab === t ? '#4338ca' : '#1e1b4b',
               color: data.tab === t ? '#fff' : '#a5b4fc',
@@ -240,7 +353,7 @@ export default function AdminTransactions() {
           <Link
             key={s}
             to={statusHref(s)}
-            className="rounded-md px-2 py-1 text-[10px] font-bold tracking-widest"
+            className="rounded-md px-2 py-1 text-[10px] font-bold "
             style={{
               background: data.status === s ? '#1e1b4b' : 'transparent',
               color: data.status === s ? '#fde68a' : '#818cf8',
@@ -372,7 +485,7 @@ function TxCard({
             {tx.user.name ? `${tx.user.name} · ` : ''}{tx.user.tel}
           </span>
           <span
-            className="rounded-full px-2 py-0.5 text-[10px] font-bold tracking-widest"
+            className="rounded-full px-2 py-0.5 text-[10px] font-bold "
             style={{ background: statusStyle.bg, color: statusStyle.color }}
           >
             {tx.status}
@@ -395,7 +508,7 @@ function TxCard({
               type="button"
               onClick={onReject}
               disabled={loading}
-              className="inline-flex items-center gap-1 rounded-md px-2.5 py-1.5 text-[10px] font-bold tracking-widest disabled:opacity-50"
+              className="inline-flex items-center gap-1 rounded-md px-2.5 py-1.5 text-[10px] font-bold  disabled:opacity-50"
               style={{ background: '#7f1d1d', color: '#fff', border: '1px solid #fca5a5' }}
             >
               <X size={10} />
@@ -405,7 +518,7 @@ function TxCard({
               type="button"
               onClick={onApprove}
               disabled={loading}
-              className="inline-flex items-center gap-1 rounded-md px-2.5 py-1.5 text-[10px] font-bold tracking-widest disabled:opacity-50"
+              className="inline-flex items-center gap-1 rounded-md px-2.5 py-1.5 text-[10px] font-bold  disabled:opacity-50"
               style={{ background: '#14532d', color: '#fff', border: '1px solid #4ade80' }}
             >
               <Check size={10} />
@@ -418,7 +531,7 @@ function TxCard({
               href={tx.slipUrl}
               target="_blank"
               rel="noreferrer"
-              className="inline-flex items-center gap-1 text-[10px] font-bold tracking-widest underline"
+              className="inline-flex items-center gap-1 text-[10px] font-bold  underline"
               style={{ color: '#a5b4fc' }}
             >
               <ExternalLink size={10} /> SLIP

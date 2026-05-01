@@ -8,6 +8,7 @@ import { playClick } from '~/hooks/use-sound-engine'
 import { useT } from '~/lib/use-t'
 
 type SymbolKey = 'fish' | 'prawn' | 'crab' | 'rooster' | 'gourd' | 'frog'
+type WalletTab = 'REAL' | 'DEMO'
 
 const RANGE_BOUNDS: Record<RangeKey, { min: number; max: number }> = {
   LOW: { min: 3, max: 8 },
@@ -16,118 +17,130 @@ const RANGE_BOUNDS: Record<RangeKey, { min: number; max: number }> = {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// LOADER — pulls Bet rows for the customer's REAL wallet, groups by round,
-// derives per-bet payout / per-round totals so the page can render purely
-// from the server payload.
+// LOADER — pulls Bet rows for both the customer's REAL and DEMO wallets,
+// groups by round, derives per-bet payout / per-round totals. The page
+// renders one wallet's records at a time via a tab toggle.
 // ─────────────────────────────────────────────────────────────────────────────
+
+type RoundRecord = {
+  id: string
+  mode: GameMode
+  timestamp: string
+  dice: SymbolKey[]
+  diceSum: number
+  totalStake: number
+  totalPayout: number
+  netResult: number
+  isWin: boolean
+  bets: Array<{
+    id: string
+    kind: BetKind
+    amount: number
+    payout: number | null
+    result: BetResult | null
+    symbol: SymbolKey | null
+    pairA: SymbolKey | null
+    pairB: SymbolKey | null
+    range: RangeKey | null
+  }>
+}
 
 export async function loader({ request }: Route.LoaderArgs) {
   const user = await requireUser(request)
 
-  const wallet = await prisma.wallet.findUnique({
-    where: { userId_type: { userId: user.id, type: 'REAL' } },
-    select: { id: true },
+  const wallets = await prisma.wallet.findMany({
+    where: { userId: user.id, type: { in: ['REAL', 'DEMO'] } },
+    select: { id: true, type: true },
   })
-  if (!wallet) {
-    throw new Response('Real wallet not found.', { status: 500 })
+  const realWallet = wallets.find(w => w.type === 'REAL')
+  const demoWallet = wallets.find(w => w.type === 'DEMO')
+  if (!realWallet || !demoWallet) {
+    throw new Response('Wallets not found.', { status: 500 })
   }
 
-  // 500 most recent bets — generous enough for now; if a player accumulates
+  // 500 most recent bets per wallet — sufficient for now; if a player accumulates
   // more we'll add proper pagination.
-  const bets = await prisma.bet.findMany({
-    where: { walletId: wallet.id },
-    orderBy: { createdAt: 'desc' },
-    take: 500,
-    include: {
-      round: {
-        select: {
-          id: true,
-          mode: true,
-          dice1: true, dice2: true, dice3: true,
-          diceSum: true,
-          resolvedAt: true,
-          createdAt: true,
-        },
+  const betInclude = {
+    round: {
+      select: {
+        id: true,
+        mode: true,
+        dice1: true, dice2: true, dice3: true,
+        diceSum: true,
+        resolvedAt: true,
+        createdAt: true,
       },
     },
-  })
+  } as const
+  const [realBets, demoBets] = await Promise.all([
+    prisma.bet.findMany({
+      where: { walletId: realWallet.id },
+      orderBy: { createdAt: 'desc' },
+      take: 500,
+      include: betInclude,
+    }),
+    prisma.bet.findMany({
+      where: { walletId: demoWallet.id },
+      orderBy: { createdAt: 'desc' },
+      take: 500,
+      include: betInclude,
+    }),
+  ])
 
-  type RoundRecord = {
-    id: string
-    mode: GameMode
-    timestamp: string
-    dice: SymbolKey[]
-    diceSum: number
-    totalStake: number
-    totalPayout: number
-    netResult: number
-    isWin: boolean
-    bets: Array<{
-      id: string
-      kind: BetKind
-      amount: number
-      payout: number | null
-      result: BetResult | null
-      symbol: SymbolKey | null
-      pairA: SymbolKey | null
-      pairB: SymbolKey | null
-      range: RangeKey | null
-    }>
-  }
-
-  const grouped = new Map<string, RoundRecord>()
-  for (const b of bets) {
-    if (!b.round) continue
-    const r = b.round
-    if (!grouped.has(r.id)) {
-      const dice: SymbolKey[] = [r.dice1, r.dice2, r.dice3]
-        .filter(Boolean)
-        .map(d => (d as string).toLowerCase() as SymbolKey)
-      grouped.set(r.id, {
-        id: r.id,
-        mode: r.mode,
-        timestamp: (r.resolvedAt ?? r.createdAt).toISOString(),
-        dice,
-        diceSum: r.diceSum ?? 0,
-        totalStake: 0,
-        totalPayout: 0,
-        netResult: 0,
-        isWin: false,
-        bets: [],
+  function buildBucket(bets: typeof realBets) {
+    const grouped = new Map<string, RoundRecord>()
+    for (const b of bets) {
+      if (!b.round) continue
+      const r = b.round
+      if (!grouped.has(r.id)) {
+        const dice: SymbolKey[] = [r.dice1, r.dice2, r.dice3]
+          .filter(Boolean)
+          .map(d => (d as string).toLowerCase() as SymbolKey)
+        grouped.set(r.id, {
+          id: r.id,
+          mode: r.mode,
+          timestamp: (r.resolvedAt ?? r.createdAt).toISOString(),
+          dice,
+          diceSum: r.diceSum ?? 0,
+          totalStake: 0,
+          totalPayout: 0,
+          netResult: 0,
+          isWin: false,
+          bets: [],
+        })
+      }
+      const rec = grouped.get(r.id)!
+      rec.totalStake += b.amount
+      rec.totalPayout += b.payout ?? 0
+      rec.bets.push({
+        id: b.id,
+        kind: b.kind,
+        amount: b.amount,
+        payout: b.payout,
+        result: b.result,
+        symbol: b.symbol ? (b.symbol.toLowerCase() as SymbolKey) : null,
+        pairA: b.pairA ? (b.pairA.toLowerCase() as SymbolKey) : null,
+        pairB: b.pairB ? (b.pairB.toLowerCase() as SymbolKey) : null,
+        range: b.range,
       })
     }
-    const rec = grouped.get(r.id)!
-    rec.totalStake += b.amount
-    rec.totalPayout += b.payout ?? 0
-    rec.bets.push({
-      id: b.id,
-      kind: b.kind,
-      amount: b.amount,
-      payout: b.payout,
-      result: b.result,
-      symbol: b.symbol ? (b.symbol.toLowerCase() as SymbolKey) : null,
-      pairA: b.pairA ? (b.pairA.toLowerCase() as SymbolKey) : null,
-      pairB: b.pairB ? (b.pairB.toLowerCase() as SymbolKey) : null,
-      range: b.range,
-    })
+    for (const rec of grouped.values()) {
+      rec.netResult = rec.totalPayout - rec.totalStake
+      rec.isWin = rec.netResult > 0
+    }
+    const records = Array.from(grouped.values()).sort(
+      (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime(),
+    )
+    const totalRounds = records.length
+    const wins = records.filter(r => r.isWin).length
+    const winRate = totalRounds ? Math.round((wins / totalRounds) * 100) : 0
+    const netPL = records.reduce((s, r) => s + r.netResult, 0)
+    return { records, stats: { totalRounds, wins, winRate, netPL } }
   }
-  for (const rec of grouped.values()) {
-    rec.netResult = rec.totalPayout - rec.totalStake
-    rec.isWin = rec.netResult > 0
-  }
-
-  const records = Array.from(grouped.values()).sort(
-    (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime(),
-  )
-
-  const totalRounds = records.length
-  const wins = records.filter(r => r.isWin).length
-  const winRate = totalRounds ? Math.round((wins / totalRounds) * 100) : 0
-  const netPL = records.reduce((s, r) => s + r.netResult, 0)
 
   return {
-    records,
-    stats: { totalRounds, wins, winRate, netPL },
+    REAL: buildBucket(realBets),
+    DEMO: buildBucket(demoBets),
   }
 }
 
@@ -135,26 +148,30 @@ export async function loader({ request }: Route.LoaderArgs) {
 // PAGE
 // ─────────────────────────────────────────────────────────────────────────────
 
-type Round = ReturnType<typeof useLoaderData<typeof loader>>['records'][number]
+type Round = RoundRecord
 
 type ResultFilter = 'all' | 'win' | 'loss'
 type ModeFilter = 'all' | GameMode
 type KindFilter = 'all' | BetKind
 
 export default function HistoryPage() {
-  const { records, stats } = useLoaderData<typeof loader>()
+  const data = useLoaderData<typeof loader>()
   const navigate = useNavigate()
   const t = useT()
+
+  const [walletTab, setWalletTab] = useState<WalletTab>('REAL')
+  const { records, stats } = data[walletTab]
 
   const [resultFilter, setResultFilter] = useState<ResultFilter>('all')
   const [modeFilter, setModeFilter] = useState<ModeFilter>('all')
   const [kindFilter, setKindFilter] = useState<KindFilter>('all')
 
-  // Client-side pagination — 10 per click. Reset whenever a filter changes.
+  // Client-side pagination — 10 per click. Reset whenever a filter or the
+  // active wallet changes.
   const PAGE_INITIAL = 10
   const PAGE_STEP = 10
   const [visibleCount, setVisibleCount] = useState(PAGE_INITIAL)
-  useEffect(() => { setVisibleCount(PAGE_INITIAL) }, [resultFilter, modeFilter, kindFilter])
+  useEffect(() => { setVisibleCount(PAGE_INITIAL) }, [walletTab, resultFilter, modeFilter, kindFilter])
 
   const filtered = useMemo(() => {
     return records.filter(r => {
@@ -197,29 +214,48 @@ export default function HistoryPage() {
         >
           {`← ${t('common.back')}`}
         </button>
-        <h1 className="text-xl font-bold" style={{ color: '#fde68a' }}>{t('history.title')}</h1>
+        <h1 className="text-xl font-bold" style={{ color: '#fde68a' }}>
+          {walletTab === 'REAL' ? t('history.title') : t('history.titleDemo')}
+        </h1>
       </header>
 
       <div className="mx-auto flex max-w-2xl flex-col gap-6 px-4 py-6">
+        {/* ─── Wallet tab — REAL vs DEMO ─────────────────────────────── */}
+        <div className="flex rounded-xl overflow-hidden" style={{ border: '1px solid #6d28d9' }}>
+          {(['REAL', 'DEMO'] as WalletTab[]).map(key => (
+            <button
+              key={key}
+              onClick={() => { playClick(); setWalletTab(key) }}
+              className="flex-1 py-2.5 text-sm font-bold  transition-all"
+              style={{
+                background: walletTab === key ? '#7c3aed' : '#1e0040',
+                color: walletTab === key ? '#fff' : '#a78bfa',
+              }}
+            >
+              {key === 'REAL' ? t('history.tab.real') : t('history.tab.demo')}
+            </button>
+          ))}
+        </div>
+
         {/* ─── Lifetime stats ─────────────────────────────────────────── */}
         <div
           className="rounded-2xl p-5"
           style={{ background: 'linear-gradient(135deg, #4c1d95, #1e0040)', border: '2px solid #a78bfa' }}
         >
-          <div className="mb-3 text-center text-xs font-bold tracking-widest" style={{ color: '#c4b5fd' }}>
-            {t('history.lifetimeStats')}
+          <div className="mb-3 text-center text-xs font-bold " style={{ color: '#c4b5fd' }}>
+            {walletTab === 'REAL' ? t('history.lifetimeStats') : t('history.lifetimeStatsDemo')}
           </div>
           <div className="grid grid-cols-3 gap-3">
             <div className="text-center">
-              <div className="text-[10px] font-bold tracking-widest" style={{ color: '#a78bfa' }}>{t('history.totalGames')}</div>
+              <div className="text-[10px] font-bold " style={{ color: '#a78bfa' }}>{t('history.totalGames')}</div>
               <div className="mt-1 text-2xl font-bold" style={{ color: '#fde68a' }}>{stats.totalRounds.toLocaleString()}</div>
             </div>
             <div className="border-x text-center" style={{ borderColor: '#6d28d9' }}>
-              <div className="text-[10px] font-bold tracking-widest" style={{ color: '#a78bfa' }}>{t('history.winRate')}</div>
+              <div className="text-[10px] font-bold " style={{ color: '#a78bfa' }}>{t('history.winRate')}</div>
               <div className="mt-1 text-2xl font-bold" style={{ color: '#4ade80' }}>{stats.winRate}%</div>
             </div>
             <div className="text-center">
-              <div className="text-[10px] font-bold tracking-widest" style={{ color: '#a78bfa' }}>{t('history.netPL')}</div>
+              <div className="text-[10px] font-bold " style={{ color: '#a78bfa' }}>{t('history.netPL')}</div>
               <div
                 className="mt-1 text-2xl font-bold"
                 style={{ color: stats.netPL > 0 ? '#4ade80' : stats.netPL < 0 ? '#f87171' : '#fde68a' }}
@@ -292,7 +328,7 @@ export default function HistoryPage() {
         {grouped.map(group => (
           <section key={group.day} className="flex flex-col gap-3">
             <div
-              className="sticky top-0 z-10 -mx-4 px-4 py-1 text-[10px] font-bold tracking-widest"
+              className="sticky top-0 z-10 -mx-4 px-4 py-1 text-[10px] font-bold "
               style={{ color: '#c4b5fd', background: 'rgba(124,58,237,0.85)' }}
             >
               {group.day}
@@ -308,7 +344,7 @@ export default function HistoryPage() {
           <button
             type="button"
             onClick={() => { playClick(); setVisibleCount(c => c + PAGE_STEP) }}
-            className="rounded-xl py-3 text-sm font-bold tracking-widest transition-opacity hover:opacity-90"
+            className="rounded-xl py-3 text-sm font-bold  transition-opacity hover:opacity-90"
             style={{ background: '#4c1d95', color: '#e9d5ff', border: '2px dashed #7c3aed' }}
           >
             {t('common.loadMoreCount', { n: Math.min(PAGE_STEP, remaining) })}
@@ -334,7 +370,7 @@ function FilterSelect({
 }) {
   return (
     <label className="flex flex-1 flex-col gap-1 sm:min-w-[140px]">
-      <span className="text-[10px] font-bold tracking-widest" style={{ color: '#a78bfa' }}>
+      <span className="text-[10px] font-bold " style={{ color: '#a78bfa' }}>
         {label}
       </span>
       <select
@@ -400,7 +436,7 @@ function GameRow({ round }: { round: Round }) {
             {new Date(round.timestamp).toLocaleString()}
           </span>
           <span
-            className="rounded-full px-2 py-0.5 text-[10px] font-bold tracking-widest"
+            className="rounded-full px-2 py-0.5 text-[10px] font-bold "
             style={{
               background: round.mode === 'LIVE' ? 'rgba(220,38,38,0.25)' : 'rgba(99,102,241,0.25)',
               color: round.mode === 'LIVE' ? '#fca5a5' : '#a5b4fc',
@@ -464,7 +500,7 @@ function GameRow({ round }: { round: Round }) {
 function BetSection({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div className="flex flex-col gap-1.5">
-      <div className="text-[10px] font-bold tracking-widest" style={{ color: '#a78bfa' }}>
+      <div className="text-[10px] font-bold " style={{ color: '#a78bfa' }}>
         {title}
       </div>
       <div className="flex flex-wrap justify-start gap-1.5">{children}</div>
@@ -534,12 +570,12 @@ function BetTile({
   if (bet.kind === 'RANGE' && bet.range) {
     const label =
       bet.range === 'LOW' ? t('history.range.low')
-      : bet.range === 'MIDDLE' ? t('history.range.middle')
-      : t('history.range.high')
+        : bet.range === 'MIDDLE' ? t('history.range.middle')
+          : t('history.range.high')
     const bg =
       bet.range === 'LOW' ? 'linear-gradient(135deg, #0369a1, #0c4a6e)'
-      : bet.range === 'MIDDLE' ? 'linear-gradient(135deg, #a21caf, #581c87)'
-      : 'linear-gradient(135deg, #b91c1c, #7f1d1d)'
+        : bet.range === 'MIDDLE' ? 'linear-gradient(135deg, #a21caf, #581c87)'
+          : 'linear-gradient(135deg, #b91c1c, #7f1d1d)'
     const border = won ? '#4ade80' : '#4c1d95'
     const range = RANGE_BOUNDS[bet.range]
     return (
@@ -562,7 +598,7 @@ function PayoutBadge({ won, profit, compact }: { won: boolean; profit: number; c
   if (won && profit > 0) {
     return (
       <span
-        className={`rounded-full ${compact ? 'px-1.5 py-0.5 text-[9px]' : 'px-2 py-0.5 text-[10px]'} font-bold tracking-widest`}
+        className={`rounded-full ${compact ? 'px-1.5 py-0.5 text-[9px]' : 'px-2 py-0.5 text-[10px]'} font-bold `}
         style={{ background: 'rgba(22,163,74,0.9)', color: '#fff' }}
       >
         {t('history.won', { amount: profit.toLocaleString() })}
@@ -571,7 +607,7 @@ function PayoutBadge({ won, profit, compact }: { won: boolean; profit: number; c
   }
   return (
     <span
-      className={`rounded-full ${compact ? 'px-1.5 py-0.5 text-[9px]' : 'px-2 py-0.5 text-[10px]'} font-bold tracking-widest`}
+      className={`rounded-full ${compact ? 'px-1.5 py-0.5 text-[9px]' : 'px-2 py-0.5 text-[10px]'} font-bold `}
       style={{ background: 'rgba(127,29,29,0.6)', color: '#fda4af' }}
     >
       {t('history.lost')}

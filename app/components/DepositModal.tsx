@@ -172,7 +172,7 @@ export function DepositModal({ open, onClose, amount, onSuccess }: DepositModalP
             <X size={18} />
           </button>
 
-          <div className="mb-1 text-center text-xs font-bold tracking-widest" style={{ color: '#a78bfa' }}>
+          <div className="mb-1 text-center text-xs font-bold " style={{ color: '#a78bfa' }}>
             {step === 'qr' ? t('deposit.step1') : t('deposit.step2')}
           </div>
           <h2 className="mb-1 text-center text-2xl font-bold" style={{ color: '#fde68a' }}>
@@ -217,7 +217,7 @@ export function DepositModal({ open, onClose, amount, onSuccess }: DepositModalP
                 <button
                   type="button"
                   onClick={() => setStep('slip')}
-                  className="flex w-auto items-center justify-center gap-2 rounded-lg py-2 px-4 text-sm font-bold tracking-widest transition-opacity hover:opacity-90"
+                  className="flex w-auto items-center justify-center gap-2 rounded-lg py-2 px-4 text-sm font-bold  transition-opacity hover:opacity-90"
                   style={{
                     background: 'linear-gradient(135deg, #16a34a, #15803d)',
                     color: '#fff',
@@ -245,7 +245,7 @@ export function DepositModal({ open, onClose, amount, onSuccess }: DepositModalP
                 {/* Example payment-slip thumbnail — only shown until the user picks their own file. */}
                 {!userPickedFile && (
                   <div className="flex w-full flex-col items-center gap-1.5">
-                    <div className="text-[10px] font-bold tracking-widest" style={{ color: '#a78bfa' }}>
+                    <div className="text-[10px] font-bold " style={{ color: '#a78bfa' }}>
                       {t('deposit.example')}
                     </div>
                     <button
@@ -322,7 +322,7 @@ export function DepositModal({ open, onClose, amount, onSuccess }: DepositModalP
                   type="button"
                   onClick={() => fileInputRef.current?.click()}
                   disabled={uploading || submitting}
-                  className="flex items-center gap-2 rounded-lg px-4 py-2 text-xs font-bold tracking-widest transition-opacity hover:opacity-90 disabled:opacity-50"
+                  className="flex items-center gap-2 rounded-lg px-4 py-2 text-xs font-bold  transition-opacity hover:opacity-90 disabled:opacity-50"
                   style={{ background: '#4c1d95', color: '#fde68a', border: '1.5px solid #7c3aed' }}
                 >
                   <Upload size={14} />
@@ -352,7 +352,7 @@ export function DepositModal({ open, onClose, amount, onSuccess }: DepositModalP
                   type="button"
                   onClick={() => setStep('qr')}
                   disabled={submitting}
-                  className="flex items-center justify-center gap-1 rounded-xl px-4 py-3 text-xs font-bold tracking-widest transition-opacity hover:opacity-90 disabled:opacity-40"
+                  className="flex items-center justify-center gap-1 rounded-xl px-4 py-3 text-xs font-bold  transition-opacity hover:opacity-90 disabled:opacity-40"
                   style={{ background: '#4c1d95', color: '#e9d5ff', border: '1.5px solid #7c3aed' }}
                 >
                   <ArrowLeft size={14} />
@@ -367,7 +367,7 @@ export function DepositModal({ open, onClose, amount, onSuccess }: DepositModalP
                   <button
                     type="submit"
                     disabled={!slipUrl || uploading || submitting}
-                    className="flex w-full items-center justify-center gap-2 rounded-xl py-3 text-sm font-bold tracking-widest transition-opacity disabled:opacity-40"
+                    className="flex w-full items-center justify-center gap-2 rounded-xl py-3 text-sm font-bold  transition-opacity disabled:opacity-40"
                     style={{
                       background: 'linear-gradient(135deg, #16a34a, #15803d)',
                       color: '#fff',

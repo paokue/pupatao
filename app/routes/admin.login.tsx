@@ -56,7 +56,7 @@ export default function AdminLoginPage() {
         className="w-full max-w-sm rounded-2xl p-6"
         style={{ background: 'linear-gradient(135deg, #1e1b4b, #0f172a)', border: '1px solid #4338ca', boxShadow: '0 10px 60px rgba(0,0,0,0.7)' }}
       >
-        <div className="mb-1 flex items-center justify-center gap-2 text-xs font-bold tracking-widest" style={{ color: '#a5b4fc' }}>
+        <div className="mb-1 flex items-center justify-center gap-2 text-xs font-bold " style={{ color: '#a5b4fc' }}>
           <ShieldCheck size={14} /> ADMIN · SIGN IN
         </div>
         <h1 className="mb-5 text-center text-2xl font-bold" style={{ color: '#fde68a' }}>
@@ -97,7 +97,7 @@ export default function AdminLoginPage() {
           <button
             type="submit"
             disabled={submitting}
-            className="mt-2 flex items-center justify-center gap-2 rounded-xl py-3 text-sm font-bold tracking-widest disabled:opacity-50"
+            className="mt-2 flex items-center justify-center gap-2 rounded-xl py-3 text-sm font-bold  disabled:opacity-50"
             style={{
               background: 'linear-gradient(135deg, #4338ca, #3730a3)',
               color: '#fff',

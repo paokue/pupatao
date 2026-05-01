@@ -27,6 +27,7 @@ export type SessionUser = {
 export type SessionWallets = {
   demo: number
   real: number
+  promo: number
 } | null
 
 export async function loader({ request }: Route.LoaderArgs) {
@@ -58,6 +59,7 @@ export async function loader({ request }: Route.LoaderArgs) {
       wallets = {
         demo: ws.find(w => w.type === 'DEMO')?.balance ?? 0,
         real: ws.find(w => w.type === 'REAL')?.balance ?? 0,
+        promo: ws.find(w => w.type === 'PROMO')?.balance ?? 0,
       }
     } catch (err) {
       console.error('[root loader] wallet fetch failed:', err)
