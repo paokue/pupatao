@@ -10,10 +10,13 @@ __v0_jsx-dev-runtime.ts
 .env*.local
 .env
 .env.local
+.env.production
 
 # Common ignores
 /node_modules
 .DS_Store
+
+.gitignore
 
 # React Router
 .react-router/
