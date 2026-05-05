@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
-import { Form, NavLink, Outlet, useLoaderData, useRevalidator } from 'react-router'
-import { Banknote, Dices, LayoutDashboard, LogOut, Radio, ShieldCheck, Users } from 'lucide-react'
+import { Form, NavLink, Outlet, useLoaderData, useNavigation, useRevalidator } from 'react-router'
+import { Banknote, Dices, LayoutDashboard, Loader, LogOut, Radio, ShieldCheck, Users } from 'lucide-react'
+import { Skeleton } from '~/components/ui/skeleton'
 import { toast } from 'sonner'
 import type { Route } from './+types/admin'
 import { requireAdmin } from '~/lib/admin-auth.server'
@@ -67,6 +68,14 @@ export default function AdminLayout() {
   const { admin, counts } = useLoaderData<typeof loader>()
   const fullName = [admin.firstName, admin.lastName].filter(Boolean).join(' ') || admin.email
   const revalidator = useRevalidator()
+  const navigation = useNavigation()
+  const isNavigating = navigation.state === 'loading'
+  const destPath = navigation.location?.pathname ?? ''
+  const skelType = destPath === '/admin' || destPath === '/admin/'
+    ? 'dashboard'
+    : destPath.startsWith('/admin/live')
+    ? 'live'
+    : 'table'
 
   // Local mutable copies seeded from the loader. Realtime events bump them
   // immediately; whenever the loader re-runs (action settle, navigation), we
@@ -117,6 +126,30 @@ export default function AdminLayout() {
       className="min-h-screen font-sans"
       style={{ background: 'linear-gradient(160deg, #0f172a 0%, #1e1b4b 60%, #0f172a 100%)' }}
     >
+      {/* Top progress bar */}
+      {isNavigating && (
+        <div className="fixed inset-x-0 top-0 z-50 h-0.5 overflow-hidden">
+          <div
+            className="h-full w-full origin-left"
+            style={{
+              background: '#fde68a',
+              animation: 'admin-progress 1.2s ease-in-out infinite',
+            }}
+          />
+        </div>
+      )}
+      {/* Floating loading chip */}
+      {isNavigating && (
+        <div className="pointer-events-none fixed inset-0 z-40 flex items-start justify-center pt-16">
+          <div
+            className="flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold shadow-2xl"
+            style={{ background: '#1e1b4b', color: '#fde68a', border: '1px solid #4338ca' }}
+          >
+            <Loader size={14} className="animate-spin" />
+            Loading...
+          </div>
+        </div>
+      )}
       <header style={{ background: '#0f172a', borderBottom: '1px solid #4338ca' }}>
         <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-3">
           <div className="flex items-center gap-2">
@@ -178,7 +211,13 @@ export default function AdminLayout() {
 
         {/* pb-24 on mobile leaves room for the fixed bottom bar */}
         <main className="min-w-0 flex-1 pb-24 md:pb-0">
-          <Outlet />
+          {isNavigating ? (
+            skelType === 'dashboard' ? <DashboardSkeleton /> :
+            skelType === 'live'      ? <LiveSkeleton />      :
+                                       <TableSkeleton />
+          ) : (
+            <Outlet />
+          )}
         </main>
       </div>
 
@@ -230,4 +269,117 @@ function Badge({ n }: { n: number }) {
       {n > 99 ? '99+' : n}
     </span>
   )
+}
+
+const SK = 'bg-white/10 animate-pulse'
+
+function DashboardSkeleton() {
+  return (
+    <div className="flex flex-col gap-4">
+      <Skeleton className={`h-7 w-36 ${SK}`} />
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        {Array.from({ length: 6 }).map((_, i) => (
+          <div key={i} className="flex flex-col gap-2 rounded-xl p-4" style={{ background: '#0f172a', border: '1px solid #1e1b4b' }}>
+            <Skeleton className={`h-3 w-20 ${SK}`} />
+            <Skeleton className={`h-7 w-12 ${SK}`} />
+            <Skeleton className={`h-3 w-16 ${SK}`} />
+          </div>
+        ))}
+      </div>
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+        {[1, 2].map(i => (
+          <div key={i} className="rounded-xl p-4" style={{ background: '#0f172a', border: '1px solid #1e1b4b' }}>
+            <Skeleton className={`mb-3 h-4 w-28 ${SK}`} />
+            {Array.from({ length: 4 }).map((_, j) => (
+              <Skeleton key={j} className={`mb-2 h-8 w-full rounded-lg ${SK}`} />
+            ))}
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function TableSkeleton() {
+  const cols = [120, 90, 100, 80, 70, 60]
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="flex items-center justify-between gap-3">
+        <Skeleton className={`h-7 w-36 ${SK}`} />
+        <Skeleton className={`h-9 w-52 rounded-lg ${SK}`} />
+      </div>
+      {/* Tabs */}
+      <div className="flex gap-2">
+        {[80, 90, 100].map((w, i) => (
+          <Skeleton key={i} className={`h-8 rounded-lg ${SK}`} style={{ width: w }} />
+        ))}
+      </div>
+      {/* Table */}
+      <div className="overflow-hidden rounded-xl" style={{ border: '1px solid #1e1b4b' }}>
+        <div className="flex gap-3 px-4 py-3" style={{ background: '#0a0f1e', borderBottom: '1px solid #1e1b4b' }}>
+          {cols.map((w, i) => <Skeleton key={i} className={`h-3 ${SK}`} style={{ width: w }} />)}
+        </div>
+        {Array.from({ length: 9 }).map((_, row) => (
+          <div key={row} className="flex gap-3 px-4 py-3" style={{ background: row % 2 === 0 ? '#0f172a' : '#0a0f1e', borderBottom: '1px solid #1e1b4b' }}>
+            {cols.map((w, i) => <Skeleton key={i} className={`h-3 rounded ${SK}`} style={{ width: w }} />)}
+          </div>
+        ))}
+      </div>
+      {/* Pagination row */}
+      <div className="flex justify-end gap-2">
+        {[60, 32, 32, 60].map((w, i) => (
+          <Skeleton key={i} className={`h-8 rounded-lg ${SK}`} style={{ width: w }} />
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function LiveSkeleton() {
+  return (
+    <div className="flex flex-col gap-4">
+      <Skeleton className={`h-7 w-36 ${SK}`} />
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+        {/* Stream area */}
+        <Skeleton className={`h-64 rounded-xl ${SK}`} />
+        {/* Controls */}
+        <div className="flex flex-col gap-3">
+          {Array.from({ length: 5 }).map((_, i) => (
+            <Skeleton key={i} className={`h-10 rounded-xl ${SK}`} />
+          ))}
+        </div>
+      </div>
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-5">
+        <div className="md:col-span-2 rounded-xl p-3" style={{ background: '#0f172a', border: '1px solid #1e1b4b' }}>
+          <Skeleton className={`mb-3 h-4 w-20 ${SK}`} />
+          {Array.from({ length: 4 }).map((_, i) => (
+            <Skeleton key={i} className={`mb-2 h-8 w-full rounded-lg ${SK}`} />
+          ))}
+        </div>
+        <div className="md:col-span-3 rounded-xl p-3" style={{ background: '#0f172a', border: '1px solid #1e1b4b' }}>
+          <Skeleton className={`mb-3 h-4 w-24 ${SK}`} />
+          {Array.from({ length: 6 }).map((_, i) => (
+            <Skeleton key={i} className={`mb-2 h-8 w-full rounded-lg ${SK}`} />
+          ))}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// Inject the progress bar keyframe once into the document head
+if (typeof document !== 'undefined') {
+  const id = '__admin-progress-style'
+  if (!document.getElementById(id)) {
+    const s = document.createElement('style')
+    s.id = id
+    s.textContent = `
+      @keyframes admin-progress {
+        0%   { transform: translateX(-100%); }
+        50%  { transform: translateX(0%); }
+        100% { transform: translateX(100%); }
+      }
+    `
+    document.head.appendChild(s)
+  }
 }
