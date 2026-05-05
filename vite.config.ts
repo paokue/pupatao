@@ -12,7 +12,7 @@ export default defineConfig({
     VitePWA({
       registerType: "autoUpdate",
       injectRegister: null,
-      includeAssets: ["icon.svg", "apple-icon.png", "icon-dark-32x32.png", "icon-light-32x32.png", "symbols/*.jpg"],
+      includeAssets: ["favicon.png", "apple-icon.png", "icon-192.png", "icon-512.png", "symbols/*.jpg"],
       manifest: {
         name: "Fish Prawn Crab Game",
         short_name: "Pupatao",
@@ -24,8 +24,9 @@ export default defineConfig({
         start_url: "/",
         scope: "/",
         icons: [
-          { src: "/icon.svg", sizes: "any", type: "image/svg+xml", purpose: "any" },
-          { src: "/icon.svg", sizes: "any", type: "image/svg+xml", purpose: "maskable" },
+          { src: "/icon-192.png", sizes: "192x192", type: "image/png", purpose: "any" },
+          { src: "/icon-512.png", sizes: "512x512", type: "image/png", purpose: "any" },
+          { src: "/icon-512.png", sizes: "512x512", type: "image/png", purpose: "maskable" },
           { src: "/apple-icon.png", sizes: "180x180", type: "image/png", purpose: "any" },
         ],
       },

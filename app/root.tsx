@@ -82,10 +82,8 @@ export async function loader({ request }: Route.LoaderArgs) {
 }
 
 export const links: Route.LinksFunction = () => [
-  { rel: "icon", href: "/icon-light-32x32.png", media: "(prefers-color-scheme: light)" },
-  { rel: "icon", href: "/icon-dark-32x32.png", media: "(prefers-color-scheme: dark)" },
-  { rel: "icon", href: "/icon.svg", type: "image/svg+xml" },
-  { rel: "apple-touch-icon", href: "/apple-icon.png" },
+  { rel: "icon", href: "/favicon.png", type: "image/png", sizes: "32x32" },
+  { rel: "apple-touch-icon", href: "/apple-icon.png", sizes: "180x180" },
   { rel: "manifest", href: "/manifest.webmanifest" },
   { rel: "preconnect", href: "https://fonts.googleapis.com" },
   { rel: "preconnect", href: "https://fonts.gstatic.com", crossOrigin: "anonymous" },
