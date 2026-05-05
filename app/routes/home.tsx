@@ -1289,10 +1289,8 @@ export default function FishPrawnCrabGame() {
       try { localStorage.setItem('fpc_play_mode', next) } catch { /* ignore */ }
       if (next === 'live') {
         revalidator.revalidate()
-        // LIVE only allows the REAL wallet — auto-switch on entry. The
-        // useEffect below also enforces this on mount/restore so this is
-        // belt-and-suspenders.
-        if (user.activeWallet !== 'real') switchWallet('real')
+        // LIVE allows REAL and PROMO. If on DEMO, switch to REAL.
+        if (user.activeWallet === 'demo') switchWallet('real')
       }
       return next
     })
@@ -1302,13 +1300,11 @@ export default function FishPrawnCrabGame() {
     setPendingCell(null)
   }, [revalidator, user.activeWallet])
 
-  // Enforce REAL wallet whenever mode is LIVE. Covers:
-  //   - mount-time restoration of mode='live' from localStorage
-  //   - any path where mode flips to live without going through selectMode
-  // The check guards against re-entry: switchWallet is a no-op when the wallet
-  // is already the target, so the effect doesn't loop.
+  // Enforce REAL or PROMO wallet whenever mode is LIVE. DEMO is not allowed.
+  // Covers mount-time restoration from localStorage and any other path where
+  // mode flips to live without going through selectMode.
   useEffect(() => {
-    if (mode === 'live' && user.activeWallet !== 'real') {
+    if (mode === 'live' && user.activeWallet === 'demo') {
       switchWallet('real')
       setCurrentBets([])
       setCurrentRangeBets([])
@@ -1599,16 +1595,16 @@ export default function FishPrawnCrabGame() {
               <ChevronDown size={12} style={{ transform: walletOpen ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 120ms' }} />
             </button>
             {walletOpen && (() => {
-              // LIVE mode is REAL-only: hide DEMO and PROMO so the customer
-              // can't accidentally place a real-stakes live bet from a play
-              // wallet. The useEffect above already auto-switches to REAL
-              // on entering live, so the active wallet is always in the list.
+              // LIVE mode allows REAL and PROMO (profit from PROMO wins goes to REAL).
+              // DEMO is hidden in LIVE mode — demo funds are for self-play only.
               const items: { key: string; label: string }[] = [
                 { key: 'real', label: t('menu.realAccount') },
               ]
               if (mode !== 'live') {
                 items.push({ key: 'demo', label: t('menu.demoAccount') })
-                if ((user.balances.promo ?? 0) > 0) items.push({ key: 'promo', label: t('menu.promoAccount') })
+              }
+              if ((user.balances.promo ?? 0) > 0) {
+                items.push({ key: 'promo', label: t('menu.promoAccount') })
               }
               return (
                 <PickerDropdown
