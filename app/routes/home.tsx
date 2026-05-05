@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useRef } from 'react'
+import { useState, useCallback, useEffect, useRef, type ReactNode } from 'react'
 import { Form, useFetcher, useLoaderData, useNavigate, useOutletContext, useRevalidator, useSearchParams } from 'react-router'
 import { toast } from 'sonner'
 import type { Route } from './+types/home'
@@ -20,7 +20,7 @@ import {
   type RoundStartedPayload,
   type TxUpdatedPayload,
 } from '~/lib/pusher-channels'
-import { Check, ChevronDown, LogOut, Pencil, ReceiptText, RefreshCw, Undo, User, Volume2, VolumeOff, Wallet } from 'lucide-react'
+import { ArrowDown, ArrowUp, ArrowUpDown, Check, ChevronDown, LogOut, Pencil, ReceiptText, RefreshCw, Undo, User, Volume2, VolumeOff, Wallet } from 'lucide-react'
 
 type SymbolKey = 'fish' | 'prawn' | 'crab' | 'rooster' | 'gourd' | 'frog'
 
@@ -91,17 +91,248 @@ function rangeMultiplier(key: RangeKey, cfg: { rangeLow: number; rangeMiddle: nu
 // paste any of these). Facebook URLs are rewritten to the plugin endpoint
 // because facebook.com itself sends X-Frame-Options that forbid direct iframe
 // embedding ("refused to connect").
-function liveEmbedSrc(rawUrl: string | null): { kind: 'iframe' | 'video'; src: string } | null {
-  if (!rawUrl) return null
-  if (/\.(mp4|webm|mov|m3u8)(\?|$)/i.test(rawUrl)) return { kind: 'video', src: rawUrl }
-  const yt = rawUrl.match(/(?:youtube\.com\/(?:watch\?v=|embed\/)|youtu\.be\/)([\w-]{11})/)
-  if (yt) return { kind: 'iframe', src: `https://www.youtube.com/embed/${yt[1]}?autoplay=1&mute=1&controls=0` }
-  if (/(?:facebook\.com|fb\.watch)/i.test(rawUrl)) {
-    const href = encodeURIComponent(rawUrl)
-    return { kind: 'iframe', src: `https://www.facebook.com/plugins/video.php?href=${href}&show_text=false&autoplay=true&mute=1` }
+// Facebook Live is filmed on a phone → portrait (9:16). All other sources
+// (YouTube, direct video, generic iframe) stay landscape (16:9).
+const IS_FB_RE = /(?:facebook\.com|fb\.watch)/i
+
+// FB JS SDK is loaded lazily the first time a Facebook stream is embedded.
+// We use the SDK (not a raw plugin iframe) for one specific reason: the SDK
+// returns a `player` object whose `play()` method, called synchronously
+// inside a click handler, is treated by mobile browsers as user-initiated
+// media playback — which is the only way to start a live FB stream on iOS
+// Safari without redirecting the user out of our site.
+type FbPlayer = { play: () => void; pause: () => void; mute: () => void; unmute: () => void }
+type FbReadyMsg = { type: string; instance?: FbPlayer; target?: HTMLElement }
+declare global {
+  interface Window {
+    FB?: {
+      init: (opts: { xfbml?: boolean; version: string }) => void
+      XFBML: { parse: (el?: HTMLElement) => void }
+      Event: {
+        subscribe: (event: string, cb: (msg: FbReadyMsg) => void) => void
+        unsubscribe: (event: string, cb: (msg: FbReadyMsg) => void) => void
+      }
+    }
   }
-  return { kind: 'iframe', src: rawUrl }
 }
+let fbSdkPromise: Promise<void> | null = null
+function loadFbSdk(): Promise<void> {
+  if (typeof window === 'undefined') return Promise.reject(new Error('SSR'))
+  if (window.FB) return Promise.resolve()
+  if (fbSdkPromise) return fbSdkPromise
+  fbSdkPromise = new Promise<void>((resolve, reject) => {
+    if (!document.getElementById('fb-root')) {
+      const root = document.createElement('div')
+      root.id = 'fb-root'
+      document.body.appendChild(root)
+    }
+    const script = document.createElement('script')
+    script.id = 'fb-sdk-script'
+    script.src = 'https://connect.facebook.net/en_US/sdk.js'
+    script.async = true
+    script.defer = true
+    script.crossOrigin = 'anonymous'
+    script.onload = () => {
+      window.FB?.init({ xfbml: false, version: 'v19.0' })
+      resolve()
+    }
+    script.onerror = () => {
+      fbSdkPromise = null
+      reject(new Error('fb sdk load failed'))
+    }
+    document.body.appendChild(script)
+  })
+  return fbSdkPromise
+}
+
+function LiveStreamBox({
+  rawUrl,
+  waitingText,
+  children,
+}: {
+  rawUrl: string | null
+  waitingText: string
+  children?: ReactNode
+}) {
+  const boxRef = useRef<HTMLDivElement>(null)
+  const fbMountRef = useRef<HTMLDivElement>(null)
+  const fbPlayerRef = useRef<FbPlayer | null>(null)
+  const [fbWidth, setFbWidth] = useState<number | null>(null)
+  const [hasPlayed, setHasPlayed] = useState(false)
+  const [iframeKey, setIframeKey] = useState(0)
+  const isFb = rawUrl ? IS_FB_RE.test(rawUrl) : false
+
+  useEffect(() => {
+    if (!boxRef.current) return
+    const w = boxRef.current.offsetWidth
+    if (w >= 220) setFbWidth(Math.min(1560, w))
+  }, [rawUrl])
+
+  // Reset overlay + iframe state on URL change so the customer instantly
+  // sees the latest feed when the admin updates the stream URL.
+  useEffect(() => {
+    setHasPlayed(false)
+    setIframeKey(k => k + 1)
+    fbPlayerRef.current = null
+  }, [rawUrl])
+
+  // Load the FB SDK and parse the <div class="fb-video"> into a player.
+  // Subscribe BEFORE parse so we don't miss the xfbml.ready event.
+  useEffect(() => {
+    if (!isFb || !rawUrl || fbWidth === null || !fbMountRef.current) return
+    let cancelled = false
+    let handler: ((msg: FbReadyMsg) => void) | null = null
+    const init = () => {
+      if (cancelled || !window.FB || !fbMountRef.current) return
+      handler = (msg: FbReadyMsg) => {
+        if (cancelled) return
+        if (msg.type !== 'video' || !msg.instance) return
+        // The xfbml.ready event is global — only capture if the rendered
+        // target is inside our mount point.
+        if (msg.target && fbMountRef.current?.contains(msg.target)) {
+          fbPlayerRef.current = msg.instance
+        } else if (!fbPlayerRef.current) {
+          fbPlayerRef.current = msg.instance
+        }
+      }
+      window.FB.Event.subscribe('xfbml.ready', handler)
+      window.FB.XFBML.parse(fbMountRef.current)
+    }
+    if (window.FB) init()
+    else loadFbSdk().then(init).catch(err => {
+      console.warn('[LiveStreamBox] fb sdk', err)
+    })
+    return () => {
+      cancelled = true
+      if (handler && window.FB) window.FB.Event.unsubscribe('xfbml.ready', handler)
+    }
+  }, [isFb, rawUrl, fbWidth, iframeKey])
+
+  const isVideo = rawUrl ? /\.(mp4|webm|mov|m3u8)(\?|$)/i.test(rawUrl) : false
+  const isYt = rawUrl ? /(?:youtube\.com|youtu\.be)/i.test(rawUrl) : false
+
+  // Non-FB URL builder. FB is rendered via the SDK <div class="fb-video"> below.
+  const nonFbEmbedSrc: string | null = (() => {
+    if (!rawUrl || isVideo || isFb) return null
+    // Matches all YouTube URL shapes: watch?v=, embed/, youtu.be/, AND the
+    // newer /live/<id> form used for live broadcasts.
+    const yt = rawUrl.match(/(?:youtube\.com\/(?:watch\?v=|embed\/|live\/)|youtu\.be\/)([\w-]{11})/)
+    if (yt) {
+      // playsinline=1 → iOS Safari permits muted autoplay (without it the
+      //                  video sits frozen on a poster frame).
+      // controls=0 + modestbranding/rel/iv_load_policy/disablekb/fs → suppress
+      //                  YouTube's branded UI; the transparent overlay below
+      //                  blocks the title/share strip that YouTube would
+      //                  otherwise show on hover.
+      return `https://www.youtube.com/embed/${yt[1]}?autoplay=1&mute=1&playsinline=1&controls=0&modestbranding=1&rel=0&iv_load_policy=3&disablekb=1&fs=0`
+    }
+    return rawUrl
+  })()
+
+  const boxStyle: React.CSSProperties = isFb
+    ? { height: '50vh', aspectRatio: '9/16', border: '1px solid #a78bfa' }
+    : { width: '100%', maxWidth: 720, aspectRatio: '16/9', maxHeight: '38vh', border: '1px solid #a78bfa' }
+
+  function handleTapToPlay() {
+    setHasPlayed(true)
+    // Synchronous play() inside the click handler is what mobile browsers
+    // honor as user-initiated playback. If the SDK player isn't ready yet
+    // (slow network), bump the iframeKey to force a re-parse.
+    try {
+      if (fbPlayerRef.current?.play) {
+        fbPlayerRef.current.play()
+      } else {
+        setIframeKey(k => k + 1)
+      }
+    } catch (err) {
+      console.warn('[LiveStreamBox] fb play failed', err)
+      setIframeKey(k => k + 1)
+    }
+  }
+
+  return (
+    <div
+      ref={boxRef}
+      className={`relative overflow-hidden rounded-lg bg-black${isFb ? ' mx-auto' : ''}`}
+      style={boxStyle}
+    >
+      {!rawUrl ? (
+        <div className="flex h-full w-full items-center justify-center text-xs" style={{ color: '#a78bfa' }}>
+          {waitingText}
+        </div>
+      ) : isVideo ? (
+        // HLS / mp4 — no controls, no interaction (matches the YouTube path
+        // above). iOS Safari natively supports HLS autoplay when muted +
+        // playsInline, so no tap-to-play is required.
+        <video
+          src={rawUrl}
+          className="h-full w-full"
+          autoPlay
+          muted
+          playsInline
+          style={{ pointerEvents: 'none' }}
+        />
+      ) : isFb ? (
+        <>
+          <div ref={fbMountRef} key={iframeKey} className="h-full w-full">
+            {fbWidth !== null && (
+              <div
+                className="fb-video"
+                data-href={rawUrl}
+                data-width={fbWidth}
+                data-allowfullscreen="true"
+                data-autoplay="true"
+                data-show-text="false"
+                data-show-captions="false"
+                style={{ width: '100%', height: '100%' }}
+              />
+            )}
+          </div>
+          {!hasPlayed && (
+            <button
+              type="button"
+              onClick={handleTapToPlay}
+              className="absolute inset-0 flex flex-col items-center justify-center gap-3"
+              style={{ background: 'rgba(0,0,0,0.55)' }}
+              aria-label="Start live stream"
+            >
+              <span
+                className="flex h-20 w-20 items-center justify-center rounded-full text-4xl shadow-2xl"
+                style={{ background: 'rgba(253,230,138,0.95)', color: '#4c1d95', paddingLeft: 6 }}
+              >
+                ▶
+              </span>
+              <span className="text-sm font-bold" style={{ color: '#fde68a' }}>
+                Tap to play live
+              </span>
+            </button>
+          )}
+        </>
+      ) : nonFbEmbedSrc ? (
+        <iframe
+          key={iframeKey}
+          src={nonFbEmbedSrc}
+          className="h-full w-full"
+          allow="autoplay; encrypted-media; picture-in-picture"
+          allowFullScreen
+          title="Live stream"
+          style={{
+            display: 'block',
+            border: 'none',
+            // YouTube → completely non-interactive: no pause, no play, no
+            // hover UI, no fullscreen — the customer just watches. Autoplay
+            // is driven by the URL params (autoplay/mute/playsinline), not
+            // by user interaction, so disabling pointer events doesn't
+            // prevent playback.
+            pointerEvents: isYt ? 'none' : 'auto',
+          }}
+        />
+      ) : null}
+      {children}
+    </div>
+  )
+}
+
 
 type LivePhase = 'idle' | 'betting' | 'awaiting_result'
 
@@ -502,9 +733,28 @@ export default function FishPrawnCrabGame() {
   const [soundEnabled, setSoundEnabled] = useState(true)
 
   // Live (streaming) mode — driven by the admin's open round (loaderData.liveRound).
+  // Initial state is 'random' for SSR consistency; the persisted choice is
+  // restored from localStorage in a mount effect below so we don't break
+  // hydration.
   const [mode, setMode] = useState<'random' | 'live'>('random')
   const liveRound = loaderData.liveRound
   const revalidator = useRevalidator()
+
+  // Restore the user's last-selected play mode from localStorage on mount.
+  // The mode persists across refreshes and app restarts; only an explicit
+  // selectMode() call overwrites it.
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem('fpc_play_mode')
+      if (saved === 'live') {
+        setMode('live')
+        revalidator.revalidate() // pick up any in-flight live round
+      }
+    } catch { /* localStorage may be unavailable */ }
+    // Intentionally mount-only — re-running this on revalidator changes would
+    // re-trigger revalidation in a loop.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   // Locally-mirrored dice for the open round. Initialised from the loader and
   // updated optimistically as the admin reveals each die (round:dice event).
@@ -564,6 +814,13 @@ export default function FishPrawnCrabGame() {
   usePusherEvent<RoundResolvedPayload>(presenceChannel, 'round:resolved', () => {
     revalidator.revalidate()
   })
+  // Admin updated the stream URL mid-round → revalidate so the new feed
+  // replaces the old iframe without requiring an app restart.
+  usePusherEvent<{ roundId: string; streamUrl: string | null }>(
+    presenceChannel,
+    'round:streamUpdated',
+    () => { revalidator.revalidate() },
+  )
 
   // Each die the admin picks (or changes) shows up here in real time.
   usePusherEvent<RoundDicePayload>(presenceChannel, 'round:dice', payload => {
@@ -1029,6 +1286,7 @@ export default function FishPrawnCrabGame() {
   const selectMode = useCallback((next: 'random' | 'live') => {
     setMode(prev => {
       if (prev === next) return prev
+      try { localStorage.setItem('fpc_play_mode', next) } catch { /* ignore */ }
       if (next === 'live') revalidator.revalidate()
       return next
     })
@@ -1424,42 +1682,10 @@ export default function FishPrawnCrabGame() {
               className="flex shrink-0 flex-col items-center gap-3 px-2 py-3 md:px-4"
               style={{ background: '#4c1d95', borderBottom: '1px solid #a78bfa' }}
             >
-              <div
-                className="relative w-full max-h-[38vh] overflow-hidden rounded-lg bg-black md:max-h-[45vh]"
-                style={{ maxWidth: 720, aspectRatio: '16/9', border: '1px solid #a78bfa' }}
+              <LiveStreamBox
+                rawUrl={liveRound?.streamUrl ?? loaderData.lastStreamUrl ?? null}
+                waitingText={t('live.waitingHostStream')}
               >
-                {(() => {
-                  // Prefer the active round's stream URL; otherwise fall back
-                  // to the last known stream URL so the video stays visible
-                  // between rounds (the betting controls stay disabled until
-                  // a new round opens, but the host's feed keeps playing).
-                  const embed = liveEmbedSrc(liveRound?.streamUrl ?? loaderData.lastStreamUrl ?? null)
-                  if (!embed) {
-                    return (
-                      <div className="flex h-full w-full items-center justify-center text-xs" style={{ color: '#a78bfa' }}>
-                        {t('live.waitingHostStream')}
-                      </div>
-                    )
-                  }
-                  return embed.kind === 'video' ? (
-                    <video
-                      src={embed.src}
-                      className="h-full w-full"
-                      controls
-                      autoPlay
-                      muted
-                      playsInline
-                    />
-                  ) : (
-                    <iframe
-                      src={embed.src}
-                      className="h-full w-full"
-                      allow="autoplay; encrypted-media; picture-in-picture"
-                      allowFullScreen
-                      title="Live stream"
-                    />
-                  )
-                })()}
                 <div
                   className="absolute top-2 left-2 flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-bold "
                   style={{ background: 'rgba(220,38,38,0.9)', color: '#fff' }}
@@ -1484,7 +1710,7 @@ export default function FishPrawnCrabGame() {
                       ? t('live.statusWaitingResult')
                       : t('live.statusNotStarted')}
                 </div>
-              </div>
+              </LiveStreamBox>
             </div>
           ) : (
             <div
@@ -2328,10 +2554,52 @@ function symbolIcon(symbol: SymbolKey | string) {
   )
 }
 
+// JSX renderer for a single bet — shows symbol/pair icons inline, and a
+// colored arrow icon for range bets (low=green↓, middle=yellow↕, high=red↑).
+function describeBetIcon(b: MyLiveBet, t: Translate) {
+  if (b.kind === 'SYMBOL' && b.symbol) {
+    const k = b.symbol.toLowerCase() as SymbolKey
+    return (
+      <span className="flex items-center gap-2 truncate">
+        <img
+          src={`/symbols/${k}.jpg`}
+          alt=""
+          className="h-5 w-5 shrink-0 rounded object-contain"
+          style={{ background: '#fff' }}
+        />
+        <span className="truncate">{b.symbol} ({SYMBOL_VALUE_BY_KEY[k]})</span>
+      </span>
+    )
+  }
+  if (b.kind === 'PAIR' && b.pairA && b.pairB) {
+    const a = b.pairA.toLowerCase() as SymbolKey
+    const c = b.pairB.toLowerCase() as SymbolKey
+    return (
+      <span className="flex items-center gap-1.5 truncate">
+        <img src={`/symbols/${a}.jpg`} alt="" className="h-5 w-5 shrink-0 rounded object-contain" style={{ background: '#fff' }} />
+        <span className="shrink-0">{b.pairA} ({SYMBOL_VALUE_BY_KEY[a]})</span>
+        <span className="shrink-0">+</span>
+        <img src={`/symbols/${c}.jpg`} alt="" className="h-5 w-5 shrink-0 rounded object-contain" style={{ background: '#fff' }} />
+        <span className="shrink-0">{b.pairB} ({SYMBOL_VALUE_BY_KEY[c]})</span>
+      </span>
+    )
+  }
+  if (b.kind === 'RANGE' && b.range) {
+    const Icon = b.range === 'LOW' ? ArrowDown : b.range === 'HIGH' ? ArrowUp : ArrowUpDown
+    const color = b.range === 'LOW' ? '#4ade80' : b.range === 'HIGH' ? '#f87171' : '#fbbf24'
+    return (
+      <span className="flex items-center gap-2 truncate">
+        <Icon size={16} style={{ color }} className="shrink-0" />
+        <span className="truncate">{translatedRangeLabel(b.range, t)}</span>
+      </span>
+    )
+  }
+  return <span>{b.kind}</span>
+}
+
 function MyBetsList({ bets }: { bets: MyLiveBet[] }) {
   const t = useT()
   const total = bets.reduce((s, b) => s + b.amount, 0)
-  const describe = (b: MyLiveBet) => describeBetGeneric(b, t)
   return (
     <div
       className="w-full max-w-sm rounded-xl p-4"
@@ -2347,7 +2615,7 @@ function MyBetsList({ bets }: { bets: MyLiveBet[] }) {
             className="flex items-center justify-between rounded-md px-2 py-1.5 text-xs"
             style={{ background: '#2d1b4e', color: '#e9d5ff' }}
           >
-            <span className="truncate">{describe(b)}</span>
+            {describeBetIcon(b, t)}
             <span className="ml-2 shrink-0 font-bold" style={{ color: '#fde68a' }}>
               {b.amount.toLocaleString()} ₭
             </span>

@@ -9,6 +9,7 @@ import {
   type RoundResolvedPayload,
   type RoundSettledPayload,
   type RoundStartedPayload,
+  type RoundStreamUpdatedPayload,
   type TxCreatedPayload,
   type TxResolvedPayload,
   type TxUpdatedPayload,
@@ -50,6 +51,7 @@ export function notifyAdmin(event: 'bet:placed', payload: BetPlacedPayload): Pro
 export function notifyAdmin(event: 'round:resolved', payload: RoundResolvedPayload): Promise<void>
 export function notifyAdmin(event: 'round:started', payload: RoundStartedPayload): Promise<void>
 export function notifyAdmin(event: 'round:dice', payload: RoundDicePayload): Promise<void>
+export function notifyAdmin(event: 'round:streamUpdated', payload: RoundStreamUpdatedPayload): Promise<void>
 export function notifyAdmin(event: string, payload: unknown): Promise<void> {
   return triggerSafe(ADMIN_CHANNEL, event, payload)
 }
@@ -61,6 +63,7 @@ export function notifyAdmin(event: string, payload: unknown): Promise<void> {
 export function notifyPresenceLive(event: 'round:started', payload: RoundStartedPayload): Promise<void>
 export function notifyPresenceLive(event: 'round:resolved', payload: RoundResolvedPayload): Promise<void>
 export function notifyPresenceLive(event: 'round:dice', payload: RoundDicePayload): Promise<void>
+export function notifyPresenceLive(event: 'round:streamUpdated', payload: RoundStreamUpdatedPayload): Promise<void>
 export function notifyPresenceLive(event: string, payload: unknown): Promise<void> {
   return triggerSafe(PRESENCE_LIVE, event, payload)
 }

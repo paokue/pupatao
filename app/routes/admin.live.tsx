@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { Form, useFetcher, useLoaderData, useNavigation, useRevalidator } from 'react-router'
-import { Check, Loader, Lock, PlayCircle, Radio, Users as UsersIcon, X } from 'lucide-react'
+import { ArrowDown, ArrowUp, ArrowUpDown, Check, Loader, Lock, PlayCircle, Radio, Users as UsersIcon, X } from 'lucide-react'
 import type { DiceSymbol } from '@prisma/client'
 import type { Route } from './+types/admin.live'
 import { requireAdmin } from '~/lib/admin-auth.server'
@@ -93,15 +93,20 @@ export async function loader({ request }: Route.LoaderArgs) {
 
   // Round history — most recent finished/cancelled rounds (and any extra
   // active ones not picked up above, just in case more than one was opened).
-  const history = await prisma.gameRound.findMany({
+  // Fetch 101 to determine `hasMore` without an extra query — the 101st row
+  // is dropped from the rendered list.
+  const HISTORY_PAGE_SIZE = 100
+  const historyPage = await prisma.gameRound.findMany({
     where: { mode: 'LIVE', NOT: current ? { id: current.id } : undefined },
     orderBy: { createdAt: 'desc' },
-    take: 30,
+    take: HISTORY_PAGE_SIZE + 1,
     include: {
       host: { select: { email: true, firstName: true, lastName: true } },
       _count: { select: { bets: true } },
     },
   })
+  const history = historyPage.slice(0, HISTORY_PAGE_SIZE)
+  const historyHasMore = historyPage.length > HISTORY_PAGE_SIZE
 
   // Prefill stream URL with the last one we saw, so admin doesn't retype it.
   const lastWithStream = await prisma.gameRound.findFirst({
@@ -115,6 +120,9 @@ export async function loader({ request }: Route.LoaderArgs) {
       id: r.id,
       status: r.status,
       streamUrl: r.streamUrl,
+      // createdAt is the cursor field used by /api/admin/live-history to
+      // load older pages, so it must round-trip through the JSON payload.
+      createdAt: r.createdAt.toISOString(),
       bettingOpensAt: r.bettingOpensAt.toISOString(),
       bettingClosesAt: r.bettingClosesAt?.toISOString() ?? null,
       resolvedAt: r.resolvedAt?.toISOString() ?? null,
@@ -145,6 +153,7 @@ export async function loader({ request }: Route.LoaderArgs) {
       userName: [b.user.firstName, b.user.lastName].filter(Boolean).join(' ') || null,
     })),
     history: history.map(serialize),
+    historyHasMore,
     lastStreamUrl: lastWithStream?.streamUrl ?? '',
   }
 }
@@ -251,6 +260,11 @@ export async function action({ request }: Route.ActionArgs) {
       const rawStreamUrl = String(fd.get('streamUrl') ?? '').trim() || null
       const streamUrl = await normalizeStreamUrl(rawStreamUrl)
       await prisma.gameRound.update({ where: { id: roundId }, data: { streamUrl } })
+      // Broadcast so every open customer page revalidates and switches to the
+      // new feed without waiting for a manual refresh.
+      const payload = { roundId, streamUrl }
+      notifyPresenceLive('round:streamUpdated', payload)
+      notifyAdmin('round:streamUpdated', payload)
       return { ok: true }
     }
 
@@ -618,10 +632,36 @@ export async function action({ request }: Route.ActionArgs) {
 }
 
 export default function AdminLive() {
-  const { current, currentBets, history, lastStreamUrl } = useLoaderData<typeof loader>()
+  const { current, currentBets, history: initialHistory, historyHasMore: initialHasMore, lastStreamUrl } = useLoaderData<typeof loader>()
   const navigation = useNavigation()
   const revalidator = useRevalidator()
   const loading = navigation.state !== 'idle'
+
+  // Round history pagination — first page comes from the loader (100 rows),
+  // subsequent pages from /api/admin/live-history via this fetcher. We
+  // accumulate into local state so older pages stay visible after the user
+  // clicks LOAD MORE; resets whenever the loader returns a fresh first page
+  // (e.g. after a round resolves and the loader revalidates).
+  const [historyPages, setHistoryPages] = useState(initialHistory)
+  const [historyHasMore, setHistoryHasMore] = useState(initialHasMore)
+  useEffect(() => {
+    setHistoryPages(initialHistory)
+    setHistoryHasMore(initialHasMore)
+  }, [initialHistory, initialHasMore])
+  const loadMoreFetcher = useFetcher<{ history: typeof initialHistory; hasMore: boolean }>()
+  useEffect(() => {
+    if (loadMoreFetcher.state !== 'idle') return
+    const data = loadMoreFetcher.data
+    if (!data?.history) return
+    setHistoryPages(prev => [...prev, ...data.history])
+    setHistoryHasMore(data.hasMore)
+  }, [loadMoreFetcher.state, loadMoreFetcher.data])
+  function loadMoreHistory() {
+    if (historyPages.length === 0) return
+    const last = historyPages[historyPages.length - 1]
+    loadMoreFetcher.load(`/api/admin/live-history?before=${encodeURIComponent(last.createdAt)}`)
+  }
+  const loadingMore = loadMoreFetcher.state !== 'idle'
 
   // Presence: every customer (and admin) viewing the live page joins this
   // channel. We split admins out so the "viewers" count reflects customers only.
@@ -720,16 +760,21 @@ export default function AdminLive() {
         </>
       )}
 
-      {/* ─── Live presence + bets feed (only meaningful while a round is open) */}
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-        <ViewersPanel viewers={viewers} />
-        <LiveBetsPanel bets={bets} hasOpenRound={!!current} roundId={current?.id ?? null} />
+      {/* ─── Live presence + bets feed (only meaningful while a round is open).
+            Viewers takes 2/5 (40%), live bets takes 3/5 (60%) of the row. */}
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-5">
+        <div className="md:col-span-2">
+          <ViewersPanel viewers={viewers} />
+        </div>
+        <div className="md:col-span-3">
+          <LiveBetsPanel bets={bets} hasOpenRound={!!current} roundId={current?.id ?? null} />
+        </div>
       </div>
 
       {/* ─── Round history ───────────────────────────────────────────── */}
       <section>
         <h2 className="mb-2 text-sm font-bold " style={{ color: '#a5b4fc' }}>ROUND HISTORY</h2>
-        {history.length === 0 ? (
+        {historyPages.length === 0 ? (
           <div
             className="rounded-xl p-6 text-center text-xs"
             style={{ background: '#0f172a', color: '#818cf8', border: '1px solid #1e1b4b' }}
@@ -738,9 +783,21 @@ export default function AdminLive() {
           </div>
         ) : (
           <div className="flex flex-col gap-2">
-            {history.map(r => (
+            {historyPages.map(r => (
               <HistoryRow key={r.id} r={r} />
             ))}
+            {historyHasMore && (
+              <button
+                type="button"
+                onClick={loadMoreHistory}
+                disabled={loadingMore}
+                className="mt-2 inline-flex items-center justify-center gap-1.5 self-center rounded-full px-4 py-1.5 text-[11px] font-bold disabled:opacity-50"
+                style={{ background: '#1e1b4b', color: '#a5b4fc', border: '1px solid #4338ca' }}
+              >
+                {loadingMore ? <Loader size={12} className="animate-spin" /> : null}
+                {loadingMore ? 'LOADING…' : 'LOAD MORE'}
+              </button>
+            )}
           </div>
         )}
       </section>
@@ -875,7 +932,9 @@ function LiveBetsPanel({
       ) : bets.length === 0 ? (
         <p className="text-center text-[10px]" style={{ color: '#475569' }}>No bets in this round yet.</p>
       ) : (
-        <ul className="flex max-h-64 flex-col gap-1 overflow-y-auto">
+        // ~10 rows fit before the list scrolls. Each row is roughly 50px
+        // (two lines of small text + padding), so ≈ 500px caps the list.
+        <ul className="flex max-h-[500px] flex-col gap-1 overflow-y-auto">
           {bets.map(b => (
             <li
               key={b.id}
@@ -884,9 +943,14 @@ function LiveBetsPanel({
             >
               <div className="min-w-0">
                 <div className="truncate font-semibold" style={{ color: '#e9d5ff' }}>
-                  {b.userName ? `${b.userName} · ` : ''}{b.userTel}
+                  {/* Name only (per request) — fall back to tel if the user
+                      has no first/last name set so the row still identifies
+                      who placed the bet. */}
+                  {b.userName ?? b.userTel}
                 </div>
-                <div className="text-[10px]" style={{ color: '#a5b4fc' }}>{describeLiveBet(b)}</div>
+                <div className="mt-0.5" style={{ color: '#a5b4fc' }}>
+                  <LiveBetDescription bet={b} />
+                </div>
               </div>
               <span className="shrink-0 font-bold" style={{ color: '#fde68a' }}>{b.amount.toLocaleString()}</span>
             </li>
@@ -897,11 +961,46 @@ function LiveBetsPanel({
   )
 }
 
-function describeLiveBet(b: LiveBet): string {
-  if (b.kind === 'SYMBOL' && b.symbol) return `Symbol · ${b.symbol}`
-  if (b.kind === 'RANGE' && b.range) return `Range · ${b.range}`
-  if (b.kind === 'PAIR' && b.pairA && b.pairB) return `Pair · ${b.pairA}+${b.pairB}`
-  return b.kind
+// JSX renderer for the description line under each LIVE BETS row.
+//   - SYMBOL / PAIR → small symbol thumbnail(s) + uppercase name
+//   - RANGE → colored arrow icon (low=green↓, middle=yellow↕, high=red↑)
+function LiveBetDescription({ bet }: { bet: LiveBet }) {
+  if (bet.kind === 'SYMBOL' && bet.symbol) {
+    return (
+      <span className="flex items-center gap-1.5 text-[10px]">
+        <img
+          src={`/symbols/${bet.symbol.toLowerCase()}.jpg`}
+          alt=""
+          className="h-4 w-4 shrink-0 rounded object-contain"
+          style={{ background: '#fff' }}
+        />
+        <span>{bet.symbol}</span>
+      </span>
+    )
+  }
+  if (bet.kind === 'PAIR' && bet.pairA && bet.pairB) {
+    return (
+      <span className="flex items-center gap-1 text-[10px]">
+        <img src={`/symbols/${bet.pairA.toLowerCase()}.jpg`} alt="" className="h-4 w-4 shrink-0 rounded object-contain" style={{ background: '#fff' }} />
+        <span>{bet.pairA}</span>
+        <span>+</span>
+        <img src={`/symbols/${bet.pairB.toLowerCase()}.jpg`} alt="" className="h-4 w-4 shrink-0 rounded object-contain" style={{ background: '#fff' }} />
+        <span>{bet.pairB}</span>
+      </span>
+    )
+  }
+  if (bet.kind === 'RANGE' && bet.range) {
+    const Icon = bet.range === 'LOW' ? ArrowDown : bet.range === 'HIGH' ? ArrowUp : ArrowUpDown
+    const color = bet.range === 'LOW' ? '#4ade80' : bet.range === 'HIGH' ? '#f87171' : '#fbbf24'
+    const bounds = bet.range === 'LOW' ? '3-8' : bet.range === 'HIGH' ? '11-18' : '9-10'
+    return (
+      <span className="flex items-center gap-1.5 text-[10px]">
+        <Icon size={14} style={{ color }} className="shrink-0" />
+        <span>{bet.range} ({bounds})</span>
+      </span>
+    )
+  }
+  return <span className="text-[10px]">{bet.kind}</span>
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -988,6 +1087,18 @@ function ActiveRoundPanel({
   }
   const submitting = settling
 
+  // Result-entry modal: opened from the compact bar below the stream. Auto-
+  // opens once the betting timer expires so the admin doesn't have to click
+  // through to start entering dice.
+  const [resultModalOpen, setResultModalOpen] = useState(false)
+  const [autoOpened, setAutoOpened] = useState(false)
+  useEffect(() => {
+    if (bettingExpired && !autoOpened) {
+      setResultModalOpen(true)
+      setAutoOpened(true)
+    }
+  }, [bettingExpired, autoOpened])
+
   return (
     <div className="flex flex-col gap-4">
       {/* Stream embed */}
@@ -1032,39 +1143,13 @@ function ActiveRoundPanel({
         </Form>
       </div>
 
-      {/* Result entry */}
+      {/* Compact result-control bar — opens the result-entry modal */}
       <div className="rounded-xl p-4" style={{ background: '#0f172a', border: '1px solid #1e1b4b' }}>
         <div className="mb-3 flex items-center justify-between">
           <span className="text-[10px] font-bold " style={{ color: '#a5b4fc' }}>ROUND RESULT</span>
           <span className="text-[10px]" style={{ color: '#818cf8' }}>{round.bets} bets · #{round.id.slice(-6)}</span>
         </div>
-
-        {/* Mobile: 1 column, each die spans full width with 6 symbols across.
-            md+: 3 columns side-by-side, each 2 rows of 3 symbols. */}
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-          {[1, 2, 3].map(idx => (
-            <DiceSlot
-              key={idx}
-              label={`Dice ${idx}`}
-              value={dice[idx - 1] ?? ''}
-              onChange={s => pickDie(idx as 1 | 2 | 3, s)}
-            />
-          ))}
-        </div>
-
-        {allPicked && (
-          <div className="mt-3 text-center text-xs" style={{ color: '#a5b4fc' }}>
-            Sum: <span className="font-bold" style={{ color: '#fde68a' }}>{liveSum}</span>
-          </div>
-        )}
-
-        {settleError && (
-          <div className="mt-3 rounded-md px-3 py-2 text-center text-[11px]" style={{ background: 'rgba(220,38,38,0.2)', color: '#fca5a5', border: '1px solid #fca5a5' }}>
-            {settleError}
-          </div>
-        )}
-
-        <div className="mt-4 flex flex-wrap items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           {round.status === 'BETTING' && (
             <Form method="post" className="inline">
               <input type="hidden" name="op" value="lock" />
@@ -1080,19 +1165,19 @@ function ActiveRoundPanel({
               </button>
             </Form>
           )}
-
           <button
             type="button"
-            onClick={settle}
-            disabled={!allPicked || submitting}
-            className="inline-flex items-center gap-1 rounded-md px-3 py-1.5 text-[10px] font-bold  disabled:opacity-30"
-            style={{ background: '#14532d', color: '#fff', border: '1px solid #4ade80' }}
-            title={allPicked ? 'Settle the round and credit winners' : 'Pick all 3 dice first'}
+            onClick={() => setResultModalOpen(true)}
+            className="inline-flex items-center gap-1 rounded-md px-3 py-1.5 text-[10px] font-bold "
+            style={{ background: '#4338ca', color: '#fff', border: '1px solid #818cf8' }}
           >
-            {submitting ? <Loader size={10} className="animate-spin" /> : <Check size={10} />}
-            SUMMARY
+            OPEN RESULT BOARD
           </button>
-
+          {allPicked && (
+            <span className="text-[10px]" style={{ color: '#a5b4fc' }}>
+              Sum: <span className="font-bold" style={{ color: '#fde68a' }}>{liveSum}</span>
+            </span>
+          )}
           <Form method="post" className="ml-auto inline">
             <input type="hidden" name="op" value="cancel" />
             <input type="hidden" name="roundId" value={round.id} />
@@ -1107,6 +1192,128 @@ function ActiveRoundPanel({
             </button>
           </Form>
         </div>
+      </div>
+
+      {resultModalOpen && (
+        <ResultEntryModal
+          round={round}
+          dice={dice}
+          pickDie={pickDie}
+          allPicked={allPicked}
+          liveSum={liveSum}
+          settleError={settleError}
+          onSettle={settle}
+          submitting={submitting}
+          bettingExpired={bettingExpired}
+          remainingSeconds={remainingSeconds}
+          onClose={() => setResultModalOpen(false)}
+        />
+      )}
+    </div>
+  )
+}
+
+function ResultEntryModal({
+  round,
+  dice,
+  pickDie,
+  allPicked,
+  liveSum,
+  settleError,
+  onSettle,
+  submitting,
+  bettingExpired,
+  remainingSeconds,
+  onClose,
+}: {
+  round: CurrentRound
+  dice: (DiceSymbol | null)[]
+  pickDie: (index: 1 | 2 | 3, symbol: DiceSymbol) => void
+  allPicked: boolean
+  liveSum: number | null
+  settleError: string | null
+  onSettle: () => void
+  submitting: boolean
+  bettingExpired: boolean
+  remainingSeconds: number | null
+  onClose: () => void
+}) {
+  const stillBetting = round.status === 'BETTING' && !bettingExpired
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      style={{ background: 'rgba(0,0,0,0.7)' }}
+      onClick={onClose}
+    >
+      <div
+        onClick={e => e.stopPropagation()}
+        className="w-full max-w-2xl rounded-xl p-4"
+        style={{ background: '#0f172a', border: '1px solid #1e1b4b' }}
+      >
+        <div className="mb-3 flex items-center justify-between">
+          <span className="text-sm font-bold " style={{ color: '#a5b4fc' }}>
+            ROUND RESULT · #{round.id.slice(-6)}
+          </span>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-full p-1"
+            style={{ color: '#a5b4fc', background: '#1e1b4b' }}
+            aria-label="Close"
+          >
+            <X size={16} />
+          </button>
+        </div>
+
+        {stillBetting ? (
+          <div className="rounded-xl p-6 text-center" style={{ background: '#1e1b4b' }}>
+            <p className="text-xs" style={{ color: '#cbd5e1' }}>
+              Dice board opens after the betting window closes
+              {remainingSeconds != null && (
+                <span style={{ color: '#fde68a' }}> ({remainingSeconds}s remaining)</span>
+              )}
+            </p>
+          </div>
+        ) : (
+          <>
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+              {[1, 2, 3].map(idx => (
+                <DiceSlot
+                  key={idx}
+                  label={`Dice ${idx}`}
+                  value={dice[idx - 1] ?? ''}
+                  onChange={s => pickDie(idx as 1 | 2 | 3, s)}
+                />
+              ))}
+            </div>
+
+            {allPicked && (
+              <div className="mt-3 text-center text-xs" style={{ color: '#a5b4fc' }}>
+                Sum: <span className="font-bold" style={{ color: '#fde68a' }}>{liveSum}</span>
+              </div>
+            )}
+
+            {settleError && (
+              <div className="mt-3 rounded-md px-3 py-2 text-center text-[11px]" style={{ background: 'rgba(220,38,38,0.2)', color: '#fca5a5', border: '1px solid #fca5a5' }}>
+                {settleError}
+              </div>
+            )}
+
+            <div className="mt-4 flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={onSettle}
+                disabled={!allPicked || submitting}
+                className="inline-flex items-center gap-1 rounded-md px-3 py-1.5 text-[10px] font-bold  disabled:opacity-30"
+                style={{ background: '#14532d', color: '#fff', border: '1px solid #4ade80' }}
+                title={allPicked ? 'Settle the round and credit winners' : 'Pick all 3 dice first'}
+              >
+                {submitting ? <Loader size={10} className="animate-spin" /> : <Check size={10} />}
+                SUMMARY
+              </button>
+            </div>
+          </>
+        )}
       </div>
     </div>
   )
@@ -1225,9 +1432,22 @@ function DiceSlot({
 }
 
 function StreamEmbed({ url }: { url: string | null }) {
+  const containerRef = useRef<HTMLDivElement>(null)
+  // Facebook's video plugin renders at a fixed pixel width — we measure the
+  // container once after mount and pass it as the `width` URL param so the
+  // plugin fills the iframe exactly. Stays null until measured so we don't
+  // render the iframe with the wrong size first.
+  const [fbWidth, setFbWidth] = useState<number | null>(null)
+  useEffect(() => {
+    if (!containerRef.current) return
+    const w = containerRef.current.offsetWidth
+    setFbWidth(w >= 220 ? Math.min(1560, w) : 560)
+  }, [url])
+
   if (!url) {
     return (
       <div
+        ref={containerRef}
         className="flex aspect-video items-center justify-center rounded-lg text-xs"
         style={{ background: '#1e1b4b', color: '#818cf8', border: '1px dashed #4338ca' }}
       >
@@ -1237,27 +1457,43 @@ function StreamEmbed({ url }: { url: string | null }) {
   }
   const isVideoFile = /\.(mp4|webm|mov)(\?|$)/i.test(url)
   const isHls = /\.m3u8(\?|$)/i.test(url)
-  const yt = url.match(/(?:youtube\.com\/(?:watch\?v=|embed\/)|youtu\.be\/)([\w-]{11})/)
+  // Matches watch?v=, embed/, youtu.be/, AND the /live/<id> form used for
+  // live broadcasts — without `live/`, those URLs fall through and get
+  // direct-embedded, which YouTube blocks via X-Frame-Options.
+  const yt = url.match(/(?:youtube\.com\/(?:watch\?v=|embed\/|live\/)|youtu\.be\/)([\w-]{11})/)
   // Facebook URLs can't be iframed directly (X-Frame-Options) — rewrite to
   // the plugin endpoint which DOES allow embedding.
   const isFb = /(?:facebook\.com|fb\.watch)/i.test(url)
   const embedUrl = yt
-    ? `https://www.youtube.com/embed/${yt[1]}?autoplay=1&mute=1`
-    : isFb
-      ? `https://www.facebook.com/plugins/video.php?href=${encodeURIComponent(url)}&show_text=false&autoplay=true&mute=1`
+    ? `https://www.youtube.com/embed/${yt[1]}?autoplay=1&mute=1&playsinline=1`
+    : isFb && fbWidth !== null
+      ? `https://www.facebook.com/plugins/video.php?href=${encodeURIComponent(url)}&show_text=false&autoplay=true&mute=1&width=${fbWidth}`
       : url
 
+  // Portrait (Facebook phone live) vs landscape (YouTube / video file / generic).
+  const containerStyle: React.CSSProperties = isFb
+    ? { height: '50vh', aspectRatio: '9/16', border: '1px solid #4338ca' }
+    : { border: '1px solid #4338ca' }
+
   return (
-    <div className="overflow-hidden rounded-lg" style={{ border: '1px solid #4338ca' }}>
+    <div
+      ref={containerRef}
+      className={`overflow-hidden rounded-lg bg-black${isFb ? ' mx-auto' : ''}`}
+      style={containerStyle}
+    >
       {isVideoFile || isHls ? (
         <video src={url} controls autoPlay muted playsInline className="aspect-video w-full bg-black" />
+      ) : isFb && fbWidth === null ? (
+        // Black placeholder shown for one frame while we measure the container
+        <div className="h-full w-full bg-black" />
       ) : (
         <iframe
           src={embedUrl}
           title="LIVE stream"
           allow="autoplay; encrypted-media; picture-in-picture"
           allowFullScreen
-          className="aspect-video w-full bg-black"
+          className={`${isFb ? 'h-full w-full' : 'aspect-video w-full'} bg-black`}
+          style={{ display: 'block', border: 'none' }}
         />
       )}
     </div>

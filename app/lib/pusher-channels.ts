@@ -78,6 +78,14 @@ export interface RoundDicePayload {
   symbol: string  // DiceSymbol — kept as plain string for transport
 }
 
+// Fires when the admin updates the stream URL on an in-flight round. The
+// customer's home page revalidates so the iframe swaps to the new feed
+// without requiring an app restart.
+export interface RoundStreamUpdatedPayload {
+  roundId: string
+  streamUrl: string | null
+}
+
 // Fires per-bettor after the admin settles a round. Carries the customer's
 // personal stake/payout/net + new balance so their result modal can render
 // without an extra fetch.
