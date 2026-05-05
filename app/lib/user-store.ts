@@ -275,6 +275,14 @@ export function setBalance(newBalance: number) {
   notify()
 }
 
+// Update a specific wallet's balance without switching the active wallet.
+export function setWalletBalance(wallet: WalletKey, newBalance: number) {
+  const u = getUser()
+  _user = withWalletBalance(u, wallet, newBalance)
+  saveUser(_user)
+  notify()
+}
+
 // Sync all wallet balances from the server (called after login / on mount when
 // the root loader provides DB-backed wallet rows). The active wallet's mirrored
 // `balance` field is also updated so the play page reflects the real value.

@@ -8,7 +8,7 @@ import { useUser } from '~/hooks/use-user'
 import type { SessionUser, SessionWallets } from '~/root'
 import { useT } from '~/lib/use-t'
 import { LanguageSwitch } from '~/components/LanguageSwitch'
-import { setBalance as storeSetBalance, recordPlay, switchWallet, resetDemoBalance, hydrateBalances, DEMO_RESET_AMOUNT } from '~/lib/user-store'
+import { setBalance as storeSetBalance, setWalletBalance as storeSetWalletBalance, recordPlay, switchWallet, resetDemoBalance, hydrateBalances, DEMO_RESET_AMOUNT } from '~/lib/user-store'
 import { useSoundEngine, playClick, playChipPlace, playCoin, startBgMusic, stopBgMusic } from '~/hooks/use-sound-engine'
 import { usePresenceMembers, usePusherEvent } from '~/hooks/use-pusher'
 import {
@@ -1081,9 +1081,26 @@ export default function FishPrawnCrabGame() {
       currentBets.reduce((s, b) => s + b.amount, 0) +
       currentRangeBets.reduce((s, b) => s + b.amount, 0) +
       currentPairBets.reduce((s, b) => s + b.amount, 0)
-    const newBalance = balance + win
 
-    storeSetBalance(newBalance)
+    // PROMO rule: winning stakes are refunded to PROMO; only profit goes to REAL.
+    // `balance` here is already post-stake-deduction (chips placed reduce the display).
+    const isPromo = user.activeWallet === 'promo'
+    let newBalance: number
+    if (isPromo) {
+      const winningStake =
+        symbolResults.filter(r => r.won).reduce((s, r) => s + r.amount, 0) +
+        rangeResults.filter(r => r.won).reduce((s, r) => s + r.amount, 0) +
+        pairResults.filter(r => r.won).reduce((s, r) => s + r.amount, 0)
+      const profit = win - winningStake
+      newBalance = balance + winningStake  // refund winning stakes back to PROMO
+      storeSetBalance(newBalance)
+      if (profit > 0) {
+        storeSetWalletBalance('real', user.balances.real + profit)
+      }
+    } else {
+      newBalance = balance + win
+      storeSetBalance(newBalance)
+    }
     recordPlay(
       {
         timestamp: Date.now(),
@@ -1218,7 +1235,7 @@ export default function FishPrawnCrabGame() {
 
     const payload = {
       mode: 'LIVE',
-      wallet: user.activeWallet === 'real' ? 'REAL' : 'DEMO',
+      wallet: user.activeWallet === 'real' ? 'REAL' : user.activeWallet === 'promo' ? 'PROMO' : 'DEMO',
       bets: {
         symbol: snapshot.symbol.map(b => ({
           symbol: b.symbol.toUpperCase(),
