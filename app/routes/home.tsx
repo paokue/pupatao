@@ -1287,14 +1287,35 @@ export default function FishPrawnCrabGame() {
     setMode(prev => {
       if (prev === next) return prev
       try { localStorage.setItem('fpc_play_mode', next) } catch { /* ignore */ }
-      if (next === 'live') revalidator.revalidate()
+      if (next === 'live') {
+        revalidator.revalidate()
+        // LIVE only allows the REAL wallet — auto-switch on entry. The
+        // useEffect below also enforces this on mount/restore so this is
+        // belt-and-suspenders.
+        if (user.activeWallet !== 'real') switchWallet('real')
+      }
       return next
     })
     setCurrentBets([])
     setCurrentRangeBets([])
     setCurrentPairBets([])
     setPendingCell(null)
-  }, [revalidator])
+  }, [revalidator, user.activeWallet])
+
+  // Enforce REAL wallet whenever mode is LIVE. Covers:
+  //   - mount-time restoration of mode='live' from localStorage
+  //   - any path where mode flips to live without going through selectMode
+  // The check guards against re-entry: switchWallet is a no-op when the wallet
+  // is already the target, so the effect doesn't loop.
+  useEffect(() => {
+    if (mode === 'live' && user.activeWallet !== 'real') {
+      switchWallet('real')
+      setCurrentBets([])
+      setCurrentRangeBets([])
+      setCurrentPairBets([])
+      setPendingCell(null)
+    }
+  }, [mode, user.activeWallet])
 
   // (Webcam getUserMedia removed — stream is now an external iframe embed on user side.)
 
@@ -1578,11 +1599,17 @@ export default function FishPrawnCrabGame() {
               <ChevronDown size={12} style={{ transform: walletOpen ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 120ms' }} />
             </button>
             {walletOpen && (() => {
+              // LIVE mode is REAL-only: hide DEMO and PROMO so the customer
+              // can't accidentally place a real-stakes live bet from a play
+              // wallet. The useEffect above already auto-switches to REAL
+              // on entering live, so the active wallet is always in the list.
               const items: { key: string; label: string }[] = [
                 { key: 'real', label: t('menu.realAccount') },
-                { key: 'demo', label: t('menu.demoAccount') },
               ]
-              if ((user.balances.promo ?? 0) > 0) items.push({ key: 'promo', label: t('menu.promoAccount') })
+              if (mode !== 'live') {
+                items.push({ key: 'demo', label: t('menu.demoAccount') })
+                if ((user.balances.promo ?? 0) > 0) items.push({ key: 'promo', label: t('menu.promoAccount') })
+              }
               return (
                 <PickerDropdown
                   items={items}
