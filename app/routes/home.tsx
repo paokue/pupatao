@@ -145,6 +145,9 @@ function loadFbSdk(): Promise<void> {
   return fbSdkPromise
 }
 
+// How long (ms) a <video> can be stalled before we auto-reload it.
+const VIDEO_STALL_TIMEOUT = 10_000
+
 function LiveStreamBox({
   rawUrl,
   waitingText,
@@ -160,7 +163,15 @@ function LiveStreamBox({
   const [fbWidth, setFbWidth] = useState<number | null>(null)
   const [hasPlayed, setHasPlayed] = useState(false)
   const [iframeKey, setIframeKey] = useState(0)
+  const [isBuffering, setIsBuffering] = useState(false)
+  const stallTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const isFb = rawUrl ? IS_FB_RE.test(rawUrl) : false
+
+  const reload = useCallback(() => {
+    setIsBuffering(false)
+    setIframeKey(k => k + 1)
+    fbPlayerRef.current = null
+  }, [])
 
   useEffect(() => {
     if (!boxRef.current) return
@@ -172,9 +183,17 @@ function LiveStreamBox({
   // sees the latest feed when the admin updates the stream URL.
   useEffect(() => {
     setHasPlayed(false)
+    setIsBuffering(false)
     setIframeKey(k => k + 1)
     fbPlayerRef.current = null
   }, [rawUrl])
+
+  // Clear the stall timer on unmount.
+  useEffect(() => {
+    return () => {
+      if (stallTimerRef.current) clearTimeout(stallTimerRef.current)
+    }
+  }, [])
 
   // Load the FB SDK and parse the <div class="fb-video"> into a player.
   // Subscribe BEFORE parse so we don't miss the xfbml.ready event.
@@ -250,6 +269,22 @@ function LiveStreamBox({
     }
   }
 
+  // Video stall detection helpers — arm a timer on stall/waiting; disarm on
+  // timeupdate/playing. After VIDEO_STALL_TIMEOUT ms of no progress the
+  // video element is remounted which forces the browser to re-buffer.
+  function armStallTimer() {
+    if (stallTimerRef.current) clearTimeout(stallTimerRef.current)
+    setIsBuffering(true)
+    stallTimerRef.current = setTimeout(() => {
+      setIsBuffering(false)
+      setIframeKey(k => k + 1)
+    }, VIDEO_STALL_TIMEOUT)
+  }
+  function disarmStallTimer() {
+    if (stallTimerRef.current) { clearTimeout(stallTimerRef.current); stallTimerRef.current = null }
+    setIsBuffering(false)
+  }
+
   return (
     <div
       ref={boxRef}
@@ -261,16 +296,21 @@ function LiveStreamBox({
           {waitingText}
         </div>
       ) : isVideo ? (
-        // HLS / mp4 — no controls, no interaction (matches the YouTube path
-        // above). iOS Safari natively supports HLS autoplay when muted +
-        // playsInline, so no tap-to-play is required.
+        // HLS / mp4 — no controls, no interaction. Stall events trigger
+        // auto-reload after VIDEO_STALL_TIMEOUT ms.
         <video
+          key={iframeKey}
           src={rawUrl}
           className="h-full w-full"
           autoPlay
           muted
           playsInline
           style={{ pointerEvents: 'none' }}
+          onWaiting={armStallTimer}
+          onStalled={armStallTimer}
+          onPlaying={disarmStallTimer}
+          onTimeUpdate={disarmStallTimer}
+          onError={armStallTimer}
         />
       ) : isFb ? (
         <>
@@ -328,6 +368,30 @@ function LiveStreamBox({
           }}
         />
       ) : null}
+
+      {/* Buffering spinner — shown when <video> stalls while waiting to auto-reload */}
+      {isBuffering && rawUrl && (
+        <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-2" style={{ background: 'rgba(0,0,0,0.55)' }}>
+          <RefreshCw size={28} className="animate-spin" style={{ color: '#fde68a' }} />
+          <span className="text-xs font-semibold" style={{ color: '#fde68a' }}>Buffering…</span>
+        </div>
+      )}
+
+      {/* Manual reload button — always shown when a URL is set so the user
+          can recover from a frozen stream without reloading the whole page. */}
+      {rawUrl && (
+        <button
+          type="button"
+          onClick={reload}
+          className="absolute bottom-2 right-2 flex items-center gap-1 rounded-full px-2 py-1 text-[10px] font-semibold transition-opacity hover:opacity-100"
+          style={{ background: 'rgba(0,0,0,0.55)', color: '#fde68a', border: '1px solid rgba(253,230,138,0.3)', opacity: 0.7 }}
+          title="Reload stream"
+        >
+          <RefreshCw size={11} />
+          Reload
+        </button>
+      )}
+
       {children}
     </div>
   )
