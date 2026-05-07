@@ -164,11 +164,19 @@ function LiveStreamBox({
   const [hasPlayed, setHasPlayed] = useState(false)
   const [iframeKey, setIframeKey] = useState(0)
   const [isBuffering, setIsBuffering] = useState(false)
+  const [isMobile, setIsMobile] = useState(false)
   const stallTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const isFb = rawUrl ? IS_FB_RE.test(rawUrl) : false
 
+  useEffect(() => {
+    setIsMobile(/Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent))
+  }, [])
+
   const reload = useCallback(() => {
     setIsBuffering(false)
+    // Reset hasPlayed so the tap-to-play overlay re-appears — on mobile this
+    // re-arms the user-gesture requirement that iOS Safari needs for playback.
+    setHasPlayed(false)
     setIframeKey(k => k + 1)
     fbPlayerRef.current = null
   }, [])
@@ -314,38 +322,70 @@ function LiveStreamBox({
         />
       ) : isFb ? (
         <>
-          <div ref={fbMountRef} key={iframeKey} className="h-full w-full">
-            {fbWidth !== null && (
-              <div
-                className="fb-video"
-                data-href={rawUrl}
-                data-width={fbWidth}
-                data-allowfullscreen="true"
-                data-autoplay="true"
-                data-show-text="false"
-                data-show-captions="false"
-                style={{ width: '100%', height: '100%' }}
-              />
-            )}
-          </div>
-          {!hasPlayed && (
-            <button
-              type="button"
-              onClick={handleTapToPlay}
-              className="absolute inset-0 flex flex-col items-center justify-center gap-3"
-              style={{ background: 'rgba(0,0,0,0.55)' }}
-              aria-label="Start live stream"
-            >
-              <span
-                className="flex h-20 w-20 items-center justify-center rounded-full text-4xl shadow-2xl"
-                style={{ background: 'rgba(253,230,138,0.95)', color: '#4c1d95', paddingLeft: 6 }}
+          {/* On mobile, Facebook embeds are blocked by iOS Safari — show a
+              prominent open-in-Facebook button as the primary action, with
+              the embed still mounted behind it in case the browser does allow
+              it (Android Chrome, etc.). */}
+          {isMobile ? (
+            <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 p-4" style={{ background: 'rgba(0,0,0,0.85)' }}>
+              <span className="text-center text-xs font-semibold" style={{ color: '#c4b5fd' }}>
+                Facebook Live works best in the Facebook app
+              </span>
+              <a
+                href={rawUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-2 rounded-xl px-5 py-3 text-sm font-bold shadow-2xl"
+                style={{ background: '#1877f2', color: '#fff' }}
               >
-                ▶
-              </span>
-              <span className="text-sm font-bold" style={{ color: '#fde68a' }}>
-                Tap to play live
-              </span>
-            </button>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M24 12.073C24 5.405 18.627 0 12 0S0 5.405 0 12.073C0 18.1 4.388 23.094 10.125 24v-8.437H7.078v-3.49h3.047V9.413c0-3.025 1.791-4.697 4.533-4.697 1.313 0 2.686.236 2.686.236v2.97h-1.513c-1.491 0-1.956.93-1.956 1.886v2.266h3.328l-.532 3.49h-2.796V24C19.612 23.094 24 18.1 24 12.073z"/></svg>
+                Watch Live on Facebook
+              </a>
+              <button
+                type="button"
+                onClick={() => setHasPlayed(false)}
+                className="text-xs underline"
+                style={{ color: '#a78bfa' }}
+              >
+                Try embed instead
+              </button>
+            </div>
+          ) : (
+            <>
+              <div ref={fbMountRef} key={iframeKey} className="h-full w-full">
+                {fbWidth !== null && (
+                  <div
+                    className="fb-video"
+                    data-href={rawUrl}
+                    data-width={fbWidth}
+                    data-allowfullscreen="true"
+                    data-autoplay="true"
+                    data-show-text="false"
+                    data-show-captions="false"
+                    style={{ width: '100%', height: '100%' }}
+                  />
+                )}
+              </div>
+              {!hasPlayed && (
+                <button
+                  type="button"
+                  onClick={handleTapToPlay}
+                  className="absolute inset-0 flex flex-col items-center justify-center gap-3"
+                  style={{ background: 'rgba(0,0,0,0.55)' }}
+                  aria-label="Start live stream"
+                >
+                  <span
+                    className="flex h-20 w-20 items-center justify-center rounded-full text-4xl shadow-2xl"
+                    style={{ background: 'rgba(253,230,138,0.95)', color: '#4c1d95', paddingLeft: 6 }}
+                  >
+                    ▶
+                  </span>
+                  <span className="text-sm font-bold" style={{ color: '#fde68a' }}>
+                    Tap to play live
+                  </span>
+                </button>
+              )}
+            </>
           )}
         </>
       ) : nonFbEmbedSrc ? (
