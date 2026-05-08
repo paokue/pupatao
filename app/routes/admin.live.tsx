@@ -55,14 +55,14 @@ function computeBetPayout(
   }
   return 0
 }
-// Asset filenames live at /symbols/<lowercase>.jpg — same files the player view uses.
+// Asset filenames live at /symbols/<lowercase>.png — same files the player view uses.
 const SYMBOL_FILE: Record<DiceSymbol, string> = {
   FISH: 'fish', PRAWN: 'prawn', CRAB: 'crab', ROOSTER: 'rooster', GOURD: 'gourd', FROG: 'frog',
 }
 const SYMBOLS: DiceSymbol[] = ['FISH', 'PRAWN', 'CRAB', 'ROOSTER', 'GOURD', 'FROG']
 
 function symbolSrc(s: DiceSymbol): string {
-  return `/symbols/${SYMBOL_FILE[s]}.jpg`
+  return `/symbols/${SYMBOL_FILE[s]}.png`
 }
 const ACTIVE_STATUSES = ['BETTING', 'LOCKED', 'AWAITING_RESULT'] as const
 
@@ -826,7 +826,7 @@ function SettledSummaryPanel({ summary, onClose }: { summary: ResolveSummary; on
         {summary.dice.map((s, i) => (
           <img
             key={i}
-            src={`/symbols/${s.toLowerCase()}.jpg`}
+            src={`/symbols/${s.toLowerCase()}.png`}
             alt={s}
             className="h-12 w-12 rounded object-contain"
             style={{ border: '1px solid #312e81', background: '#1e1b4b' }}
@@ -969,7 +969,7 @@ function LiveBetDescription({ bet }: { bet: LiveBet }) {
     return (
       <span className="flex items-center gap-1.5 text-[10px]">
         <img
-          src={`/symbols/${bet.symbol.toLowerCase()}.jpg`}
+          src={`/symbols/${bet.symbol.toLowerCase()}.png`}
           alt=""
           className="h-4 w-4 shrink-0 rounded object-contain"
           style={{ background: '#fff' }}
@@ -981,10 +981,10 @@ function LiveBetDescription({ bet }: { bet: LiveBet }) {
   if (bet.kind === 'PAIR' && bet.pairA && bet.pairB) {
     return (
       <span className="flex items-center gap-1 text-[10px]">
-        <img src={`/symbols/${bet.pairA.toLowerCase()}.jpg`} alt="" className="h-4 w-4 shrink-0 rounded object-contain" style={{ background: '#fff' }} />
+        <img src={`/symbols/${bet.pairA.toLowerCase()}.png`} alt="" className="h-4 w-4 shrink-0 rounded object-contain" style={{ background: '#fff' }} />
         <span>{bet.pairA}</span>
         <span>+</span>
-        <img src={`/symbols/${bet.pairB.toLowerCase()}.jpg`} alt="" className="h-4 w-4 shrink-0 rounded object-contain" style={{ background: '#fff' }} />
+        <img src={`/symbols/${bet.pairB.toLowerCase()}.png`} alt="" className="h-4 w-4 shrink-0 rounded object-contain" style={{ background: '#fff' }} />
         <span>{bet.pairB}</span>
       </span>
     )
@@ -1431,6 +1431,37 @@ function DiceSlot({
   )
 }
 
+function HlsVideo({ src, className }: { src: string; className?: string }) {
+  const videoRef = useRef<HTMLVideoElement>(null)
+  const hlsRef = useRef<{ destroy(): void } | null>(null)
+  const isHls = /\.m3u8(\?|$)/i.test(src)
+  useEffect(() => {
+    const video = videoRef.current
+    if (!video) return
+    hlsRef.current?.destroy()
+    hlsRef.current = null
+    if (!isHls) { video.src = src; return }
+    if (video.canPlayType('application/vnd.apple.mpegurl')) {
+      video.src = src
+      video.play().catch(() => {})
+      return
+    }
+    import('hls.js').then(({ default: Hls }) => {
+      if (!videoRef.current) return
+      if (!Hls.isSupported()) { videoRef.current.src = src; return }
+      const hls = new Hls({ enableWorker: true, lowLatencyMode: true })
+      hlsRef.current = hls
+      hls.loadSource(src)
+      hls.attachMedia(videoRef.current)
+      hls.on(Hls.Events.MANIFEST_PARSED, () => {
+        videoRef.current?.play().catch(() => {})
+      })
+    })
+    return () => { hlsRef.current?.destroy(); hlsRef.current = null }
+  }, [src, isHls])
+  return <video ref={videoRef} controls autoPlay muted playsInline className={className} />
+}
+
 function StreamEmbed({ url }: { url: string | null }) {
   const containerRef = useRef<HTMLDivElement>(null)
   // Facebook's video plugin renders at a fixed pixel width — we measure the
@@ -1455,14 +1486,10 @@ function StreamEmbed({ url }: { url: string | null }) {
       </div>
     )
   }
+  const isCf = /cloudflarestream\.com/i.test(url)
   const isVideoFile = /\.(mp4|webm|mov)(\?|$)/i.test(url)
   const isHls = /\.m3u8(\?|$)/i.test(url)
-  // Matches watch?v=, embed/, youtu.be/, AND the /live/<id> form used for
-  // live broadcasts — without `live/`, those URLs fall through and get
-  // direct-embedded, which YouTube blocks via X-Frame-Options.
   const yt = url.match(/(?:youtube\.com\/(?:watch\?v=|embed\/|live\/)|youtu\.be\/)([\w-]{11})/)
-  // Facebook URLs can't be iframed directly (X-Frame-Options) — rewrite to
-  // the plugin endpoint which DOES allow embedding.
   const isFb = /(?:facebook\.com|fb\.watch)/i.test(url)
   const embedUrl = yt
     ? `https://www.youtube.com/embed/${yt[1]}?autoplay=1&mute=1&playsinline=1`
@@ -1470,10 +1497,16 @@ function StreamEmbed({ url }: { url: string | null }) {
       ? `https://www.facebook.com/plugins/video.php?href=${encodeURIComponent(url)}&show_text=false&autoplay=true&mute=1&width=${fbWidth}`
       : url
 
-  // Portrait (Facebook phone live) vs landscape (YouTube / video file / generic).
   const containerStyle: React.CSSProperties = isFb
     ? { height: '50vh', aspectRatio: '9/16', border: '1px solid #4338ca' }
     : { border: '1px solid #4338ca' }
+
+  // Cloudflare Stream iframe src (admin keeps controls=true)
+  function cfSrc(raw: string) {
+    const m = raw.match(/(https:\/\/customer-[^.]+\.cloudflarestream\.com\/[a-f0-9]+)/i)
+    if (!m) return raw
+    return `${m[1]}/iframe?autoplay=true&muted=true`
+  }
 
   return (
     <div
@@ -1481,10 +1514,18 @@ function StreamEmbed({ url }: { url: string | null }) {
       className={`overflow-hidden rounded-lg bg-black${isFb ? ' mx-auto' : ''}`}
       style={containerStyle}
     >
-      {isVideoFile || isHls ? (
-        <video src={url} controls autoPlay muted playsInline className="aspect-video w-full bg-black" />
+      {isCf ? (
+        <iframe
+          src={cfSrc(url)}
+          title="LIVE stream"
+          allow="accelerometer; gyroscope; autoplay; encrypted-media; picture-in-picture"
+          allowFullScreen
+          className="aspect-video w-full bg-black"
+          style={{ display: 'block', border: 'none' }}
+        />
+      ) : isVideoFile || isHls ? (
+        <HlsVideo src={url} className="aspect-video w-full bg-black" />
       ) : isFb && fbWidth === null ? (
-        // Black placeholder shown for one frame while we measure the container
         <div className="h-full w-full bg-black" />
       ) : (
         <iframe

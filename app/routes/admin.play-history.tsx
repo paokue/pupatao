@@ -1,4 +1,5 @@
 import { Link, useLoaderData, useRevalidator, useSearchParams } from 'react-router'
+import { ArrowDown, ArrowUp, ArrowUpDown } from 'lucide-react'
 import type { Route } from './+types/admin.play-history'
 import type { WalletType } from '@prisma/client'
 import { requireAdmin } from '~/lib/admin-auth.server'
@@ -161,9 +162,20 @@ export default function AdminPlayHistory() {
                 <tr key={b.id} style={{ borderTop: '1px solid #1e1b4b', color: '#e9d5ff' }}>
                   <td className="whitespace-nowrap px-3 py-2 text-xs" style={{ color: '#818cf8' }}>{new Date(b.createdAt).toLocaleString()}</td>
                   <td className="px-3 py-2 text-xs">{b.user.name ? `${b.user.name} · ` : ''}{b.user.tel}</td>
-                  <td className="px-3 py-2 text-xs">{describeBet(b)}</td>
+                  <td className="px-3 py-2"><BetDescription b={b} /></td>
                   <td className="px-3 py-2 text-xs" style={{ color: '#a5b4fc' }}>
-                    {b.round ? `${b.round.mode} · ${b.round.status}${b.round.dice.length ? ` · ${b.round.dice.join('/')}` : ''}` : '—'}
+                    {b.round ? (
+                      <div className="flex flex-col gap-0.5">
+                        <span>{b.round.mode} · {b.round.status}</span>
+                        {b.round.dice.length > 0 && (
+                          <div className="flex items-center gap-0.5">
+                            {b.round.dice.map((d, i) => (
+                              <SymbolImg key={i} symbol={d} size={16} />
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    ) : '—'}
                   </td>
                   <td className="px-3 py-2 text-right" style={{ color: '#fde68a' }}>{b.amount.toLocaleString()}</td>
                   <td className="px-3 py-2 text-right" style={{ color: b.payout && b.payout > 0 ? '#4ade80' : '#818cf8' }}>
@@ -194,11 +206,57 @@ export default function AdminPlayHistory() {
 
 type Bet = ReturnType<typeof useLoaderData<typeof loader>>['bets'][number]
 
-function describeBet(b: Bet): string {
-  if (b.kind === 'SYMBOL' && b.symbol) return `Symbol · ${b.symbol}`
-  if (b.kind === 'RANGE' && b.range) return `Range · ${b.range}`
-  if (b.kind === 'PAIR' && b.pairA && b.pairB) return `Pair · ${b.pairA}+${b.pairB}`
-  return b.kind
+function SymbolImg({ symbol, size = 18 }: { symbol: string; size?: number }) {
+  return (
+    <img
+      src={`/symbols/${symbol.toLowerCase()}.png`}
+      alt={symbol}
+      width={size}
+      height={size}
+      className="inline-block rounded object-contain"
+      style={{ background: '#fff', padding: 1 }}
+    />
+  )
+}
+
+function BetDescription({ b }: { b: Bet }) {
+  if (b.kind === 'SYMBOL' && b.symbol) {
+    return (
+      <span className="flex items-center gap-1 text-xs" style={{ color: '#e9d5ff' }}>
+        <SymbolImg symbol={b.symbol} />
+        <span style={{ color: '#a5b4fc' }}>Symbol</span>
+        <span>·</span>
+        <span>{b.symbol}</span>
+      </span>
+    )
+  }
+  if (b.kind === 'PAIR' && b.pairA && b.pairB) {
+    return (
+      <span className="flex items-center gap-1 text-xs" style={{ color: '#e9d5ff' }}>
+        <SymbolImg symbol={b.pairA} />
+        <SymbolImg symbol={b.pairB} />
+        <span style={{ color: '#a5b4fc' }}>Pair</span>
+        <span>·</span>
+        <span>{b.pairA}+{b.pairB}</span>
+      </span>
+    )
+  }
+  if (b.kind === 'RANGE' && b.range) {
+    const icon = b.range === 'LOW'
+      ? <ArrowDown size={14} style={{ color: '#60a5fa' }} />
+      : b.range === 'HIGH'
+        ? <ArrowUp size={14} style={{ color: '#f87171' }} />
+        : <ArrowUpDown size={14} style={{ color: '#a78bfa' }} />
+    return (
+      <span className="flex items-center gap-1 text-xs" style={{ color: '#e9d5ff' }}>
+        {icon}
+        <span style={{ color: '#a5b4fc' }}>Range</span>
+        <span>·</span>
+        <span>{b.range}</span>
+      </span>
+    )
+  }
+  return <span className="text-xs">{b.kind}</span>
 }
 
 function BetCard({ b }: { b: Bet }) {
@@ -216,9 +274,14 @@ function BetCard({ b }: { b: Bet }) {
         </div>
         <ResultPill result={b.result} />
       </div>
-      <div className="mt-2 text-xs" style={{ color: '#a5b4fc' }}>
-        {describeBet(b)}
-        {b.round ? ` · ${b.round.mode}/${b.round.status}${b.round.dice.length ? ` · ${b.round.dice.join('/')}` : ''}` : ''}
+      <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs" style={{ color: '#a5b4fc' }}>
+        <BetDescription b={b} />
+        {b.round && (
+          <span className="flex items-center gap-1">
+            <span>{b.round.mode} · {b.round.status}</span>
+            {b.round.dice.map((d, i) => <SymbolImg key={i} symbol={d} size={14} />)}
+          </span>
+        )}
       </div>
       <div className="mt-2 grid grid-cols-2 gap-2">
         <div className="rounded-md px-2 py-1.5" style={{ background: '#1e1b4b' }}>

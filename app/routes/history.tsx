@@ -468,7 +468,7 @@ function GameRow({ round }: { round: Round }) {
               className="relative overflow-hidden rounded-lg bg-white shadow"
               style={{ width: 40, height: 40, border: '2px solid #f59e0b' }}
             >
-              <img src={`/symbols/${sym}.jpg`} alt={sym} className="absolute inset-0 h-full w-full object-contain p-0.5" />
+              <img src={`/symbols/${sym}.png`} alt={sym} className="absolute inset-0 h-full w-full object-contain p-0.5" />
             </div>
           ))}
         </div>
@@ -541,7 +541,7 @@ function BetTile({
     return (
       <div className="flex items-center gap-1.5 rounded-lg px-2 py-1" style={baseStyle}>
         <div className="relative h-6 w-6 overflow-hidden rounded bg-white">
-          <img src={`/symbols/${bet.symbol}.jpg`} alt={bet.symbol} className="absolute inset-0 h-full w-full object-contain" />
+          <img src={`/symbols/${bet.symbol}.png`} alt={bet.symbol} className="absolute inset-0 h-full w-full object-contain" />
         </div>
         <span className="text-xs font-semibold" style={{ color: '#fde68a' }}>{bet.amount.toLocaleString()}</span>
         <PayoutBadge won={won} profit={profit} />
@@ -554,11 +554,11 @@ function BetTile({
       <div className="flex items-center gap-1.5 rounded-lg px-2 py-1" style={baseStyle}>
         <div className="flex items-center gap-1">
           <div className="relative h-6 w-6 overflow-hidden rounded bg-white">
-            <img src={`/symbols/${bet.pairA}.jpg`} alt={bet.pairA} className="absolute inset-0 h-full w-full object-contain" />
+            <img src={`/symbols/${bet.pairA}.png`} alt={bet.pairA} className="absolute inset-0 h-full w-full object-contain" />
           </div>
           <span className="text-[10px] font-bold" style={{ color: '#a78bfa' }}>+</span>
           <div className="relative h-6 w-6 overflow-hidden rounded bg-white">
-            <img src={`/symbols/${bet.pairB}.jpg`} alt={bet.pairB} className="absolute inset-0 h-full w-full object-contain" />
+            <img src={`/symbols/${bet.pairB}.png`} alt={bet.pairB} className="absolute inset-0 h-full w-full object-contain" />
           </div>
         </div>
         <span className="text-xs font-semibold" style={{ color: '#fde68a' }}>{bet.amount.toLocaleString()}</span>

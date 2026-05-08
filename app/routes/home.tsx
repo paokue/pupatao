@@ -94,6 +94,16 @@ function rangeMultiplier(key: RangeKey, cfg: { rangeLow: number; rangeMiddle: nu
 // Facebook Live is filmed on a phone → portrait (9:16). All other sources
 // (YouTube, direct video, generic iframe) stay landscape (16:9).
 const IS_FB_RE = /(?:facebook\.com|fb\.watch)/i
+const IS_CF_RE = /cloudflarestream\.com/i
+
+// Build the Cloudflare Stream iframe src — works from both the /iframe URL
+// and the /manifest/video.m3u8 URL the admin might paste.
+function cfIframeSrc(rawUrl: string, controls: boolean): string {
+  const m = rawUrl.match(/(https:\/\/customer-[^.]+\.cloudflarestream\.com\/[a-f0-9]+)/i)
+  if (!m) return rawUrl
+  const params = controls ? 'autoplay=true&muted=true' : 'autoplay=true&muted=true&controls=false'
+  return `${m[1]}/iframe?${params}`
+}
 
 // FB JS SDK is loaded lazily the first time a Facebook stream is embedded.
 // We use the SDK (not a raw plugin iframe) for one specific reason: the SDK
@@ -145,6 +155,89 @@ function loadFbSdk(): Promise<void> {
   return fbSdkPromise
 }
 
+// HLS-aware video element. Uses HLS.js in Chrome/Firefox/Edge and native
+// HLS in Safari. The hlsRef holds the instance across async resolution so
+// cleanup always destroys it even if the effect fires before the import settles.
+function HlsVideo({
+  src,
+  className,
+  onWaiting,
+  onStalled,
+  onPlaying,
+  onTimeUpdate,
+  onError,
+}: {
+  src: string
+  className?: string
+  onWaiting?: () => void
+  onStalled?: () => void
+  onPlaying?: () => void
+  onTimeUpdate?: () => void
+  onError?: () => void
+}) {
+  const videoRef = useRef<HTMLVideoElement>(null)
+  const hlsRef = useRef<{ destroy(): void } | null>(null)
+  const isHls = /\.m3u8(\?|$)/i.test(src)
+
+  useEffect(() => {
+    const video = videoRef.current
+    if (!video) return
+
+    // Tear down any previous HLS instance before setting up a new one
+    hlsRef.current?.destroy()
+    hlsRef.current = null
+
+    if (!isHls) {
+      video.src = src
+      return
+    }
+
+    // Safari: native HLS
+    if (video.canPlayType('application/vnd.apple.mpegurl')) {
+      video.src = src
+      video.play().catch(() => {})
+      return
+    }
+
+    // Chrome / Firefox / Edge: HLS.js via MSE
+    import('hls.js').then(({ default: Hls }) => {
+      if (!videoRef.current) return
+      if (!Hls.isSupported()) {
+        videoRef.current.src = src
+        return
+      }
+      const hls = new Hls({ enableWorker: true, lowLatencyMode: true })
+      hlsRef.current = hls
+      hls.loadSource(src)
+      hls.attachMedia(videoRef.current)
+      hls.on(Hls.Events.MANIFEST_PARSED, () => {
+        videoRef.current?.play().catch(() => {})
+      })
+    })
+
+    return () => {
+      hlsRef.current?.destroy()
+      hlsRef.current = null
+    }
+  }, [src, isHls])
+
+  return (
+    <video
+      ref={videoRef}
+      className={className}
+      autoPlay
+      muted
+      playsInline
+      style={{ pointerEvents: 'none' }}
+      onWaiting={onWaiting}
+      onStalled={onStalled}
+      onPlaying={onPlaying}
+      onTimeUpdate={onTimeUpdate}
+      onError={onError}
+    />
+  )
+}
+
 // How long (ms) a <video> can be stalled before we auto-reload it.
 const VIDEO_STALL_TIMEOUT = 10_000
 
@@ -165,6 +258,7 @@ function LiveStreamBox({
   const [iframeKey, setIframeKey] = useState(0)
   const [isBuffering, setIsBuffering] = useState(false)
   const stallTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const isCf = rawUrl ? IS_CF_RE.test(rawUrl) : false
   const isFb = rawUrl ? IS_FB_RE.test(rawUrl) : false
 
   const reload = useCallback(() => {
@@ -235,7 +329,7 @@ function LiveStreamBox({
 
   // Non-FB URL builder. FB is rendered via the SDK <div class="fb-video"> below.
   const nonFbEmbedSrc: string | null = (() => {
-    if (!rawUrl || isVideo || isFb) return null
+    if (!rawUrl || isVideo || isFb || isCf) return null
     // Matches all YouTube URL shapes: watch?v=, embed/, youtu.be/, AND the
     // newer /live/<id> form used for live broadcasts.
     const yt = rawUrl.match(/(?:youtube\.com\/(?:watch\?v=|embed\/|live\/)|youtu\.be\/)([\w-]{11})/)
@@ -298,17 +392,23 @@ function LiveStreamBox({
         <div className="flex h-full w-full items-center justify-center text-xs" style={{ color: '#a78bfa' }}>
           {waitingText}
         </div>
+      ) : isCf ? (
+        // Cloudflare Stream iframe — handles HLS, autoplay, and mobile Safari
+        // natively via Cloudflare's own player. No HLS.js needed.
+        <iframe
+          key={iframeKey}
+          src={cfIframeSrc(rawUrl, false)}
+          className="h-full w-full"
+          style={{ border: 'none', display: 'block' }}
+          allow="accelerometer; gyroscope; autoplay; encrypted-media; picture-in-picture"
+          allowFullScreen
+          title="Live stream"
+        />
       ) : isVideo ? (
-        // HLS / mp4 — no controls, no interaction. Stall events trigger
-        // auto-reload after VIDEO_STALL_TIMEOUT ms.
-        <video
+        <HlsVideo
           key={iframeKey}
           src={rawUrl}
           className="h-full w-full"
-          autoPlay
-          muted
-          playsInline
-          style={{ pointerEvents: 'none' }}
           onWaiting={armStallTimer}
           onStalled={armStallTimer}
           onPlaying={disarmStallTimer}
@@ -1382,31 +1482,14 @@ export default function FishPrawnCrabGame() {
     setMode(prev => {
       if (prev === next) return prev
       try { localStorage.setItem('fpc_play_mode', next) } catch { /* ignore */ }
-      if (next === 'live') {
-        revalidator.revalidate()
-        // LIVE allows REAL and PROMO. If on DEMO, switch to REAL.
-        if (user.activeWallet === 'demo') switchWallet('real')
-      }
+      if (next === 'live') revalidator.revalidate()
       return next
     })
     setCurrentBets([])
     setCurrentRangeBets([])
     setCurrentPairBets([])
     setPendingCell(null)
-  }, [revalidator, user.activeWallet])
-
-  // Enforce REAL or PROMO wallet whenever mode is LIVE. DEMO is not allowed.
-  // Covers mount-time restoration from localStorage and any other path where
-  // mode flips to live without going through selectMode.
-  useEffect(() => {
-    if (mode === 'live' && user.activeWallet === 'demo') {
-      switchWallet('real')
-      setCurrentBets([])
-      setCurrentRangeBets([])
-      setCurrentPairBets([])
-      setPendingCell(null)
-    }
-  }, [mode, user.activeWallet])
+  }, [revalidator])
 
   // (Webcam getUserMedia removed — stream is now an external iframe embed on user side.)
 
@@ -1447,7 +1530,7 @@ export default function FishPrawnCrabGame() {
               className={`relative overflow-hidden rounded-xl bg-white shadow-2xl ${isRolling ? 'animate-bounce' : ''}`}
               style={{ width: 72, height: 72, border: '1px solid #f59e0b', animationDelay: `${i * 80}ms` }}
             >
-              <img src={`/symbols/${sym}.jpg`} alt={sym} className="absolute inset-0 h-full w-full object-contain p-1" />
+              <img src={`/symbols/${sym}.png`} alt={sym} className="absolute inset-0 h-full w-full object-contain p-1" />
             </div>
           ))
           : [0, 1, 2].map(i => (
@@ -1690,14 +1773,13 @@ export default function FishPrawnCrabGame() {
               <ChevronDown size={12} style={{ transform: walletOpen ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 120ms' }} />
             </button>
             {walletOpen && (() => {
-              // LIVE mode allows REAL and PROMO (profit from PROMO wins goes to REAL).
-              // DEMO is hidden in LIVE mode — demo funds are for self-play only.
+              // All three wallets are available in all modes.
+              // DEMO in LIVE: wins/losses stay in DEMO (no real money).
+              // PROMO in LIVE: profit from wins goes to REAL wallet.
               const items: { key: string; label: string }[] = [
                 { key: 'real', label: t('menu.realAccount') },
+                { key: 'demo', label: t('menu.demoAccount') },
               ]
-              if (mode !== 'live') {
-                items.push({ key: 'demo', label: t('menu.demoAccount') })
-              }
               if ((user.balances.promo ?? 0) > 0) {
                 items.push({ key: 'promo', label: t('menu.promoAccount') })
               }
@@ -1783,7 +1865,7 @@ export default function FishPrawnCrabGame() {
                 >
                   {roll.map((sym, i) => (
                     <div key={i} className="relative mx-auto h-[56px] w-[56px] rounded-lg overflow-hidden bg-white">
-                      <img src={`/symbols/${sym}.jpg`} alt={sym} className="absolute inset-0 h-full w-full object-contain" />
+                      <img src={`/symbols/${sym}.png`} alt={sym} className="absolute inset-0 h-full w-full object-contain" />
                     </div>
                   ))}
                 </div>
@@ -1955,7 +2037,7 @@ export default function FishPrawnCrabGame() {
                     >
                       <div className="relative w-full h-full p-2">
                         <img
-                          src={`/symbols/${symbol}.jpg`}
+                          src={`/symbols/${symbol}.png`}
                           alt={SYMBOL_NAMES[symbol]}
                           loading="eager"
                           className="absolute inset-0 h-full w-full object-contain p-2 group-hover:scale-105 transition-transform"
@@ -2028,7 +2110,7 @@ export default function FishPrawnCrabGame() {
                           }}
                         >
                           <span className="inline-flex items-center gap-1">
-                            <img src={`/symbols/${b.symbol}.jpg`} alt={b.symbol} className="h-3 w-3 rounded object-contain bg-white" />
+                            <img src={`/symbols/${b.symbol}.png`} alt={b.symbol} className="h-3 w-3 rounded object-contain bg-white" />
                             <span>{SYMBOL_VALUES[b.symbol]}</span>
                           </span>
                           <span>{b.amount.toLocaleString()}</span>
@@ -2055,10 +2137,10 @@ export default function FishPrawnCrabGame() {
                           }}
                         >
                           <span className="inline-flex items-center gap-1">
-                            <img src={`/symbols/${p.a}.jpg`} alt={p.a} className="h-3 w-3 rounded object-contain bg-white" />
+                            <img src={`/symbols/${p.a}.png`} alt={p.a} className="h-3 w-3 rounded object-contain bg-white" />
                             <span>{SYMBOL_VALUES[p.a]}</span>
                             <span className="px-0.5 opacity-70">+</span>
-                            <img src={`/symbols/${p.b}.jpg`} alt={p.b} className="h-3 w-3 rounded object-contain bg-white" />
+                            <img src={`/symbols/${p.b}.png`} alt={p.b} className="h-3 w-3 rounded object-contain bg-white" />
                             <span>{SYMBOL_VALUES[p.b]}</span>
                           </span>
                           <span style={{ color: won ? '#fde68a' : color }}>×{loaderData.payoutConfig.pair}</span>
@@ -2448,7 +2530,7 @@ export default function FishPrawnCrabGame() {
                 {resultModal.dice.map((s, i) => (
                   <img
                     key={i}
-                    src={`/symbols/${s}.jpg`}
+                    src={`/symbols/${s}.png`}
                     alt={s}
                     className="h-12 w-12 rounded object-contain"
                     style={{ border: '1px solid #c4b5fd', background: '#f5f5f5' }}
@@ -2530,7 +2612,7 @@ export default function FishPrawnCrabGame() {
                 {m.dice.map((s, i) => (
                   <img
                     key={i}
-                    src={`/symbols/${s.toLowerCase()}.jpg`}
+                    src={`/symbols/${s.toLowerCase()}.png`}
                     alt={s}
                     className="h-12 w-12 rounded object-contain"
                     style={{ border: '1px solid #c4b5fd', background: '#f5f5f5' }}
@@ -2617,7 +2699,7 @@ function DiceReveal({ dice }: { dice: (SymbolKey | null)[] }) {
           style={{ width: 64, height: 64, border: `1px solid ${sym ? '#f59e0b' : '#7c3aed'}` }}
         >
           {sym ? (
-            <img src={`/symbols/${sym}.jpg`} alt={sym} className="absolute inset-0 h-full w-full object-contain p-1" />
+            <img src={`/symbols/${sym}.png`} alt={sym} className="absolute inset-0 h-full w-full object-contain p-1" />
           ) : (
             <span style={{ color: '#7c3aed', fontSize: 26 }}>?</span>
           )}
@@ -2664,7 +2746,7 @@ function symbolIcon(symbol: SymbolKey | string) {
   const key = symbol.toLowerCase()
   return (
     <img
-      src={`/symbols/${key}.jpg`}
+      src={`/symbols/${key}.png`}
       alt={key}
       className="h-6 w-6 rounded object-contain"
       style={{ border: '1px solid #d4d4d8', background: '#fff' }}
@@ -2680,7 +2762,7 @@ function describeBetIcon(b: MyLiveBet, t: Translate) {
     return (
       <span className="flex items-center gap-2 truncate">
         <img
-          src={`/symbols/${k}.jpg`}
+          src={`/symbols/${k}.png`}
           alt=""
           className="h-5 w-5 shrink-0 rounded object-contain"
           style={{ background: '#fff' }}
@@ -2694,10 +2776,10 @@ function describeBetIcon(b: MyLiveBet, t: Translate) {
     const c = b.pairB.toLowerCase() as SymbolKey
     return (
       <span className="flex items-center gap-1.5 truncate">
-        <img src={`/symbols/${a}.jpg`} alt="" className="h-5 w-5 shrink-0 rounded object-contain" style={{ background: '#fff' }} />
+        <img src={`/symbols/${a}.png`} alt="" className="h-5 w-5 shrink-0 rounded object-contain" style={{ background: '#fff' }} />
         <span className="shrink-0">{b.pairA} ({SYMBOL_VALUE_BY_KEY[a]})</span>
         <span className="shrink-0">+</span>
-        <img src={`/symbols/${c}.jpg`} alt="" className="h-5 w-5 shrink-0 rounded object-contain" style={{ background: '#fff' }} />
+        <img src={`/symbols/${c}.png`} alt="" className="h-5 w-5 shrink-0 rounded object-contain" style={{ background: '#fff' }} />
         <span className="shrink-0">{b.pairB} ({SYMBOL_VALUE_BY_KEY[c]})</span>
       </span>
     )
