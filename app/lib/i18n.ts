@@ -350,6 +350,32 @@ export const STRINGS = {
   "referral.bonusPaid": { lo: "ຮັບໂບນັດແລ້ວ", en: "BONUS PAID" },
   "referral.pending": { lo: "ລໍຖ້າຝາກຄັ້ງທຳອິດ", en: "AWAITING TOPUP" },
 
+  // ─── Symbol names ────────────────────────────────────────────────────
+  "symbol.crab":    { lo: "ປູ",         en: "Crab" },
+  "symbol.fish":    { lo: "ປາ",         en: "Fish" },
+  "symbol.prawn":   { lo: "ກຸ້ງ",      en: "Prawn" },
+  "symbol.frog":    { lo: "ກົບ",       en: "Frog" },
+  "symbol.rooster": { lo: "ໄກ່",      en: "Rooster" },
+  "symbol.gourd":   { lo: "ນໍ້າເຕົ້າ", en: "Gourd" },
+
+  // ─── Bet type labels ─────────────────────────────────────────────────
+  "bet.symbol": { lo: "ເດີນພັນດ່ຽວ", en: "Symbol" },
+  "bet.pair":   { lo: "ເດີນພັນຄູ່",  en: "Pair" },
+  "bet.range":  { lo: "ຕໍ່າ/ສູງ",    en: "Range" },
+
+  // ─── Pair bet hint ───────────────────────────────────────────────────
+  "game.pairHint": {
+    lo: "ກົດໃສ່ສັດທີ1 ແລ້ວກົດໃສ່ຕົວທີ2 ເພື່ອວາງເດີມພັນຄູ່ (×5). ກົດສັດດຽວສອງຄັ້ງເພື່ອວາງແບບດ່ຽວ (×1).",
+    en: "Tap symbol 1, then symbol 2 for a pair bet (×5). Tap same symbol twice for a single bet (×1).",
+  },
+  "game.placeYourBets": { lo: "ວາງເດີນພັນຂອງທ່ານ", en: "Place your bets" },
+
+  // ─── Cancel bet confirmation ──────────────────────────────────────────
+  "bet.cancelTitle":   { lo: "ຢືນຢັນການຍົກເລີກ?", en: "Cancel this bet?" },
+  "bet.cancelDesc":    { lo: "ຍົກເລີກການແທງ {amount} ₭ ແລະ ຮັບເງິນຄືນ?", en: "Cancel your {amount} ₭ bet and get a full refund?" },
+  "bet.cancelConfirm": { lo: "ຢືນຢັນ — ຮັບເງິນຄືນ", en: "Yes, refund me" },
+  "bet.cancelNo":      { lo: "ບໍ່, ເກັບໄວ້", en: "No, keep it" },
+
   // ─── Game board action buttons ───────────────────────────────────────
   "game.custom": { lo: "ໃສ່ຈໍານວນເອງ", en: "CUSTOM" },
   "game.undo": { lo: "ກັບຄືນ", en: "UNDO" },

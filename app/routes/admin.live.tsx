@@ -471,7 +471,7 @@ export async function action({ request }: Route.ActionArgs) {
           },
         })
         return balances
-      })
+      }, { timeout: 30000, maxWait: 10000 })
 
       // Build per-user bet lists for the round:settled events. The customer's
       // result modal renders one row per bet so they see exactly what they
@@ -601,7 +601,7 @@ export async function action({ request }: Route.ActionArgs) {
           data: { actorId: admin.id, action: 'round.cancel', target: `round:${roundId}`, metadata: { refundedBets: bets.length, refundedWallets: refundGroups.size } },
         })
         return balances
-      })
+      }, { timeout: 30000, maxWait: 10000 })
 
       const payload = { roundId, mode: 'LIVE' as const, dice: [] as string[], diceSum: 0 }
       notifyAdmin('round:resolved', payload)

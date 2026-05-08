@@ -15,6 +15,7 @@ export default [
   route("api/locale", "routes/api.locale.tsx"),
   route("api/lookup-tel", "routes/api.lookup-tel.tsx"),
   route("api/pusher-auth", "routes/api.pusher-auth.tsx"),
+  route("api/cancel-live-bet", "routes/api.cancel-live-bet.tsx"),
   route("api/admin/live-history", "routes/api.admin.live-history.tsx"),
 
   // Admin auth (outside the admin layout — login can't require admin).

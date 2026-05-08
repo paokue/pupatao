@@ -20,7 +20,7 @@ import {
   type RoundStartedPayload,
   type TxUpdatedPayload,
 } from '~/lib/pusher-channels'
-import { ArrowDown, ArrowUp, ArrowUpDown, Check, ChevronDown, LogOut, Pencil, ReceiptText, RefreshCw, Undo, User, Volume2, VolumeOff, Wallet } from 'lucide-react'
+import { ArrowDown, ArrowUp, ArrowUpDown, Check, ChevronDown, Eye, LogOut, Pencil, ReceiptText, RefreshCw, Undo, User, Volume2, VolumeOff, Wallet, X } from 'lucide-react'
 
 type SymbolKey = 'fish' | 'prawn' | 'crab' | 'rooster' | 'gourd' | 'frog'
 
@@ -244,17 +244,25 @@ const VIDEO_STALL_TIMEOUT = 10_000
 function LiveStreamBox({
   rawUrl,
   waitingText,
+  expanded = false,
+  fullScreen = false,
+  bgColor = 'black',
+  autoStart = false,
   children,
 }: {
   rawUrl: string | null
   waitingText: string
+  expanded?: boolean
+  fullScreen?: boolean
+  bgColor?: string
+  autoStart?: boolean
   children?: ReactNode
 }) {
   const boxRef = useRef<HTMLDivElement>(null)
   const fbMountRef = useRef<HTMLDivElement>(null)
   const fbPlayerRef = useRef<FbPlayer | null>(null)
   const [fbWidth, setFbWidth] = useState<number | null>(null)
-  const [hasPlayed, setHasPlayed] = useState(false)
+  const [hasPlayed, setHasPlayed] = useState(autoStart)
   const [iframeKey, setIframeKey] = useState(0)
   const [isBuffering, setIsBuffering] = useState(false)
   const stallTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -345,9 +353,14 @@ function LiveStreamBox({
     return rawUrl
   })()
 
-  const boxStyle: React.CSSProperties = isFb
-    ? { width: '100%', height: '56vw', minHeight: 220, maxHeight: '65vh', border: '1px solid #a78bfa' }
-    : { width: '100%', aspectRatio: '16/9', maxHeight: '38vh', border: '1px solid #a78bfa' }
+  // Facebook live is filmed in portrait (9:16). Use a portrait box so the
+  // video fills it properly instead of letterboxing in a landscape container.
+  // `expanded` (non-betting phases) gives it more vertical real-estate.
+  const boxStyle: React.CSSProperties = fullScreen
+    ? { position: 'absolute', inset: 0 }
+    : isFb
+      ? { width: '100%', height: expanded ? '75vh' : '56vh', border: '1px solid #a78bfa' }
+      : { width: '100%', aspectRatio: '16/9', maxHeight: expanded ? '55vh' : '38vh', border: '1px solid #a78bfa' }
 
   function handleTapToPlay() {
     setHasPlayed(true)
@@ -385,8 +398,8 @@ function LiveStreamBox({
   return (
     <div
       ref={boxRef}
-      className="relative overflow-hidden rounded-lg bg-black"
-      style={boxStyle}
+      className="relative overflow-hidden rounded-lg"
+      style={{ ...boxStyle, background: bgColor }}
     >
       {!rawUrl ? (
         <div className="flex h-full w-full items-center justify-center text-xs" style={{ color: '#a78bfa' }}>
@@ -528,13 +541,16 @@ function areAdjacent(idx1: number, idx2: number): boolean {
   return Math.abs(r1 - r2) <= 1 && Math.abs(c1 - c2) <= 1
 }
 
+// Fallback English symbol names used only for non-translated contexts (e.g. alt text).
 const SYMBOL_NAMES: Record<SymbolKey, string> = {
-  fish: 'FISH',
-  prawn: 'PRAWN',
-  crab: 'CRAB',
-  rooster: 'ROOSTER',
-  gourd: 'GOURD',
-  frog: 'FROG',
+  fish: 'Fish', prawn: 'Prawn', crab: 'Crab',
+  rooster: 'Rooster', gourd: 'Gourd', frog: 'Frog',
+}
+
+// Locale-aware symbol name helper. Use this wherever the name is visible to the user.
+function symName(sym: string, t: ReturnType<typeof useT>): string {
+  const key = `symbol.${sym.toLowerCase()}` as Parameters<typeof t>[0]
+  try { return t(key) } catch { return sym }
 }
 
 const MIN_CHIP = 1_000    // Minimum allowed chip amount (₭)
@@ -915,6 +931,16 @@ export default function FishPrawnCrabGame() {
   // restored from localStorage in a mount effect below so we don't break
   // hydration.
   const [mode, setMode] = useState<'random' | 'live'>('random')
+  const [betSheetOpen, setBetSheetOpen] = useState(false)
+  const sheetGridRef = useRef<HTMLDivElement>(null)
+  const [sheetGridSize, setSheetGridSize] = useState({ w: 0, h: 0 })
+  const cancelBetFetcher = useFetcher<{ ok?: boolean; newBalance?: number; error?: string }>()
+  const [cancelledBetIds, setCancelledBetIds] = useState<Set<string>>(new Set())
+  const [cancelConfirmBet, setCancelConfirmBet] = useState<{ id: string; amount: number } | null>(null)
+  // Separate dropdown state for the overlay header so it doesn't conflict with the main header.
+  const [overlayModeOpen, setOverlayModeOpen] = useState(false)
+  const [overlayWalletOpen, setOverlayWalletOpen] = useState(false)
+  const [overlayProfileOpen, setOverlayProfileOpen] = useState(false)
   const liveRound = loaderData.liveRound
   const revalidator = useRevalidator()
 
@@ -1033,13 +1059,12 @@ export default function FishPrawnCrabGame() {
     authUser ? userChannel(authUser.id) : null,
     'transaction:updated',
     payload => {
-      if (payload.id.startsWith('round:')) {
-        const positive = payload.note?.toLowerCase().includes('payout')
-        toast[positive ? 'success' : 'message'](
-          positive ? t('live.payoutTitle') : t('live.updateTitle'),
-          { description: t('live.balance', { amount: payload.balanceAfter.toLocaleString() }) },
-        )
-      }
+      // Suppress toasts for round settlements — the result modal already shows
+      // payout details comprehensively. Only show for other tx types (deposits etc).
+      if (payload.id.startsWith('round:')) return
+      toast.message(t('live.updateTitle'), {
+        description: t('live.balance', { amount: payload.balanceAfter.toLocaleString() }),
+      })
     },
   )
 
@@ -1491,9 +1516,44 @@ export default function FishPrawnCrabGame() {
     setPendingCell(null)
   }, [revalidator])
 
+  // Auto-open the bet sheet when a new round starts; auto-close + clear state when it ends.
+  useEffect(() => {
+    if (livePhase === 'betting') {
+      setBetSheetOpen(true)
+      // Clear any leftover staged bets + pending pair selection from the previous round
+      setPendingCell(null)
+      setCurrentBets([])
+      setCurrentRangeBets([])
+      setCurrentPairBets([])
+      setCancelledBetIds(new Set())
+    } else {
+      setBetSheetOpen(false)
+      setPendingCell(null)
+    }
+  }, [livePhase])
+
+  // When a cancel-bet succeeds, update the local balance and revalidate.
+  useEffect(() => {
+    if (cancelBetFetcher.state !== 'idle') return
+    const data = cancelBetFetcher.data
+    if (!data?.ok || data.newBalance == null) return
+    storeSetBalance(data.newBalance)
+    setBalance(data.newBalance)
+    revalidator.revalidate()
+  }, [cancelBetFetcher.state, cancelBetFetcher.data, revalidator])
+
+  // Measure the sheet grid so SVG pair lines can be drawn accurately.
+  useEffect(() => {
+    if (!betSheetOpen || !sheetGridRef.current) return
+    const { offsetWidth, offsetHeight } = sheetGridRef.current
+    setSheetGridSize({ w: offsetWidth, h: offsetHeight })
+  }, [betSheetOpen])
+
   // (Webcam getUserMedia removed — stream is now an external iframe embed on user side.)
 
   // Observe the betting grid's pixel size so we can draw pair connector lines.
+  // Re-runs when mode/livePhase changes so the measurement fires after the grid
+  // mounts (it's conditionally rendered — not present until betting opens).
   useEffect(() => {
     if (!gridRef.current) return
     const el = gridRef.current
@@ -1502,7 +1562,7 @@ export default function FishPrawnCrabGame() {
     const ro = new ResizeObserver(update)
     ro.observe(el)
     return () => ro.disconnect()
-  }, [])
+  }, [mode, livePhase])
 
   // Auto-fade the winner highlight 5s after a roll lands, and also clear it
   // immediately if a new roll starts (so the previous round's highlight
@@ -1585,6 +1645,506 @@ export default function FishPrawnCrabGame() {
       }}
       onClick={ensureBgMusic}
     >
+      {/* ── LIVE FULL-SCREEN OVERLAY (mobile only) ──────────────────────── */}
+      {mode === 'live' && (
+        <div className="fixed inset-0 z-[100] bg-black md:hidden">
+          {/* Full-screen video */}
+          <div className="absolute inset-0">
+            <LiveStreamBox
+              rawUrl={liveRound?.streamUrl ?? loaderData.lastStreamUrl ?? null}
+              waitingText={t('live.waitingHostStream')}
+              fullScreen
+            />
+          </div>
+
+          {/* Top gradient for text readability */}
+          <div className="pointer-events-none absolute inset-x-0 top-0 h-36"
+            style={{ background: 'linear-gradient(to bottom, rgba(0,0,0,0.75), transparent)' }} />
+          {/* Bottom gradient */}
+          <div className="pointer-events-none absolute inset-x-0 bottom-0 h-48"
+            style={{ background: 'linear-gradient(to top, rgba(0,0,0,0.75), transparent)' }} />
+
+          {/* ── Floating header ── */}
+          <div className="absolute inset-x-0 top-0 flex items-center justify-between gap-2 px-3"
+            style={{ paddingTop: 'max(env(safe-area-inset-top), 10px)', paddingBottom: 8 }}>
+            {/* Left: avatar + name → opens profile dropdown */}
+            <div className="relative z-10 min-w-0">
+              <button
+                onClick={() => setOverlayProfileOpen(v => !v)}
+                className="flex items-center gap-1.5 min-w-0"
+              >
+                <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[10px] font-bold"
+                  style={{ background: '#4c1d95', border: '1px solid #a78bfa', color: '#e9d5ff' }}>
+                  {initials || '?'}
+                </div>
+                <span className="truncate text-[10px] font-semibold text-white max-w-[80px]">{displayName}</span>
+              </button>
+              {overlayProfileOpen && (
+                <ProfileDropdown name={displayName} onClose={() => setOverlayProfileOpen(false)} />
+              )}
+            </div>
+
+            {/* Center: mode selector — uses its own state to avoid conflicting with the main header */}
+            <div className="relative z-10">
+              <button
+                onClick={() => { playClick(); setOverlayModeOpen(v => !v) }}
+                className="flex items-center gap-1 rounded-full px-2.5 py-1 text-[10px] font-bold"
+                style={{ background: 'rgba(220,38,38,0.85)', color: '#fff', border: '1px solid #fca5a5' }}
+              >
+                {t('game.modeLive')}
+                <ChevronDown size={10} style={{ transform: overlayModeOpen ? 'rotate(180deg)' : 'none' }} />
+              </button>
+              {overlayModeOpen && (
+                <PickerDropdown
+                  items={[{ key: 'random', label: t('game.modeSelf') }, { key: 'live', label: t('game.modeLive') }]}
+                  active={mode}
+                  onSelect={key => { selectMode(key as 'random' | 'live'); setOverlayModeOpen(false) }}
+                  onClose={() => setOverlayModeOpen(false)}
+                />
+              )}
+            </div>
+
+            {/* Right: wallet + balance */}
+            <div className="relative z-10 flex items-center gap-1.5 shrink-0">
+              <button
+                onClick={() => { if (isAnonymous) { setLoginOpen(true) } else { setOverlayWalletOpen(v => !v) } }}
+                className="flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold"
+                style={{
+                  background: user.activeWallet === 'demo' ? 'rgba(76,29,149,0.8)' : user.activeWallet === 'real' ? 'rgba(180,83,9,0.8)' : 'rgba(22,163,74,0.8)',
+                  color: '#fff', border: '1px solid rgba(255,255,255,0.3)',
+                }}>
+                {user.activeWallet.toUpperCase()}
+                <ChevronDown size={9} />
+              </button>
+              {overlayWalletOpen && (
+                <PickerDropdown
+                  items={[
+                    { key: 'real', label: t('menu.realAccount') },
+                    { key: 'demo', label: t('menu.demoAccount') },
+                    ...((user.balances.promo ?? 0) > 0 ? [{ key: 'promo', label: t('menu.promoAccount') }] : []),
+                  ]}
+                  active={user.activeWallet}
+                  align="right"
+                  onSelect={key => {
+                    const next = key as 'demo' | 'real' | 'promo'
+                    setCurrentBets([]); setCurrentRangeBets([]); setCurrentPairBets([]); setPendingCell(null)
+                    switchWallet(next); setBalance(user.balances[next])
+                    setOverlayWalletOpen(false)
+                  }}
+                  onClose={() => setOverlayWalletOpen(false)}
+                />
+              )}
+              <span className="text-sm font-bold text-white">{formatAmount(balance)}₭</span>
+            </div>
+          </div>
+
+          {/* ── LIVE badge + confirmed bets feed below it ── */}
+          <div className="absolute left-3 flex flex-col gap-1.5" style={{ top: 64 }}>
+            <span className="flex w-fit items-center gap-1 rounded-full px-2.5 py-1 text-[10px] font-bold"
+              style={{ background: 'rgba(220,38,38,0.9)', color: '#fff' }}>
+              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-white" />
+              LIVE
+            </span>
+            {/* Confirmed bets — shown only during betting phase; hidden once result appears */}
+            {myLiveBets.length > 0 && livePhase === 'betting' && (
+              <div className="flex flex-col gap-1">
+                {myLiveBets.filter(b => !cancelledBetIds.has(b.id)).map(b => {
+                  const rangeColor = b.range === 'LOW' ? '#4ade80' : b.range === 'HIGH' ? '#f87171' : '#fbbf24'
+                  const RangeIcon = b.range === 'LOW' ? ArrowDown : b.range === 'HIGH' ? ArrowUp : ArrowUpDown
+                  return (
+                    <div key={b.id} className="flex items-center gap-1">
+                      {/* Bet pill */}
+                      <div className="flex items-center gap-1 rounded-lg px-2 py-1 text-[9px] font-semibold"
+                        style={{ background: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(4px)', color: '#fff', border: '1px solid rgba(255,255,255,0.15)' }}>
+                        {b.kind === 'SYMBOL' && b.symbol && (
+                          <>
+                            <img src={`/symbols/${b.symbol.toLowerCase()}.png`} alt="" className="h-4 w-4 rounded object-contain bg-white shrink-0" />
+                            <span>{symName(b.symbol, t)}</span>
+                          </>
+                        )}
+                        {b.kind === 'PAIR' && b.pairA && b.pairB && (
+                          <>
+                            <img src={`/symbols/${b.pairA.toLowerCase()}.png`} alt="" className="h-4 w-4 rounded object-contain bg-white shrink-0" />
+                            <span>{symName(b.pairA, t)}</span>
+                            <span className="opacity-60">+</span>
+                            <img src={`/symbols/${b.pairB.toLowerCase()}.png`} alt="" className="h-4 w-4 rounded object-contain bg-white shrink-0" />
+                            <span>{symName(b.pairB, t)}</span>
+                          </>
+                        )}
+                        {b.kind === 'RANGE' && b.range && (
+                          <>
+                            <RangeIcon size={11} style={{ color: rangeColor }} className="shrink-0" />
+                            <span style={{ color: rangeColor }}>{b.range === 'LOW' ? t('game.low') : b.range === 'HIGH' ? t('game.high') : t('game.middle')}</span>
+                          </>
+                        )}
+                        <span className="ml-0.5 font-bold" style={{ color: '#fde68a' }}>{b.amount.toLocaleString()}₭</span>
+                      </div>
+                      {/* Cancel button — outside the pill, opens confirm modal */}
+                      <button
+                        onClick={() => setCancelConfirmBet({ id: b.id, amount: b.amount })}
+                        className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full"
+                        style={{ background: 'rgba(220,38,38,0.8)', color: '#fff' }}
+                      >
+                        <X size={10} />
+                      </button>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+
+            {/* Cancel bet confirmation modal */}
+            {cancelConfirmBet && (
+              <div className="fixed inset-0 z-[200] flex items-center justify-center p-6"
+                style={{ background: 'rgba(0,0,0,0.75)' }}
+                onClick={() => setCancelConfirmBet(null)}>
+                <div className="w-full max-w-xs rounded-2xl p-5"
+                  style={{ background: '#1e0040', border: '1px solid #7c3aed', boxShadow: '0 8px 40px rgba(0,0,0,0.6)' }}
+                  onClick={e => e.stopPropagation()}>
+                  {/* Title — Lao + Thai */}
+                  <h3 className="mb-1 text-center text-base font-bold" style={{ color: '#fde68a' }}>
+                    {t('bet.cancelTitle')}
+                  </h3>
+                  {/* Description — Lao + Thai */}
+                  <p className="mt-3 text-center text-sm" style={{ color: '#e9d5ff' }}>
+                    {t('bet.cancelDesc', { amount: cancelConfirmBet.amount.toLocaleString() })}
+                  </p>
+                  <div className="mt-4 flex gap-2">
+                    <button
+                      onClick={() => setCancelConfirmBet(null)}
+                      className="flex-1 rounded-xl py-2.5 text-sm font-bold"
+                      style={{ background: '#2d1b4e', color: '#a78bfa', border: '1px solid #4c1d95' }}>
+                      {t('bet.cancelNo')}
+                    </button>
+                    <button
+                      onClick={() => {
+                        setCancelledBetIds(prev => new Set([...prev, cancelConfirmBet.id]))
+                        cancelBetFetcher.submit(
+                          { betId: cancelConfirmBet.id },
+                          { method: 'post', action: '/api/cancel-live-bet', encType: 'application/json' }
+                        )
+                        setCancelConfirmBet(null)
+                      }}
+                      className="flex-1 rounded-xl py-2.5 text-sm font-bold"
+                      style={{ background: 'linear-gradient(135deg,#dc2626,#991b1b)', color: '#fff', border: '1px solid #fca5a5' }}>
+                      {t('bet.cancelConfirm')}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* ── Status / timer badge ── */}
+          <div className="absolute right-3" style={{ top: 64 }}>
+            {livePhase === 'betting' ? (
+              <span className="rounded-full px-3 py-1 text-xs font-bold"
+                style={{ background: liveTimer <= 10 ? 'rgba(220,38,38,0.9)' : 'rgba(22,163,74,0.9)', color: '#fff' }}>
+                {t('live.statusBetting', { n: String(liveTimer) })}
+              </span>
+            ) : (
+              <span className="rounded-full px-3 py-1 text-xs font-bold"
+                style={{ background: livePhase === 'idle' ? 'rgba(76,29,149,0.9)' : 'rgba(234,88,12,0.9)', color: '#fff' }}>
+                {livePhase === 'idle' ? t('live.waitingHostStart') : t('live.bettingClosed')}
+              </span>
+            )}
+          </div>
+
+          {/* ── Dice overlay (awaiting_result) ── */}
+          {livePhase === 'awaiting_result' && (
+            <div className="absolute inset-x-0 flex flex-col items-center gap-3 px-4"
+              style={{ bottom: 90, paddingBottom: 'env(safe-area-inset-bottom)' }}>
+              <DiceReveal dice={revealedDice} />
+              {myLiveBets.length > 0 && <MyBetsList bets={myLiveBets} glass />}
+            </div>
+          )}
+
+          {/* ── Idle waiting message ── */}
+          {livePhase === 'idle' && (
+            <div className="absolute inset-x-0 flex justify-center" style={{ bottom: 120 }}>
+              <span className="rounded-xl px-4 py-2 text-sm font-semibold"
+                style={{ background: 'rgba(0,0,0,0.6)', color: '#c4b5fd' }}>
+                {t('live.waitingHostStart')}
+              </span>
+            </div>
+          )}
+
+          {/* ── Bet summary chips (floating above FAB) ── */}
+          {hasAnyBet && livePhase === 'betting' && !betSheetOpen && (
+            <div className="absolute inset-x-0 flex flex-wrap justify-center gap-1.5 px-4" style={{ bottom: 88 }}>
+              {currentBets.map(b => (
+                <div key={`fs-${b.cell}`} className="flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold"
+                  style={{ background: 'rgba(0,0,0,0.7)', color: '#fde68a', border: '1px solid #dc2626' }}>
+                  <img src={`/symbols/${b.symbol}.png`} alt={b.symbol} className="h-3 w-3 rounded object-contain bg-white" />
+                  {b.amount.toLocaleString()}
+                </div>
+              ))}
+              {currentRangeBets.map((b, i) => (
+                <div key={`fsr-${i}`} className="flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold"
+                  style={{ background: 'rgba(0,0,0,0.7)', color: '#fde68a', border: '1px solid #7c3aed' }}>
+                  {b.range.toUpperCase()} {b.amount.toLocaleString()}
+                </div>
+              ))}
+              {currentPairBets.map((b, i) => (
+                <div key={`fsp-${i}`} className="flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold"
+                  style={{ background: 'rgba(0,0,0,0.7)', color: '#fde68a', border: '1px solid #2563eb' }}>
+                  <img src={`/symbols/${b.a}.png`} alt={b.a} className="h-3 w-3 rounded object-contain bg-white" />
+                  <img src={`/symbols/${b.b}.png`} alt={b.b} className="h-3 w-3 rounded object-contain bg-white" />
+                  {b.amount.toLocaleString()}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* ── FAB buttons ── */}
+          {livePhase === 'betting' && !betSheetOpen && (
+            <div className="absolute right-4 flex flex-col items-end gap-2"
+              style={{ bottom: 'max(env(safe-area-inset-bottom), 16px)', paddingBottom: 8 }}>
+              {hasAnyBet && (
+                <button onClick={placeLiveBets} disabled={playRoundFetcher.state !== 'idle'}
+                  className="rounded-xl px-5 py-3 text-sm font-bold shadow-2xl disabled:opacity-50"
+                  style={{ background: 'linear-gradient(135deg,#16a34a,#14532d)', color: '#fff', border: '2px solid #4ade80' }}>
+                  ແທງເລີຍ
+                </button>
+              )}
+              <button onClick={() => setBetSheetOpen(true)}
+                className="rounded-xl px-5 py-3 text-sm font-bold shadow-2xl"
+                style={{ background: 'linear-gradient(135deg,#7c3aed,#4c1d95)', color: '#fff', border: '2px solid #a78bfa', boxShadow: '0 4px 24px rgba(124,58,237,0.7)' }}>
+                {myLiveBets.filter(b => !cancelledBetIds.has(b.id)).length > 0 ? 'ວາງເດີນພັນອີກ' : 'ວາງເດືອນພັນ'}
+              </button>
+            </div>
+          )}
+
+          {/* ── Sheet backdrop ── */}
+          {betSheetOpen && (
+            <div className="absolute inset-0 z-10" style={{ background: 'rgba(0,0,0,0.5)' }}
+              onClick={() => setBetSheetOpen(false)} />
+          )}
+
+          {/* ── Bottom sheet ── */}
+          <div className="absolute inset-x-0 bottom-0 z-20 rounded-t-3xl overflow-hidden"
+            onClick={e => e.stopPropagation()}
+            style={{
+              background: '#1e0040',
+              maxHeight: '92vh',
+              transform: betSheetOpen ? 'translateY(0)' : 'translateY(100%)',
+              transition: 'transform 300ms cubic-bezier(0.32,0.72,0,1)',
+              paddingBottom: 'max(env(safe-area-inset-bottom), 16px)',
+            }}>
+            {/* Handle + header */}
+            <div className="flex items-center justify-between px-4 pt-4 pb-3">
+              <div className="h-1 w-10 rounded-full" style={{ background: '#6d28d9' }} />
+              <span className="text-xs font-bold" style={{ color: '#a78bfa' }}>
+                {hasAnyBet ? `Total: ${formatAmount(totalBet)}₭` : t('game.placeYourBets')}
+              </span>
+              <button onClick={() => setBetSheetOpen(false)}>
+                <X size={18} style={{ color: '#a78bfa' }} />
+              </button>
+            </div>
+
+            {/* Full betting grid — symbol/pair grid + range, all in one view */}
+            <div className="overflow-y-auto px-4" style={{ maxHeight: 'calc(92vh - 160px)' }}>
+              {/* Symbol / pair grid — with SVG pair connector lines */}
+              <div className="relative mb-3">
+              <div ref={sheetGridRef} className="grid grid-cols-4 gap-2">
+                {BOARD_LAYOUT.map((symbol, idx) => {
+                  const bet = currentBets.filter(b => b.cell === idx).reduce((s, b) => s + b.amount, 0)
+                  const pairBet = currentPairBets.filter(b => b.cellA === idx || b.cellB === idx).reduce((s, b) => s + b.amount, 0)
+                  const isPending = pendingCell === idx
+                  const canPair = pendingCell !== null && pendingCell !== idx && areAdjacent(pendingCell, idx) && BOARD_LAYOUT[pendingCell] !== symbol
+                  const isWinner = !isRolling && diceResults.length > 0 && diceResults.includes(symbol)
+                  const hasBoth = bet > 0 && pairBet > 0
+                  const hasSingle = bet > 0
+                  const hasPairOnly = pairBet > 0 && bet === 0
+                  return (
+                    <button key={idx} onClick={() => handleBoardTap(idx)}
+                      disabled={bettingLocked || (pendingCell === null && balance < selectedChip)}
+                      className="relative flex aspect-square flex-col items-center justify-center rounded-xl transition-all disabled:opacity-50"
+                      style={{
+                        background: isPending
+                          ? 'rgba(167,139,250,0.3)'
+                          : canPair
+                            ? 'rgba(37,99,235,0.2)'
+                            : isWinner
+                              ? 'rgba(250,204,21,0.2)'
+                              : hasBoth
+                                ? 'rgba(168,85,247,0.18)'
+                                : hasSingle
+                                  ? 'rgba(220,38,38,0.12)'
+                                  : hasPairOnly
+                                    ? 'rgba(37,99,235,0.12)'
+                                    : '#fff',
+                        border: `2px solid ${
+                          isPending ? '#a78bfa'
+                          : canPair ? '#60a5fa'
+                          : isWinner ? '#facc15'
+                          : hasBoth ? '#a855f7'
+                          : hasSingle ? '#dc2626'
+                          : hasPairOnly ? '#3b82f6'
+                          : '#e2e8f0'
+                        }`,
+                        boxShadow: isPending
+                          ? '0 0 16px rgba(167,139,250,0.5)'
+                          : isWinner
+                            ? '0 0 16px rgba(250,204,21,0.4)'
+                            : hasBoth
+                              ? '0 0 10px rgba(168,85,247,0.4)'
+                              : hasSingle
+                                ? '0 0 10px rgba(220,38,38,0.35)'
+                                : hasPairOnly
+                                  ? '0 0 10px rgba(59,130,246,0.35)'
+                                  : '0 1px 3px rgba(0,0,0,0.15)',
+                      }}>
+                      <img src={`/symbols/${symbol}.png`} alt={symbol} className="h-10 w-10 object-contain" />
+                      <div className="absolute top-1 right-1 flex h-4 w-4 items-center justify-center rounded-full text-[8px] font-bold"
+                        style={{ background: 'rgba(76,29,149,0.9)', color: '#fde68a', border: '1px solid #a78bfa' }}>
+                        {SYMBOL_VALUES[symbol]}
+                      </div>
+                      {bet > 0 && (
+                        <div className="absolute bottom-1 right-1 rounded-full px-1.5 py-0.5 text-[8px] font-bold"
+                          style={{ background: '#dc2626', color: '#fff' }}>
+                          {formatAmount(bet)}
+                        </div>
+                      )}
+                      {pairBet > 0 && (
+                        <div className="absolute top-1 left-1 rounded-full px-1.5 py-0.5 text-[8px] font-bold"
+                          style={{ background: '#2563eb', color: '#fff' }}>
+                          {formatAmount(pairBet)}
+                        </div>
+                      )}
+                    </button>
+                  )
+                })}
+              </div>
+
+              {/* SVG pair connector lines */}
+              {sheetGridSize.w > 0 && currentPairBets.length > 0 && (() => {
+                const GAP = 8
+                const cols = 4
+                const cellW = (sheetGridSize.w - (cols - 1) * GAP) / cols
+                const cellH = cellW // aspect-square
+                const rowH = cellH + GAP
+                const centerOf = (i: number) => ({
+                  x: (i % cols) * (cellW + GAP) + cellW / 2,
+                  y: Math.floor(i / cols) * rowH + cellH / 2,
+                })
+                return (
+                  <svg className="pointer-events-none absolute inset-0"
+                    width={sheetGridSize.w} height={cellH * 2 + GAP}
+                    style={{ zIndex: 10 }}>
+                    {currentPairBets.map((pb, pi) => {
+                      const c1 = centerOf(pb.cellA)
+                      const c2 = centerOf(pb.cellB)
+                      const color = pairColor(pb.cellA, pb.cellB)
+                      return (
+                        <g key={pi}>
+                          <line x1={c1.x} y1={c1.y} x2={c2.x} y2={c2.y}
+                            stroke={color} strokeWidth={4} strokeLinecap="round" opacity={0.9} />
+                          <circle cx={c1.x} cy={c1.y} r={6} fill={color} opacity={0.95} />
+                          <circle cx={c2.x} cy={c2.y} r={6} fill={color} opacity={0.95} />
+                        </g>
+                      )
+                    })}
+                  </svg>
+                )
+              })()}
+              </div>{/* end relative wrapper */}
+
+              {/* Pair hint */}
+              <p className="mb-3 text-center text-[10px]" style={{ color: '#a78bfa' }}>
+                {pendingCell !== null
+                  ? `${symName(BOARD_LAYOUT[pendingCell], t)} — ${t('game.tapAdjacent').split('.')[0]}`
+                  : t('game.pairHint')}
+              </p>
+
+              {/* Range bets */}
+              <div className="grid grid-cols-3 gap-2 pb-2">
+                {RANGE_CONFIG.map(r => {
+                  const bet = currentRangeBets.filter(b => b.range === r.key).reduce((s, b) => s + b.amount, 0)
+                  const isWinner = !isRolling && diceResults.length > 0 && (() => {
+                    const sum = diceResults.reduce((s, sym) => s + SYMBOL_VALUES[sym], 0)
+                    return sum >= r.min && sum <= r.max
+                  })()
+                  return (
+                    <button key={r.key} onClick={() => placeRangeBet(r.key)}
+                      disabled={bettingLocked || balance < selectedChip}
+                      className="relative flex flex-col items-center justify-center rounded-xl py-3 text-sm font-bold disabled:opacity-50"
+                      style={{ background: isWinner ? 'rgba(250,204,21,0.25)' : r.bg, border: `1px solid ${isWinner ? '#facc15' : r.border}`, color: r.color }}>
+                      <div className="font-semibold">{r.key === 'low' ? t('game.low') : r.key === 'middle' ? t('game.middle') : t('game.high')}</div>
+                      <div className="text-[10px] opacity-75">({r.range})</div>
+                      <div className="text-[10px] opacity-75">{t('game.pays', { x: rangeMultiplier(r.key, loaderData.payoutConfig) - 1 })}</div>
+                      {bet > 0 && (
+                        <div className="absolute top-1 right-1 rounded-full px-1.5 py-0.5 text-[8px] font-bold"
+                          style={{ background: '#dc2626', color: '#fff' }}>
+                          {formatAmount(bet)}
+                        </div>
+                      )}
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+
+            {/* Chip selector + actions */}
+            <div className="border-t px-3 py-3" style={{ borderColor: '#4c1d95' }}>
+              {/* px-2 + py-2 give the scaled active chip room so it isn't clipped */}
+              <div className="flex items-center gap-1.5 overflow-x-auto px-2 py-2">
+                {CHIP_CONFIG.map(chip => (
+                  <button key={chip.value}
+                    onClick={() => { soundEnabled && playCoin(); setSelectedChip(chip.value) }}
+                    className={`relative flex h-11 w-11 shrink-0 flex-col items-center justify-center rounded-full bg-gradient-to-b ${chip.colors} font-bold text-white transition-all`}
+                    style={{
+                      border: selectedChip === chip.value ? '2px solid #fff' : `1px solid ${chip.border}`,
+                      transform: selectedChip === chip.value ? 'scale(1.15)' : 'scale(1)',
+                      boxShadow: selectedChip === chip.value ? `0 0 12px ${chip.border}` : '0 2px 4px rgba(0,0,0,0.4)',
+                      fontSize: chip.value >= 100_000 ? 8 : 9,
+                    }}>
+                    {chip.label}
+                  </button>
+                ))}
+                {/* Custom amount chip — same as main game layout */}
+                {(() => {
+                  const isCustomChip = !CHIP_CONFIG.some(c => c.value === selectedChip)
+                  return (
+                    <button
+                      onClick={() => {
+                        soundEnabled && playClick()
+                        setCustomAmount(isCustomChip ? String(selectedChip) : '')
+                        setCustomModalOpen(true)
+                      }}
+                      className="relative flex h-11 w-11 shrink-0 flex-col items-center justify-center rounded-full bg-gradient-to-b from-purple-600 to-purple-900 font-bold text-white transition-all"
+                      style={{
+                        border: isCustomChip ? '2px solid #fff' : '1px solid #c084fc',
+                        transform: isCustomChip ? 'scale(1.15)' : 'scale(1)',
+                        boxShadow: isCustomChip ? '0 0 12px #c084fc' : '0 2px 4px rgba(0,0,0,0.4)',
+                        fontSize: isCustomChip ? (selectedChip >= 10_000 ? 9 : 10) : 14,
+                      }}
+                      title={t('game.custom')}
+                    >
+                      {isCustomChip ? formatAmount(selectedChip) : <Pencil size={16} />}
+                    </button>
+                  )
+                })()}
+              </div>
+              <div className="flex gap-2 pt-1">
+                <button onClick={undoBet} disabled={!hasAnyBet && pendingCell === null}
+                  className="flex-1 rounded-xl py-2.5 text-sm font-bold disabled:opacity-40"
+                  style={{ background: 'linear-gradient(180deg,#f59e0b,#b45309)', color: '#1e0040', border: '1px solid #fcd34d' }}>
+                  {t('game.undo')}
+                </button>
+                <button onClick={() => { placeLiveBets(); setBetSheetOpen(false) }}
+                  disabled={!hasAnyBet || playRoundFetcher.state !== 'idle'}
+                  className="flex-1 rounded-xl py-2.5 text-sm font-bold disabled:opacity-40"
+                  style={{ background: 'linear-gradient(135deg,#16a34a,#14532d)', color: '#fff', border: '2px solid #4ade80' }}>
+                  ແທງເລີຍ
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* ── END LIVE OVERLAY ───────────────────────────────────────────── */}
+
       <header
         className="flex items-center justify-between px-4 py-2"
         style={{ background: '#1e0040', borderBottom: '1px solid #a78bfa' }}
@@ -1875,43 +2435,105 @@ export default function FishPrawnCrabGame() {
         </aside>
 
         <div className="flex flex-1 flex-col min-w-0">
-          {/* LIVE mode (spectator): centered stream iframe + countdown driven by the
-              admin's open round. The admin Live page sets the stream URL + closes-at. */}
+          {/* LIVE mode — desktop: side-by-side (content left, small portrait video right).
+              Mobile: handled by the full-screen overlay above; this section is hidden there. */}
           {mode === 'live' ? (
-            <div
-              className="flex shrink-0 flex-col items-center gap-3 px-2 py-3 md:px-4"
-              style={{ background: '#4c1d95', borderBottom: '1px solid #a78bfa' }}
-            >
-              <LiveStreamBox
-                rawUrl={liveRound?.streamUrl ?? loaderData.lastStreamUrl ?? null}
-                waitingText={t('live.waitingHostStream')}
-              >
-                <div
-                  className="absolute top-2 left-2 flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-bold "
-                  style={{ background: 'rgba(220,38,38,0.9)', color: '#fff' }}
-                >
-                  <span className="h-1.5 w-1.5 rounded-full bg-white animate-pulse" />
-                  LIVE
+            <>
+              {/* Desktop-only strip — hidden on mobile (overlay handles it).
+                  When not betting, this fills all remaining height so there's no empty space below. */}
+              <div className={`hidden md:flex items-stretch gap-0${livePhase !== 'betting' ? ' flex-1' : ''}`}
+                style={{ background: '#4c1d95', borderBottom: livePhase === 'betting' ? '1px solid #a78bfa' : 'none', minHeight: 320 }}>
+                {/* Left 50%: video centred at natural size */}
+                <div className="w-1/2 flex items-start justify-center pt-4 px-3"
+                  style={{ borderRight: '1px solid #3730a3' }}>
+                  <div className="relative" style={{ width: 240 }}>
+                    <LiveStreamBox
+                      rawUrl={liveRound?.streamUrl ?? loaderData.lastStreamUrl ?? null}
+                      waitingText={t('live.waitingHostStream')}
+                      bgColor="#4c1d95"
+                      autoStart
+                    >
+                      <div className="absolute top-2 left-2 flex items-center gap-1 rounded-full px-2 py-0.5 text-[9px] font-bold"
+                        style={{ background: 'rgba(220,38,38,0.9)', color: '#fff' }}>
+                        <span className="h-1.5 w-1.5 rounded-full bg-white animate-pulse" />
+                        LIVE
+                      </div>
+                      <div className="absolute top-2 right-2 rounded-md px-2 py-0.5 text-[9px] font-bold"
+                        style={{
+                          background: livePhase === 'betting'
+                            ? (liveTimer <= 10 ? 'rgba(220,38,38,0.9)' : 'rgba(22,163,74,0.9)')
+                            : livePhase === 'awaiting_result' ? 'rgba(234,88,12,0.9)' : 'rgba(76,29,149,0.9)',
+                          color: '#fff',
+                        }}>
+                        {livePhase === 'betting'
+                          ? t('live.statusBetting', { n: String(liveTimer) })
+                          : livePhase === 'awaiting_result' ? t('live.statusWaitingResult') : t('live.statusNotStarted')}
+                      </div>
+                    </LiveStreamBox>
+                  </div>
                 </div>
-                <div
-                  className="absolute top-2 right-2 rounded-md px-3 py-1 text-xs font-bold "
-                  style={{
-                    background: livePhase === 'betting'
-                      ? (liveTimer <= 10 ? 'rgba(220,38,38,0.9)' : 'rgba(22,163,74,0.9)')
-                      : livePhase === 'awaiting_result'
-                        ? 'rgba(234,88,12,0.9)'
-                        : 'rgba(76,29,149,0.9)',
-                    color: '#fff',
-                  }}
-                >
-                  {livePhase === 'betting'
-                    ? t('live.statusBetting', { n: String(liveTimer) })
-                    : livePhase === 'awaiting_result'
-                      ? t('live.statusWaitingResult')
-                      : t('live.statusNotStarted')}
+                {/* Right 50%: dice (top-center) + placed bets list */}
+                <div className="w-1/2 flex flex-col pt-4 px-4 pb-3 overflow-y-auto">
+                  {/* Dice at top-center */}
+                  {livePhase === 'awaiting_result' && (
+                    <div className="flex justify-center mb-4">
+                      <DiceReveal dice={revealedDice} />
+                    </div>
+                  )}
+                  {myLiveBets.filter(b => !cancelledBetIds.has(b.id)).length > 0 ? (
+                    <>
+                      <div className="mb-2 text-[10px] font-bold" style={{ color: '#a78bfa' }}>
+                        {t('result.yourBetsThisRound')}
+                      </div>
+                      <div className="flex flex-col gap-1">
+                        {myLiveBets.filter(b => !cancelledBetIds.has(b.id)).map(b => {
+                          const rangeColor = b.range === 'LOW' ? '#4ade80' : b.range === 'HIGH' ? '#f87171' : '#fbbf24'
+                          const RangeIcon = b.range === 'LOW' ? ArrowDown : b.range === 'HIGH' ? ArrowUp : ArrowUpDown
+                          return (
+                            <div key={b.id} className="flex items-center justify-between rounded-md px-2 py-1.5 text-xs"
+                              style={{ background: '#2d1b4e', color: '#e9d5ff' }}>
+                              <span className="flex items-center gap-1.5 min-w-0 flex-1">
+                                {b.kind === 'SYMBOL' && b.symbol && <>
+                                  <img src={`/symbols/${b.symbol.toLowerCase()}.png`} alt="" className="h-4 w-4 rounded object-contain bg-white shrink-0" />
+                                  <span className="truncate">{symName(b.symbol, t)}</span>
+                                </>}
+                                {b.kind === 'PAIR' && b.pairA && b.pairB && <>
+                                  <img src={`/symbols/${b.pairA.toLowerCase()}.png`} alt="" className="h-4 w-4 rounded object-contain bg-white shrink-0" />
+                                  <img src={`/symbols/${b.pairB.toLowerCase()}.png`} alt="" className="h-4 w-4 rounded object-contain bg-white shrink-0" />
+                                  <span className="truncate">{symName(b.pairA, t)}+{symName(b.pairB, t)}</span>
+                                </>}
+                                {b.kind === 'RANGE' && b.range && <>
+                                  <RangeIcon size={12} style={{ color: rangeColor }} className="shrink-0" />
+                                  <span style={{ color: rangeColor }}>{b.range === 'LOW' ? t('game.low') : b.range === 'HIGH' ? t('game.high') : t('game.middle')}</span>
+                                </>}
+                              </span>
+                              <span className="shrink-0 font-bold ml-2" style={{ color: '#fde68a' }}>{b.amount.toLocaleString()}₭</span>
+                              {livePhase === 'betting' && (
+                                <button
+                                  onClick={() => {
+                                    setCancelledBetIds(prev => new Set([...prev, b.id]))
+                                    cancelBetFetcher.submit({ betId: b.id }, { method: 'post', action: '/api/cancel-live-bet', encType: 'application/json' })
+                                  }}
+                                  className="ml-1.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full"
+                                  style={{ background: 'rgba(220,38,38,0.7)', color: '#fff' }}
+                                  title="Cancel bet"
+                                >
+                                  <X size={9} />
+                                </button>
+                              )}
+                            </div>
+                          )
+                        })}
+                      </div>
+                    </>
+                  ) : (
+                    <div className="text-[10px]" style={{ color: '#6d28d9' }}>
+                      {livePhase === 'idle' ? t('live.waitingHostStart') : livePhase === 'betting' ? 'Place your bets below' : t('live.bettingClosed')}
+                    </div>
+                  )}
                 </div>
-              </LiveStreamBox>
-            </div>
+              </div>
+            </>
           ) : (
             <div
               className="flex flex-col items-center justify-center gap-2 py-4"
@@ -1921,28 +2543,17 @@ export default function FishPrawnCrabGame() {
             </div>
           )}
 
-          <div className="flex-1 p-3 overflow-auto" style={{ background: '#7c3aed' }}>
-            {mode === 'live' && livePhase !== 'betting' ? (
-              <div className="flex flex-col items-center gap-4 py-6">
-                <div className="text-sm font-semibold text-center" style={{ color: '#c4b5fd' }}>
-                  {livePhase === 'idle' ? t('live.waitingHostStart') : t('live.bettingClosed')}
-                </div>
-                {livePhase === 'awaiting_result' && (
-                  <>
-                    <DiceReveal dice={revealedDice} />
-                    {myLiveBets.length > 0 && <MyBetsList bets={myLiveBets} />}
-                  </>
-                )}
-              </div>
-            ) : (<>
+          {/* Bottom betting grid — hidden on desktop when not betting (strip fills full height) */}
+          <div className={`p-3 overflow-auto${mode === 'live' && livePhase !== 'betting' ? ' hidden' : ' flex-1'}`} style={{ background: '#7c3aed' }}>
+            {mode === 'live' && livePhase !== 'betting' ? null : (<>
               <div
                 ref={gridRef}
-                className="relative mx-auto grid grid-cols-4 gap-2"
-                style={{ maxWidth: 560 }}
+                className="relative mx-auto grid grid-cols-4 gap-1.5"
+                style={{ maxWidth: 420 }}
               >
                 {/* SVG overlay: connector line per pair, colored per (cellA, cellB) */}
                 {currentPairBets.length > 0 && gridSize.w > 0 && gridSize.h > 0 && (() => {
-                  const GAP = 8  // must match gap-2 (0.5rem)
+                  const GAP = 6  // must match gap-1.5 (0.375rem = 6px)
                   const cols = 4, rows = 2
                   const cellW = (gridSize.w - (cols - 1) * GAP) / cols
                   const cellH = (gridSize.h - (rows - 1) * GAP) / rows
@@ -2035,12 +2646,12 @@ export default function FishPrawnCrabGame() {
                         cursor: isRolling ? 'not-allowed' : 'pointer',
                       }}
                     >
-                      <div className="relative w-full h-full p-2">
+                      <div className="relative w-full h-full p-1">
                         <img
                           src={`/symbols/${symbol}.png`}
                           alt={SYMBOL_NAMES[symbol]}
                           loading="eager"
-                          className="absolute inset-0 h-full w-full object-contain p-2 group-hover:scale-105 transition-transform"
+                          className="absolute inset-0 h-full w-full object-contain p-1 group-hover:scale-105 transition-transform"
                         />
                       </div>
 
@@ -2397,7 +3008,7 @@ export default function FishPrawnCrabGame() {
                 }}
                 title="Place your bets in this round"
               >
-                <span className="text-sm">OKAY</span>
+                <span className="text-sm">ແທງເລີຍ</span>
                 <span className="opacity-80">{liveTimer}s</span>
               </button>
             ) : (
@@ -2727,12 +3338,12 @@ function describeBetGeneric(
 ): string {
   if (b.kind === 'SYMBOL' && b.symbol) {
     const k = b.symbol.toLowerCase() as SymbolKey
-    return `${b.symbol} (${SYMBOL_VALUE_BY_KEY[k]})`
+    return `${symName(b.symbol, t)} (${SYMBOL_VALUE_BY_KEY[k]})`
   }
   if (b.kind === 'PAIR' && b.pairA && b.pairB) {
     const a = b.pairA.toLowerCase() as SymbolKey
     const c = b.pairB.toLowerCase() as SymbolKey
-    return `${b.pairA} (${SYMBOL_VALUE_BY_KEY[a]}) + ${b.pairB} (${SYMBOL_VALUE_BY_KEY[c]})`
+    return `${symName(b.pairA, t)} (${SYMBOL_VALUE_BY_KEY[a]}) + ${symName(b.pairB, t)} (${SYMBOL_VALUE_BY_KEY[c]})`
   }
   if (b.kind === 'RANGE' && b.range) {
     return translatedRangeLabel(b.range, t)
@@ -2754,20 +3365,15 @@ function symbolIcon(symbol: SymbolKey | string) {
   )
 }
 
-// JSX renderer for a single bet — shows symbol/pair icons inline, and a
-// colored arrow icon for range bets (low=green↓, middle=yellow↕, high=red↑).
+// JSX renderer for a single bet — shows symbol/pair icons + translated names,
+// and a colored arrow icon for range bets.
 function describeBetIcon(b: MyLiveBet, t: Translate) {
   if (b.kind === 'SYMBOL' && b.symbol) {
     const k = b.symbol.toLowerCase() as SymbolKey
     return (
       <span className="flex items-center gap-2 truncate">
-        <img
-          src={`/symbols/${k}.png`}
-          alt=""
-          className="h-5 w-5 shrink-0 rounded object-contain"
-          style={{ background: '#fff' }}
-        />
-        <span className="truncate">{b.symbol} ({SYMBOL_VALUE_BY_KEY[k]})</span>
+        <img src={`/symbols/${k}.png`} alt="" className="h-5 w-5 shrink-0 rounded object-contain" style={{ background: '#fff' }} />
+        <span className="truncate">{symName(b.symbol, t)} ({SYMBOL_VALUE_BY_KEY[k]})</span>
       </span>
     )
   }
@@ -2777,10 +3383,10 @@ function describeBetIcon(b: MyLiveBet, t: Translate) {
     return (
       <span className="flex items-center gap-1.5 truncate">
         <img src={`/symbols/${a}.png`} alt="" className="h-5 w-5 shrink-0 rounded object-contain" style={{ background: '#fff' }} />
-        <span className="shrink-0">{b.pairA} ({SYMBOL_VALUE_BY_KEY[a]})</span>
+        <span className="shrink-0">{symName(b.pairA, t)} ({SYMBOL_VALUE_BY_KEY[a]})</span>
         <span className="shrink-0">+</span>
         <img src={`/symbols/${c}.png`} alt="" className="h-5 w-5 shrink-0 rounded object-contain" style={{ background: '#fff' }} />
-        <span className="shrink-0">{b.pairB} ({SYMBOL_VALUE_BY_KEY[c]})</span>
+        <span className="shrink-0">{symName(b.pairB, t)} ({SYMBOL_VALUE_BY_KEY[c]})</span>
       </span>
     )
   }
@@ -2794,18 +3400,20 @@ function describeBetIcon(b: MyLiveBet, t: Translate) {
       </span>
     )
   }
-  return <span>{b.kind}</span>
+  return <span>{t('bet.symbol')}</span>
 }
 
-function MyBetsList({ bets }: { bets: MyLiveBet[] }) {
+function MyBetsList({ bets, glass = false }: { bets: MyLiveBet[]; glass?: boolean }) {
   const t = useT()
   const total = bets.reduce((s, b) => s + b.amount, 0)
   return (
     <div
       className="w-full max-w-sm rounded-xl p-4"
-      style={{ background: '#1e0040', border: '1px solid #4c1d95' }}
+      style={glass
+        ? { background: 'rgba(0,0,0,0.2)', backdropFilter: 'blur(4px)', border: '1px solid rgba(255,255,255,0.08)' }
+        : { background: '#1e0040', border: '1px solid #4c1d95' }}
     >
-      <div className="mb-2 text-[10px] font-bold " style={{ color: '#a78bfa' }}>
+      <div className="mb-2 text-[10px] font-bold" style={{ color: glass ? '#e9d5ff' : '#a78bfa' }}>
         {t('result.yourBetsThisRound')}
       </div>
       <ul className="flex flex-col gap-1">
@@ -2813,7 +3421,7 @@ function MyBetsList({ bets }: { bets: MyLiveBet[] }) {
           <li
             key={b.id}
             className="flex items-center justify-between rounded-md px-2 py-1.5 text-xs"
-            style={{ background: '#2d1b4e', color: '#e9d5ff' }}
+            style={{ background: glass ? 'rgba(255,255,255,0.05)' : '#2d1b4e', color: '#e9d5ff' }}
           >
             {describeBetIcon(b, t)}
             <span className="ml-2 shrink-0 font-bold" style={{ color: '#fde68a' }}>
