@@ -1111,11 +1111,22 @@ export default function FishPrawnCrabGame() {
   const [gridSize, setGridSize] = useState({ w: 0, h: 0 })
 
   const ensureBgMusic = useCallback(() => {
+    // No background music in LIVE mode — admin talks to viewers via the stream
+    // and the BG track would compete with their voice.
+    if (mode === 'live') return
     if (!bgStarted && soundEnabled) {
       startBgMusic(0.1)
       setBgStarted(true)
     }
-  }, [bgStarted, soundEnabled])
+  }, [bgStarted, soundEnabled, mode])
+
+  // Stop bg music whenever we switch to LIVE mode.
+  useEffect(() => {
+    if (mode === 'live' && bgStarted) {
+      stopBgMusic()
+      setBgStarted(false)
+    }
+  }, [mode, bgStarted])
 
   const toggleSound = useCallback(() => {
     setSoundEnabled(prev => {

@@ -739,7 +739,10 @@ export default function AdminLive() {
         )}
       </div>
 
-      {/* ─── Stream + active round (or settled-summary + start form) ──── */}
+      {/* ─── Stream — always rendered so it never disappears between rounds ─── */}
+      <LiveStreamPanel round={current} fallbackUrl={lastStreamUrl} loading={loading} />
+
+      {/* ─── Round controls (active round) or start-new-round form ─── */}
       {current ? (
         <ActiveRoundPanel
           round={current}
@@ -749,15 +752,26 @@ export default function AdminLive() {
           settleError={resolveFetcher.data?.error ?? null}
         />
       ) : (
-        <>
-          {settledSummary && (
+        <StartRoundPanel defaultStreamUrl={lastStreamUrl} loading={loading} />
+      )}
+
+      {/* Settled summary — rendered as a modal so the stream stays visible. */}
+      {settledSummary && (
+        <div
+          className="fixed inset-0 z-[100] flex items-start justify-center overflow-y-auto p-4"
+          style={{ background: 'rgba(15,15,30,0.85)' }}
+          onClick={() => setSettledSummary(null)}
+        >
+          <div
+            className="w-full max-w-2xl my-auto"
+            onClick={e => e.stopPropagation()}
+          >
             <SettledSummaryPanel
               summary={settledSummary}
               onClose={() => setSettledSummary(null)}
             />
-          )}
-          <StartRoundPanel defaultStreamUrl={lastStreamUrl} loading={loading} />
-        </>
+          </div>
+        </div>
       )}
 
       {/* ─── Live presence + bets feed (only meaningful while a round is open).
@@ -1101,48 +1115,6 @@ function ActiveRoundPanel({
 
   return (
     <div className="flex flex-col gap-4">
-      {/* Stream embed */}
-      <div className="rounded-xl p-4" style={{ background: '#0f172a', border: '1px solid #1e1b4b' }}>
-        <div className="mb-2 flex items-center justify-between">
-          <span className="text-[10px] font-bold " style={{ color: '#a5b4fc' }}>LIVE STREAM</span>
-          <div className="flex items-center gap-2">
-            {remainingSeconds != null && (
-              <span
-                className="rounded-full px-2.5 py-0.5 text-[10px] font-bold "
-                style={{
-                  background: bettingExpired ? 'rgba(234,88,12,0.2)' : remainingSeconds <= 10 ? 'rgba(220,38,38,0.2)' : 'rgba(22,163,74,0.2)',
-                  color: bettingExpired ? '#fdba74' : remainingSeconds <= 10 ? '#fca5a5' : '#4ade80',
-                  border: `1px solid ${bettingExpired ? '#fb923c' : remainingSeconds <= 10 ? '#fca5a5' : '#4ade80'}`,
-                }}
-              >
-                {bettingExpired ? '🔒 BETTING CLOSED' : `⏱ ${remainingSeconds}s`}
-              </span>
-            )}
-            <StatusPill status={round.status} />
-          </div>
-        </div>
-        <StreamEmbed url={round.streamUrl} />
-        <Form method="post" className="mt-3 flex flex-wrap items-center gap-2">
-          <input type="hidden" name="op" value="updateStream" />
-          <input type="hidden" name="roundId" value={round.id} />
-          <input
-            name="streamUrl"
-            defaultValue={round.streamUrl ?? ''}
-            placeholder="Stream URL (YouTube, MP4, HLS, …)"
-            className="min-w-0 flex-1 rounded-lg px-3 py-1.5 text-xs outline-none"
-            style={{ background: '#1e1b4b', color: '#fde68a', border: '1px solid #4338ca' }}
-          />
-          <button
-            type="submit"
-            disabled={loading}
-            className="rounded-md px-3 py-1.5 text-[10px] font-bold  disabled:opacity-50"
-            style={{ background: '#4338ca', color: '#fff', border: '1px solid #818cf8' }}
-          >
-            UPDATE STREAM
-          </button>
-        </Form>
-      </div>
-
       {/* Compact result-control bar — opens the result-entry modal */}
       <div className="rounded-xl p-4" style={{ background: '#0f172a', border: '1px solid #1e1b4b' }}>
         <div className="mb-3 flex items-center justify-between">
@@ -1339,6 +1311,82 @@ type ResolveSummary = {
     net: number
     newBalance: number
   }[]
+}
+
+// Always-visible stream area. Shows the active round's stream + URL update
+// form when a round is open; falls back to the last known stream URL when
+// no round is active so the admin keeps watching the camera between rounds.
+function LiveStreamPanel({
+  round,
+  fallbackUrl,
+  loading,
+}: {
+  round: CurrentRound | null
+  fallbackUrl: string
+  loading: boolean
+}) {
+  // Live countdown for the active round's betting window.
+  const closesAtMs = round?.bettingClosesAt ? new Date(round.bettingClosesAt).getTime() : null
+  const [nowMs, setNowMs] = useState(() => Date.now())
+  useEffect(() => {
+    if (!closesAtMs) return
+    const id = setInterval(() => setNowMs(Date.now()), 1000)
+    return () => clearInterval(id)
+  }, [closesAtMs])
+  const remainingSeconds = closesAtMs ? Math.max(0, Math.ceil((closesAtMs - nowMs) / 1000)) : null
+  const bettingExpired = remainingSeconds != null && remainingSeconds === 0
+
+  const url = round?.streamUrl ?? fallbackUrl ?? null
+  return (
+    <div className="rounded-xl p-4" style={{ background: '#0f172a', border: '1px solid #1e1b4b' }}>
+      <div className="mb-2 flex items-center justify-between">
+        <span className="text-[10px] font-bold" style={{ color: '#a5b4fc' }}>LIVE STREAM</span>
+        <div className="flex items-center gap-2">
+          {round && remainingSeconds != null && (
+            <span
+              className="rounded-full px-2.5 py-0.5 text-[10px] font-bold"
+              style={{
+                background: bettingExpired ? 'rgba(234,88,12,0.2)' : remainingSeconds <= 10 ? 'rgba(220,38,38,0.2)' : 'rgba(22,163,74,0.2)',
+                color: bettingExpired ? '#fdba74' : remainingSeconds <= 10 ? '#fca5a5' : '#4ade80',
+                border: `1px solid ${bettingExpired ? '#fb923c' : remainingSeconds <= 10 ? '#fca5a5' : '#4ade80'}`,
+              }}
+            >
+              {bettingExpired ? '🔒 BETTING CLOSED' : `⏱ ${remainingSeconds}s`}
+            </span>
+          )}
+          {round && <StatusPill status={round.status} />}
+          {!round && (
+            <span className="rounded-full px-2.5 py-0.5 text-[10px] font-bold"
+              style={{ background: 'rgba(76,29,149,0.4)', color: '#c4b5fd', border: '1px solid #6d28d9' }}>
+              NO ACTIVE ROUND
+            </span>
+          )}
+        </div>
+      </div>
+      <StreamEmbed url={url} />
+      {round && (
+        <Form method="post" className="mt-3 flex flex-wrap items-center gap-2">
+          <input type="hidden" name="op" value="updateStream" />
+          <input type="hidden" name="roundId" value={round.id} />
+          <input
+            name="streamUrl"
+            defaultValue={round.streamUrl ?? ''}
+            placeholder="Stream URL (YouTube, MP4, HLS, …)"
+            className="min-w-0 flex-1 rounded-lg px-3 py-1.5 text-xs outline-none"
+            style={{ background: '#1e1b4b', color: '#fde68a', border: '1px solid #4338ca' }}
+          />
+          <button
+            type="submit"
+            disabled={loading}
+            className="rounded-md px-3 py-1.5 text-[10px] font-bold disabled:opacity-50"
+            style={{ background: '#4338ca', color: '#fff', border: '1px solid #818cf8' }}
+          >
+            UPDATE STREAM
+          </button>
+        </Form>
+      )}
+    </div>
+  )
 }
 
 function StartRoundPanel({ defaultStreamUrl, loading }: { defaultStreamUrl: string; loading: boolean }) {
