@@ -98,11 +98,12 @@ const IS_CF_RE = /cloudflarestream\.com/i
 
 // Build the Cloudflare Stream iframe src — works from both the /iframe URL
 // and the /manifest/video.m3u8 URL the admin might paste.
-function cfIframeSrc(rawUrl: string, controls: boolean): string {
+function cfIframeSrc(rawUrl: string, controls: boolean, muted: boolean = true): string {
   const m = rawUrl.match(/(https:\/\/customer-[^.]+\.cloudflarestream\.com\/[a-f0-9]+)/i)
   if (!m) return rawUrl
-  const params = controls ? 'autoplay=true&muted=true' : 'autoplay=true&muted=true&controls=false'
-  return `${m[1]}/iframe?${params}`
+  const mutedParam = muted ? 'muted=true' : 'muted=false'
+  const controlsParam = controls ? '' : '&controls=false'
+  return `${m[1]}/iframe?autoplay=true&${mutedParam}${controlsParam}`
 }
 
 // FB JS SDK is loaded lazily the first time a Facebook stream is embedded.
@@ -161,6 +162,7 @@ function loadFbSdk(): Promise<void> {
 function HlsVideo({
   src,
   className,
+  muted = true,
   onWaiting,
   onStalled,
   onPlaying,
@@ -169,6 +171,7 @@ function HlsVideo({
 }: {
   src: string
   className?: string
+  muted?: boolean
   onWaiting?: () => void
   onStalled?: () => void
   onPlaying?: () => void
@@ -226,7 +229,7 @@ function HlsVideo({
       ref={videoRef}
       className={className}
       autoPlay
-      muted
+      muted={muted}
       playsInline
       style={{ pointerEvents: 'none' }}
       onWaiting={onWaiting}
@@ -265,6 +268,9 @@ function LiveStreamBox({
   const [hasPlayed, setHasPlayed] = useState(autoStart)
   const [iframeKey, setIframeKey] = useState(0)
   const [isBuffering, setIsBuffering] = useState(false)
+  // Browsers require muted autoplay on mobile. Customers tap the speaker
+  // button to unmute, which counts as a user gesture.
+  const [isMuted, setIsMuted] = useState(true)
   const stallTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const isCf = rawUrl ? IS_CF_RE.test(rawUrl) : false
   const isFb = rawUrl ? IS_FB_RE.test(rawUrl) : false
@@ -299,6 +305,16 @@ function LiveStreamBox({
       if (stallTimerRef.current) clearTimeout(stallTimerRef.current)
     }
   }, [])
+
+  // Sync mute state to the Facebook SDK player when it toggles.
+  useEffect(() => {
+    const p = fbPlayerRef.current
+    if (!p) return
+    try {
+      if (isMuted) p.mute()
+      else p.unmute()
+    } catch { /* SDK not ready yet */ }
+  }, [isMuted])
 
   // Load the FB SDK and parse the <div class="fb-video"> into a player.
   // Subscribe BEFORE parse so we don't miss the xfbml.ready event.
@@ -348,7 +364,7 @@ function LiveStreamBox({
       //                  YouTube's branded UI; the transparent overlay below
       //                  blocks the title/share strip that YouTube would
       //                  otherwise show on hover.
-      return `https://www.youtube.com/embed/${yt[1]}?autoplay=1&mute=1&playsinline=1&controls=0&modestbranding=1&rel=0&iv_load_policy=3&disablekb=1&fs=0`
+      return `https://www.youtube.com/embed/${yt[1]}?autoplay=1&mute=${isMuted ? 1 : 0}&playsinline=1&controls=0&modestbranding=1&rel=0&iv_load_policy=3&disablekb=1&fs=0`
     }
     return rawUrl
   })()
@@ -408,9 +424,10 @@ function LiveStreamBox({
       ) : isCf ? (
         // Cloudflare Stream iframe — handles HLS, autoplay, and mobile Safari
         // natively via Cloudflare's own player. No HLS.js needed.
+        // key includes isMuted so the iframe re-mounts when the user unmutes.
         <iframe
-          key={iframeKey}
-          src={cfIframeSrc(rawUrl, false)}
+          key={`${iframeKey}-${isMuted ? 'm' : 'u'}`}
+          src={cfIframeSrc(rawUrl, false, isMuted)}
           className="h-full w-full"
           style={{ border: 'none', display: 'block' }}
           allow="accelerometer; gyroscope; autoplay; encrypted-media; picture-in-picture"
@@ -419,8 +436,9 @@ function LiveStreamBox({
         />
       ) : isVideo ? (
         <HlsVideo
-          key={iframeKey}
+          key={`${iframeKey}-${isMuted ? 'm' : 'u'}`}
           src={rawUrl}
+          muted={isMuted}
           className="h-full w-full"
           onWaiting={armStallTimer}
           onStalled={armStallTimer}
@@ -516,6 +534,24 @@ function LiveStreamBox({
         >
           <RefreshCw size={11} />
           Reload
+        </button>
+      )}
+
+      {/* Sound toggle — start muted (required for autoplay), tap to unmute. */}
+      {rawUrl && (
+        <button
+          type="button"
+          onClick={() => setIsMuted(m => !m)}
+          className="absolute bottom-2 left-2 flex items-center gap-1 rounded-full px-2 py-1 text-[10px] font-semibold"
+          style={{
+            background: isMuted ? 'rgba(220,38,38,0.85)' : 'rgba(0,0,0,0.55)',
+            color: '#fff',
+            border: '1px solid rgba(255,255,255,0.3)',
+          }}
+          title={isMuted ? 'Tap for sound' : 'Mute'}
+        >
+          {isMuted ? <VolumeOff size={11} /> : <Volume2 size={11} />}
+          {isMuted ? 'Tap for sound' : ''}
         </button>
       )}
 
@@ -1745,8 +1781,8 @@ export default function FishPrawnCrabGame() {
               <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-white" />
               LIVE
             </span>
-            {/* Confirmed bets — shown only during betting phase; hidden once result appears */}
-            {myLiveBets.length > 0 && livePhase === 'betting' && (
+            {/* Confirmed bets — shown during both betting and awaiting_result; hidden when idle */}
+            {myLiveBets.length > 0 && (livePhase === 'betting' || livePhase === 'awaiting_result') && (
               <div className="flex flex-col gap-1">
                 {myLiveBets.filter(b => !cancelledBetIds.has(b.id)).map(b => {
                   const rangeColor = b.range === 'LOW' ? '#4ade80' : b.range === 'HIGH' ? '#f87171' : '#fbbf24'
@@ -1779,14 +1815,16 @@ export default function FishPrawnCrabGame() {
                         )}
                         <span className="ml-0.5 font-bold" style={{ color: '#fde68a' }}>{b.amount.toLocaleString()}₭</span>
                       </div>
-                      {/* Cancel button — outside the pill, opens confirm modal */}
-                      <button
-                        onClick={() => setCancelConfirmBet({ id: b.id, amount: b.amount })}
-                        className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full"
-                        style={{ background: 'rgba(220,38,38,0.8)', color: '#fff' }}
-                      >
-                        <X size={10} />
-                      </button>
+                      {/* Cancel button — only visible during betting phase */}
+                      {livePhase === 'betting' && (
+                        <button
+                          onClick={() => setCancelConfirmBet({ id: b.id, amount: b.amount })}
+                          className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full"
+                          style={{ background: 'rgba(220,38,38,0.8)', color: '#fff' }}
+                        >
+                          <X size={10} />
+                        </button>
+                      )}
                     </div>
                   )
                 })}
@@ -1855,7 +1893,6 @@ export default function FishPrawnCrabGame() {
             <div className="absolute inset-x-0 flex flex-col items-center gap-3 px-4"
               style={{ bottom: 90, paddingBottom: 'env(safe-area-inset-bottom)' }}>
               <DiceReveal dice={revealedDice} />
-              {myLiveBets.length > 0 && <MyBetsList bets={myLiveBets} glass />}
             </div>
           )}
 
@@ -3208,7 +3245,8 @@ export default function FishPrawnCrabGame() {
           >
             <div
               onClick={e => e.stopPropagation()}
-              className="w-full max-w-sm rounded-md p-6 bg-white"
+              className="w-full max-w-sm overflow-y-auto rounded-md bg-white p-6"
+              style={{ maxHeight: '90vh' }}
             >
               <div className="text-center text-xs font-bold  text-gray-500">
                 {t('result.titleLive')}
