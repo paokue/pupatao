@@ -1,6 +1,6 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { useFetcher } from 'react-router'
-import { Loader, UserRoundPlus, X } from 'lucide-react'
+import { Check, Loader, UserRoundPlus, X } from 'lucide-react'
 import { PasswordInput } from './PasswordInput'
 import { useT } from '~/lib/use-t'
 
@@ -23,6 +23,7 @@ export function RegisterModal({ open, onClose, next, hint, onSwitchToLogin }: Re
   const fetcher = useFetcher<{ error?: string } | null>()
   const submitting = fetcher.state !== 'idle'
   const t = useT()
+  const [agreed, setAgreed] = useState(false)
 
   useEffect(() => {
     if (!open) return
@@ -128,10 +129,46 @@ export function RegisterModal({ open, onClose, next, hint, onSwitchToLogin }: Re
             </div>
           )}
 
+          {/* Rules-agreement gate — submit button stays disabled until ticked. */}
+          <input type="hidden" name="agreedRules" value={agreed ? '1' : ''} />
+          <label className="mt-1 flex cursor-pointer items-start gap-2 select-none">
+            <button
+              type="button"
+              onClick={() => setAgreed(v => !v)}
+              aria-pressed={agreed}
+              aria-label={t('auth.agreeRulesLink')}
+              className="flex h-5 w-5 shrink-0 items-center justify-center rounded transition-colors"
+              style={{
+                background: agreed ? '#16a34a' : '#2d1b4e',
+                border: `2px solid ${agreed ? '#4ade80' : '#7c3aed'}`,
+              }}
+            >
+              {agreed && <Check size={12} className="text-white" strokeWidth={3} />}
+            </button>
+            <span
+              onClick={() => setAgreed(v => !v)}
+              className="text-[11px] leading-snug"
+              style={{ color: '#c4b5fd' }}
+            >
+              {t('auth.agreeRulesPrefix')}{' '}
+              <a
+                href="/rules"
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={e => e.stopPropagation()}
+                className="font-bold underline-offset-2 hover:underline"
+                style={{ color: '#fde68a' }}
+              >
+                {t('auth.agreeRulesLink')}
+              </a>
+              {t('auth.agreeRulesSuffix')}
+            </span>
+          </label>
+
           <button
             type="submit"
-            disabled={submitting}
-            className="flex items-center justify-center gap-2 mt-2 w-full rounded-xl py-3 text-sm font-bold  disabled:opacity-50"
+            disabled={submitting || !agreed}
+            className="flex items-center justify-center gap-2 mt-2 w-full rounded-xl py-3 text-sm font-bold  disabled:opacity-50 disabled:cursor-not-allowed"
             style={{
               background: 'linear-gradient(135deg, #16a34a, #15803d)',
               color: '#fff',

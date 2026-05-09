@@ -87,6 +87,19 @@ export const STRINGS = {
     lo: "ຕ້ອງການແຕ່ເບີໂທແລະລະຫັດຜ່ານ. ທ່ານສາມາດປ້ອນຊື່ແລະໂປຣໄຟລ໌ໃນພາຍຫຼັງ.",
     en: "Only phone number and password are required. You can fill in your name and profile later.",
   },
+  "auth.agreeRulesPrefix": {
+    lo: "ຂ້ອຍໄດ້ອ່ານ ແລະ ຍອມຮັບ",
+    en: "I have read and agree to the",
+  },
+  "auth.agreeRulesLink": {
+    lo: "ກົດລະບຽບການຫຼິ້ນເກມ",
+    en: "game rules",
+  },
+  "auth.agreeRulesSuffix": { lo: "ແລ້ວ.", en: "." },
+  "auth.mustAgreeRules": {
+    lo: "ກະລຸນາຍອມຮັບກົດລະບຽບການຫຼິ້ນເກມກ່ອນລົງທະບຽນ.",
+    en: "You must agree to the game rules before registering.",
+  },
 
   // ─── Wallet page ─────────────────────────────────────────────────────
   "wallet.title": { lo: "ກະເປົາເງິນ", en: "Wallet" },
@@ -102,8 +115,8 @@ export const STRINGS = {
   "wallet.tab.deposit": { lo: "ຝາກ", en: "Deposit" },
   "wallet.tab.withdraw": { lo: "ຖອນ", en: "Withdraw" },
   "wallet.tab.transfer": { lo: "ໂອນ", en: "Transfer" },
-  "wallet.depositCoins": { lo: "ຝາກຫຼຽນ", en: "Deposit Coins" },
-  "wallet.withdrawCoins": { lo: "ຖອນຫຼຽນ", en: "Withdraw Coins" },
+  "wallet.depositCoins": { lo: "ຝາກເງິນ", en: "Deposit Coins" },
+  "wallet.withdrawCoins": { lo: "ຖອນເງິນ", en: "Withdraw Coins" },
   "wallet.customAmount": { lo: "ຈຳນວນກຳນົດເອງ", en: "Custom amount" },
   "wallet.enterAmount": { lo: "ໃສ່ຈຳນວນ…", en: "Enter amount…" },
   "wallet.transferComingSoon": {
@@ -312,7 +325,7 @@ export const STRINGS = {
 
   // ─── Profile menu (header dropdown) ──────────────────────────────────
   "menu.wallet": { lo: "ກະເປົາເງິນ", en: "Wallet" },
-  "menu.walletDesc": { lo: "ຝາກແລະຖອນຫຼຽນ", en: "Deposit & withdraw coins" },
+  "menu.walletDesc": { lo: "ຝາກແລະຖອນເງິນ", en: "Deposit & withdraw coins" },
   "menu.playHistory": { lo: "ປະຫວັດການຫຼິ້ນ", en: "Play History" },
   "menu.playHistoryDesc": {
     lo: "ເບິ່ງປະຫວັດເກມຂອງທ່ານ",
@@ -320,6 +333,16 @@ export const STRINGS = {
   },
   "menu.profile": { lo: "ໂປຣໄຟລ໌ຜູ້ໃຊ້", en: "User Profile" },
   "menu.profileDesc": { lo: "ແກ້ໄຂຂໍ້ມູນຂອງທ່ານ", en: "Edit your information" },
+  "menu.rules": { lo: "ກົດລະບຽບການຫຼິ້ນ", en: "Game Rules" },
+  "menu.rulesDesc": {
+    lo: "ອ່ານຄູ່ມື ແລະ ກົດລະບຽບຂອງເກມ",
+    en: "Read the manual and house rules",
+  },
+  "menu.contactAdmin": { lo: "ຕິດຕໍ່ແອັດມີນ", en: "Contact Admin" },
+  "menu.contactAdminDesc": {
+    lo: "ສົນທະນາກັບແອັດມິນຜ່ານ WhatsApp",
+    en: "Chat with admin on WhatsApp",
+  },
   "menu.loggedIn": { lo: "ເຂົ້າສູ່ລະບົບແລ້ວ", en: "Logged in" },
   "menu.language": { lo: "ພາສາ", en: "Language" },
   "menu.account": { lo: "ບັນຊີ", en: "ACCOUNT" },
@@ -351,17 +374,17 @@ export const STRINGS = {
   "referral.pending": { lo: "ລໍຖ້າຝາກຄັ້ງທຳອິດ", en: "AWAITING TOPUP" },
 
   // ─── Symbol names ────────────────────────────────────────────────────
-  "symbol.crab":    { lo: "ປູ",         en: "Crab" },
-  "symbol.fish":    { lo: "ປາ",         en: "Fish" },
-  "symbol.prawn":   { lo: "ກຸ້ງ",      en: "Prawn" },
-  "symbol.frog":    { lo: "ກົບ",       en: "Frog" },
-  "symbol.rooster": { lo: "ໄກ່",      en: "Rooster" },
-  "symbol.gourd":   { lo: "ນໍ້າເຕົ້າ", en: "Gourd" },
+  "symbol.crab": { lo: "ປູ", en: "Crab" },
+  "symbol.fish": { lo: "ປາ", en: "Fish" },
+  "symbol.prawn": { lo: "ກຸ້ງ", en: "Prawn" },
+  "symbol.frog": { lo: "ກົບ", en: "Frog" },
+  "symbol.rooster": { lo: "ໄກ່", en: "Rooster" },
+  "symbol.gourd": { lo: "ນໍ້າເຕົ້າ", en: "Gourd" },
 
   // ─── Bet type labels ─────────────────────────────────────────────────
   "bet.symbol": { lo: "ເດີນພັນດ່ຽວ", en: "Symbol" },
-  "bet.pair":   { lo: "ເດີນພັນຄູ່",  en: "Pair" },
-  "bet.range":  { lo: "ຕໍ່າ/ສູງ",    en: "Range" },
+  "bet.pair": { lo: "ເດີນພັນຄູ່", en: "Pair" },
+  "bet.range": { lo: "ຕໍ່າ/ສູງ", en: "Range" },
 
   // ─── Pair bet hint ───────────────────────────────────────────────────
   "game.pairHint": {
@@ -371,10 +394,13 @@ export const STRINGS = {
   "game.placeYourBets": { lo: "ວາງເດີນພັນຂອງທ່ານ", en: "Place your bets" },
 
   // ─── Cancel bet confirmation ──────────────────────────────────────────
-  "bet.cancelTitle":   { lo: "ຢືນຢັນການຍົກເລີກ?", en: "Cancel this bet?" },
-  "bet.cancelDesc":    { lo: "ຍົກເລີກການແທງ {amount} ₭ ແລະ ຮັບເງິນຄືນ?", en: "Cancel your {amount} ₭ bet and get a full refund?" },
+  "bet.cancelTitle": { lo: "ຢືນຢັນການຍົກເລີກ?", en: "Cancel this bet?" },
+  "bet.cancelDesc": {
+    lo: "ຍົກເລີກການແທງ {amount} ₭ ແລະ ຮັບເງິນຄືນ?",
+    en: "Cancel your {amount} ₭ bet and get a full refund?",
+  },
   "bet.cancelConfirm": { lo: "ຢືນຢັນ — ຮັບເງິນຄືນ", en: "Yes, refund me" },
-  "bet.cancelNo":      { lo: "ບໍ່, ເກັບໄວ້", en: "No, keep it" },
+  "bet.cancelNo": { lo: "ບໍ່, ເກັບໄວ້", en: "No, keep it" },
 
   // ─── Game board action buttons ───────────────────────────────────────
   "game.custom": { lo: "ໃສ່ຈໍານວນເອງ", en: "CUSTOM" },
@@ -394,7 +420,7 @@ export const STRINGS = {
     lo: "ຕົວຢ່າງ: {amount} ₭",
     en: "Preview: {amount} ₭",
   },
-  "chip.setChip": { lo: "ຕັ້ງເຫຼຽນ", en: "Set Chip" },
+  "chip.setChip": { lo: "ຕັ້ງເເງິນ", en: "Set Chip" },
 
   // ─── LIVE-mode status badges + waiting messages ──────────────────────
   "live.statusBetting": { lo: "⏱ {n}s ຮັບແທງ", en: "⏱ {n}s BETTING" },
@@ -553,7 +579,7 @@ export const STRINGS = {
   // ─── Transfer ───────────────────────────────────────────────────────
   "transfer.title": { lo: "ໂອນເງິນ", en: "TRANSFER" },
   "transfer.confirmTitle": { lo: "ຢືນຢັນການໂອນ", en: "CONFIRM TRANSFER" },
-  "transfer.transferCoins": { lo: "ໂອນຫຼຽນ", en: "Transfer Coins" },
+  "transfer.transferCoins": { lo: "ໂອນເງິນ", en: "Transfer Coins" },
   "transfer.method": { lo: "ວິທີການ", en: "Method" },
   "transfer.methodGeneral": { lo: "ທົ່ວໄປ", en: "GENERAL" },
   "transfer.methodLocked": { lo: "ຕ້ອງມີລະຫັດ", en: "LOCKED" },
@@ -643,6 +669,147 @@ export const STRINGS = {
   "transfer.noPendingReceived": {
     lo: "ບໍ່ມີການໂອນລໍຮັບ.",
     en: "No transfers waiting for you.",
+  },
+
+  // ─── Rules page (game manual + house policy) ─────────────────────────
+  "rules.headerTitle": { lo: "ກົດລະບຽບ", en: "Rules" },
+  "rules.title": {
+    lo: "ຄູ່ມື ແລະ ກົດລະບຽບການຫຼິ້ນເກມ (ສະບັບປັບປຸງ)",
+    en: "Game manual and rules (Updated edition)",
+  },
+  "rules.intro": {
+    lo: "ພວກເຮົາໃຫ້ບໍລິການເກມເດີມພັນ ປູ ປາ ນໍ້າເຕົ້າ ແບບອອນໄລນ໌ໄລຟ໌ສົດ (Live) ແລະ ແບບດ່ຽວ (Single Player) ຕະຫຼອດ 24 ຊົ່ວໂມງ. ເພື່ອຄວາມໂປ່ງໃສ ແລະ ຄວາມປອດໄພຂອງທຸກຝ່າຍ, ກະລຸນາອ່ານກົດລະບຽບດັ່ງລຸ່ມນີ້:",
+    en: "We provide the Pu-Pa-Tao (Crab-Fish-Gourd) betting game online — both live (Live) and single-player modes — 24 hours a day. For transparency and the safety of everyone, please read the rules below:",
+  },
+
+  // Section 1
+  "rules.s1.title": {
+    lo: "1. ຮູບແບບການເດີມພັນ ແລະ ອັດຕາຈ່າຍ",
+    en: "1. Betting modes and payout rates",
+  },
+  "rules.s1.b1.label": { lo: "ການເດີມພັນ", en: "Betting modes" },
+  "rules.s1.b1.text": {
+    lo: "ມີ 2 ແບບຄື: ໄລຟ໌ສົດເວລາຈິງ ແລະ ແບບຫຼິ້ນດ່ຽວ (ລູກຄ້າຂະເຫຍ້າເອງ).",
+    en: "Two modes: real-time live, and single-player (the customer rolls themselves).",
+  },
+  "rules.s1.b2.label": { lo: "ວົງເງິນ", en: "Stake limits" },
+  "rules.s1.b2.before": {
+    lo: "ຂັ້ນຕ່ຳ 1,000₭ ແລະ",
+    en: "Minimum 1,000₭ and",
+  },
+  "rules.s1.b2.highlight": {
+    lo: "ສູງສຸດບໍ່ເກີນ 1,000,000₭ ຕໍ່ຮອບ.",
+    en: "maximum 1,000,000₭ per round.",
+  },
+  "rules.s1.b3.label": { lo: "ອັດຕາການຈ່າຍ", en: "Payout rates" },
+  "rules.s1.b3a.label": {
+    lo: "ວາງດ່ຽວ / ຄະແນນຕ່ຳ-ສູງ",
+    en: "Single bet / Low-High range",
+  },
+  "rules.s1.b3a.text": { lo: "ອັດຕາ 1 : 1", en: "Pays 1 : 1" },
+  "rules.s1.b3b.label": {
+    lo: "ວາງຄູ່ (ວາງຕັດ) / ຄະແນນກາງ",
+    en: "Pair bet / Middle range",
+  },
+  "rules.s1.b3b.text": { lo: "ອັດຕາ 1 : 5", en: "Pays 1 : 5" },
+
+  // Section 2
+  "rules.s2.title": {
+    lo: "2. ນະໂຍບາຍການຄືນເງິນ (Refund Policy)",
+    en: "2. Refund Policy",
+  },
+  "rules.s2.b1.label": {
+    lo: "ການເສຍຈາກການຫຼິ້ນ",
+    en: "Losses from gameplay",
+  },
+  "rules.s2.b1.before": { lo: "ລະບົບຈະ", en: "The system has" },
+  "rules.s2.b1.bold": { lo: "ບໍ່ມີການຄືນເງິນ (No Refund)", en: "No Refund" },
+  "rules.s2.b1.after": {
+    lo: "ໃນທຸກກໍລະນີທີ່ຜົນອອກຕາມກະຕິກາ ແຕ່ຜູ້ຫຼິ້ນວາງເດີມພັນຜິດພາດ ຫຼື ເສຍຕາມດວງ. ຖືວ່າການຕັດສິນໃຈວາງເດີມພັນເປັນຄວາມຮັບຜິດຊອບຂອງຜູ້ຫຼິ້ນເອງ.",
+    en: "in any case where the result is delivered correctly under the rules but the player bet incorrectly or simply lost. Every betting decision is the player's own responsibility.",
+  },
+  "rules.s2.b2.label": {
+    lo: "ຄວາມຜິດພາດຈາກລະບົບ",
+    en: "Errors from our system",
+  },
+  "rules.s2.b2.before": { lo: "ທາງເຮົາຈະພິຈາລະນາ", en: "We will consider a" },
+  "rules.s2.b2.bold": {
+    lo: "ຄືນເງິນ ຫຼື ຊົດເຊີຍ",
+    en: "refund or compensation",
+  },
+  "rules.s2.b2.after": {
+    lo: "ໃຫ້ສະເພາະກໍລະນີທີ່ເກີດຈາກຄວາມຜິດພາດຂອງພະນັກງານ (Staff Error) ຫຼື ລະບົບຂັດຂ້ອງ (System Glitch) ທີ່ສົ່ງຜົນກະທົບຕໍ່ຜົນຂອງເກມຢ່າງຊັດເຈນເທົ່ານັ້ນ.",
+    en: "only in cases caused by staff error or a system glitch that demonstrably affected the result of a game.",
+  },
+
+  // Section 3
+  "rules.s3.title": {
+    lo: "3. ມາດຕະການຄວາມປອດໄພ ແລະ ການກວດສອບ (Anti-Fraud)",
+    en: "3. Security and Anti-Fraud measures",
+  },
+  "rules.s3.b1.label": { lo: "ການກວດສອບ", en: "Monitoring" },
+  "rules.s3.b1.before": {
+    lo: "ລະບົບມີຊ່ວຍງານກວດສອບພຶດຕິກຳການຫຼິ້ນຕະຫຼອດເວລາ. ຫາກກວດພົບການກະທຳທີ່",
+    en: "Our system monitors gameplay behaviour at all times. If any",
+  },
+  "rules.s3.b1.bold": {
+    lo: "ບໍ່ປົກກະຕິ (Abnormal Activity)",
+    en: "abnormal activity",
+  },
+  "rules.s3.b1.after": {
+    lo: ", ການໃຊ້ໂປຣແກຣມຊ່ວຍຫຼິ້ນ, ການແຮັກລະບົບ, ຫຼື ການສ້າງໂກງໃນຮູບແບບຕ່າງໆ.",
+    en: ", use of bots/assist programs, system hacking, or any form of cheating is detected, action will follow.",
+  },
+  "rules.s3.b2.label": { lo: "ການລົງໂທດ", en: "Penalties" },
+  "rules.s3.b2.before": {
+    lo: "ຫາກພົບການທຸຈະລິດ, ທາງເຮົາຈະ",
+    en: "Where fraud is found, we will",
+  },
+  "rules.s3.b2.bold": {
+    lo: "ສັ່ງປິດບັນຊີ (Ban) ຖາວອນທັນທີ",
+    en: "permanently ban the account immediately",
+  },
+  "rules.s3.b2.after": {
+    lo: "ໂດຍບໍ່ຕ້ອງແຈ້ງໃຫ້ຊາບລ່ວງໜ້າ.",
+    en: "without prior notice.",
+  },
+  "rules.s3.b3.label": { lo: "ການອາຍັດເງິນ", en: "Funds freeze" },
+  "rules.s3.b3.before": {
+    lo: "ໃນກໍລະນີທີ່ກວດພົບການທຸຈະລິດທີ່ຊັດເຈນ, ເງິນທັງໝົດໃນບັນຊີຈະຖືກ",
+    en: "Where clear fraud is found, all funds in the account will be",
+  },
+  "rules.s3.b3.boldA": { lo: "Freeze (ອາຍັດ)", en: "frozen" },
+  "rules.s3.b3.middle": { lo: "ແລະ ຈະ", en: "and there will be" },
+  "rules.s3.b3.boldB": {
+    lo: "ບໍ່ມີການໂອນຄືນ",
+    en: "no return of funds",
+  },
+  "rules.s3.b3.after": {
+    lo: "ໃຫ້ໃນທຸກກໍລະນີ.",
+    en: "in any case.",
+  },
+
+  // Section 4
+  "rules.s4.title": {
+    lo: "4. ໂປຣໂມຊັ່ນ ແລະ ໂບນັດ",
+    en: "4. Promotions and Bonuses",
+  },
+  "rules.s4.b1.label": { lo: "ສະມາຊິກໃໝ່", en: "New members" },
+  "rules.s4.b1.text": {
+    lo: "ເຕີມຄັ້ງທຳອິດ 100,000₭ ຮັບເພີ່ມ 20,000₭ | 500,000₭ ຮັບເພີ່ມ 50,000₭ | 1,000,000₭ ຮັບເພີ່ມ 100,000₭ (ເງີນທີ່ໄດ້ຈາກການເຕີມນີ້ຈະສາມາດໃຊ້ໃນການຫລີ້ນ ແລະ ສ້າງກຳໄລໄດ້ເທົ່ານັ້ນ, ບໍ່ສາມາດຖອນອອກໄດ້ໂດຍກົງ).",
+    en: "First top-up bonuses: 100,000₭ → +20,000₭ | 500,000₭ → +50,000₭ | 1,000,000₭ → +100,000₭.",
+  },
+  "rules.s4.b2.label": { lo: "ແນະນຳໝູ່", en: "Refer a friend" },
+  "rules.s4.b2.text": {
+    lo: "ໝູ່ເຕີມເງິນຄັ້ງທຳອິດ ຮັບທັນທີ 10,000₭ (ຖອນໄດ້ທັນທີ ຫຼື ໃຊ້ຫຼິ້ນຕໍ່).",
+    en: "When your invited friend completes their first top-up, you get 10,000₭ instantly (withdrawable or playable).",
+  },
+
+  // Warning
+  "rules.warningLabel": { lo: "ຄຳເຕືອນ", en: "Warning" },
+  "rules.warningText": {
+    lo: 'ທຸກການເດີມພັນມີຄວາມສ່ຽງ. ພວກເຮົາຂໍແນະນຳໃຫ້ທ່ານ ບໍ່ນຳ "ເງິນຮ້ອນ" ຫຼື ເງິນທີ່ຈຳເປັນຕໍ່ການດຳລົງຊີວິດມາຫຼິ້ນ. ທາງລະບົບຈະຖືວ່າທ່ານໄດ້ຍອມຮັບເງື່ອນໄຂທັງໝົດນີ້ແລ້ວເມື່ອເລີ່ມຕົ້ນວາງເດີມພັນ.',
+    en: 'Every bet carries risk. We recommend you do not stake "hot money" or money needed for daily living. By placing a bet you are deemed to have accepted all of these terms.',
   },
 } as const;
 

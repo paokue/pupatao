@@ -20,7 +20,7 @@ import {
   type RoundStartedPayload,
   type TxUpdatedPayload,
 } from '~/lib/pusher-channels'
-import { ArrowDown, ArrowUp, ArrowUpDown, Check, ChevronDown, Eye, LogOut, Pencil, ReceiptText, RefreshCw, Undo, User, Volume2, VolumeOff, Wallet, X } from 'lucide-react'
+import { ArrowDown, ArrowUp, ArrowUpDown, BookOpen, Check, ChevronDown, Eye, LogOut, MessageCircle, Pencil, ReceiptText, RefreshCw, Undo, User, Volume2, VolumeOff, Wallet, X } from 'lucide-react'
 
 type SymbolKey = 'fish' | 'prawn' | 'crab' | 'rooster' | 'gourd' | 'frog'
 
@@ -625,10 +625,12 @@ function ProfileDropdown({ name, onClose }: ProfileDropdownProps) {
     return () => document.removeEventListener('mousedown', handler)
   }, [onClose])
 
-  const items = [
+  const items: { label: string; icon: ReactNode; href: string; desc: string; external?: boolean }[] = [
     { label: t('menu.wallet'), icon: <Wallet size={18} />, href: '/wallet', desc: t('menu.walletDesc') },
     { label: t('menu.playHistory'), icon: <ReceiptText size={18} />, href: '/history', desc: t('menu.playHistoryDesc') },
     { label: t('menu.profile'), icon: <User size={18} />, href: '/profile', desc: t('menu.profileDesc') },
+    { label: t('menu.rules'), icon: <BookOpen size={18} />, href: '/rules', desc: t('menu.rulesDesc') },
+    { label: t('menu.contactAdmin'), icon: <MessageCircle size={18} />, href: 'https://wa.me/8562099299817', desc: t('menu.contactAdminDesc'), external: true },
   ]
 
   return (
@@ -665,7 +667,11 @@ function ProfileDropdown({ name, onClose }: ProfileDropdownProps) {
             onClick={() => {
               playClick()
               onClose()
-              navigate(item.href)
+              if (item.external) {
+                window.open(item.href, '_blank', 'noopener,noreferrer')
+              } else {
+                navigate(item.href)
+              }
             }}
             className="flex w-full items-center gap-3 px-4 py-3 text-left transition-all hover:opacity-90"
             style={{ background: 'transparent' }}

@@ -8,6 +8,7 @@ export default [
   route("history", "routes/history.tsx"),
   route("profile", "routes/profile.tsx"),
   route("wallet", "routes/wallet.tsx"),
+  route("rules", "routes/rules.tsx"),
   route("api/avatar", "routes/api.avatar.tsx"),
   route("api/payment-slip", "routes/api.payment-slip.tsx"),
   route("api/play-round", "routes/api.play-round.tsx"),
