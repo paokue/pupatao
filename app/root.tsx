@@ -9,6 +9,7 @@ import {
 import { Toaster } from "sonner"
 import type { Route } from "./+types/root"
 import { DEFAULT_LOCALE, parseLocaleCookie, type Locale } from "./lib/i18n"
+import { GlobalNavLoader } from "./components/GlobalNavLoader"
 import "./app.css"
 
 // Serialized shape of the authed user that's safe to pass to the browser.
@@ -115,6 +116,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
         <Links />
       </head>
       <body className="font-sans antialiased">
+        <GlobalNavLoader />
         {children}
         <Toaster
           position="bottom-center"

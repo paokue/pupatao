@@ -130,3 +130,9 @@
     @apply bg-background text-foreground;
   }
 }
+
+/* Customer-side global navigation loader (top progress bar). */
+@keyframes pupatao-nav-loader {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
