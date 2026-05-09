@@ -198,7 +198,7 @@ function HlsVideo({
     // Safari: native HLS
     if (video.canPlayType('application/vnd.apple.mpegurl')) {
       video.src = src
-      video.play().catch(() => {})
+      video.play().catch(() => { })
       return
     }
 
@@ -214,7 +214,7 @@ function HlsVideo({
       hls.loadSource(src)
       hls.attachMedia(videoRef.current)
       hls.on(Hls.Events.MANIFEST_PARSED, () => {
-        videoRef.current?.play().catch(() => {})
+        videoRef.current?.play().catch(() => { })
       })
     })
 
@@ -1958,7 +1958,7 @@ export default function FishPrawnCrabGame() {
               <button onClick={() => setBetSheetOpen(true)}
                 className="rounded-xl px-5 py-3 text-sm font-bold shadow-2xl"
                 style={{ background: 'linear-gradient(135deg,#7c3aed,#4c1d95)', color: '#fff', border: '2px solid #a78bfa', boxShadow: '0 4px 24px rgba(124,58,237,0.7)' }}>
-                {myLiveBets.filter(b => !cancelledBetIds.has(b.id)).length > 0 ? 'ວາງເດີນພັນອີກ' : 'ວາງເດືອນພັນ'}
+                {myLiveBets.filter(b => !cancelledBetIds.has(b.id)).length > 0 ? 'ວາງເດີມພັນອີກ' : 'ວາງເດີມພັນ'}
               </button>
             </div>
           )}
@@ -1994,108 +1994,107 @@ export default function FishPrawnCrabGame() {
             <div className="overflow-y-auto px-4" style={{ maxHeight: 'calc(92vh - 160px)' }}>
               {/* Symbol / pair grid — with SVG pair connector lines */}
               <div className="relative mb-3">
-              <div ref={sheetGridRef} className="grid grid-cols-4 gap-2">
-                {BOARD_LAYOUT.map((symbol, idx) => {
-                  const bet = currentBets.filter(b => b.cell === idx).reduce((s, b) => s + b.amount, 0)
-                  const pairBet = currentPairBets.filter(b => b.cellA === idx || b.cellB === idx).reduce((s, b) => s + b.amount, 0)
-                  const isPending = pendingCell === idx
-                  const canPair = pendingCell !== null && pendingCell !== idx && areAdjacent(pendingCell, idx) && BOARD_LAYOUT[pendingCell] !== symbol
-                  const isWinner = !isRolling && diceResults.length > 0 && diceResults.includes(symbol)
-                  const hasBoth = bet > 0 && pairBet > 0
-                  const hasSingle = bet > 0
-                  const hasPairOnly = pairBet > 0 && bet === 0
-                  return (
-                    <button key={idx} onClick={() => handleBoardTap(idx)}
-                      disabled={bettingLocked || (pendingCell === null && balance < selectedChip)}
-                      className="relative flex aspect-square flex-col items-center justify-center rounded-xl transition-all disabled:opacity-50"
-                      style={{
-                        background: isPending
-                          ? 'rgba(167,139,250,0.3)'
-                          : canPair
-                            ? 'rgba(37,99,235,0.2)'
+                <div ref={sheetGridRef} className="grid grid-cols-4 gap-2">
+                  {BOARD_LAYOUT.map((symbol, idx) => {
+                    const bet = currentBets.filter(b => b.cell === idx).reduce((s, b) => s + b.amount, 0)
+                    const pairBet = currentPairBets.filter(b => b.cellA === idx || b.cellB === idx).reduce((s, b) => s + b.amount, 0)
+                    const isPending = pendingCell === idx
+                    const canPair = pendingCell !== null && pendingCell !== idx && areAdjacent(pendingCell, idx) && BOARD_LAYOUT[pendingCell] !== symbol
+                    const isWinner = !isRolling && diceResults.length > 0 && diceResults.includes(symbol)
+                    const hasBoth = bet > 0 && pairBet > 0
+                    const hasSingle = bet > 0
+                    const hasPairOnly = pairBet > 0 && bet === 0
+                    return (
+                      <button key={idx} onClick={() => handleBoardTap(idx)}
+                        disabled={bettingLocked || (pendingCell === null && balance < selectedChip)}
+                        className="relative flex aspect-square flex-col items-center justify-center rounded-xl transition-all disabled:opacity-50"
+                        style={{
+                          background: isPending
+                            ? 'rgba(167,139,250,0.3)'
+                            : canPair
+                              ? 'rgba(37,99,235,0.2)'
+                              : isWinner
+                                ? 'rgba(250,204,21,0.2)'
+                                : hasBoth
+                                  ? 'rgba(168,85,247,0.18)'
+                                  : hasSingle
+                                    ? 'rgba(220,38,38,0.12)'
+                                    : hasPairOnly
+                                      ? 'rgba(37,99,235,0.12)'
+                                      : '#fff',
+                          border: `2px solid ${isPending ? '#a78bfa'
+                            : canPair ? '#60a5fa'
+                              : isWinner ? '#facc15'
+                                : hasBoth ? '#a855f7'
+                                  : hasSingle ? '#dc2626'
+                                    : hasPairOnly ? '#3b82f6'
+                                      : '#e2e8f0'
+                            }`,
+                          boxShadow: isPending
+                            ? '0 0 16px rgba(167,139,250,0.5)'
                             : isWinner
-                              ? 'rgba(250,204,21,0.2)'
+                              ? '0 0 16px rgba(250,204,21,0.4)'
                               : hasBoth
-                                ? 'rgba(168,85,247,0.18)'
+                                ? '0 0 10px rgba(168,85,247,0.4)'
                                 : hasSingle
-                                  ? 'rgba(220,38,38,0.12)'
+                                  ? '0 0 10px rgba(220,38,38,0.35)'
                                   : hasPairOnly
-                                    ? 'rgba(37,99,235,0.12)'
-                                    : '#fff',
-                        border: `2px solid ${
-                          isPending ? '#a78bfa'
-                          : canPair ? '#60a5fa'
-                          : isWinner ? '#facc15'
-                          : hasBoth ? '#a855f7'
-                          : hasSingle ? '#dc2626'
-                          : hasPairOnly ? '#3b82f6'
-                          : '#e2e8f0'
-                        }`,
-                        boxShadow: isPending
-                          ? '0 0 16px rgba(167,139,250,0.5)'
-                          : isWinner
-                            ? '0 0 16px rgba(250,204,21,0.4)'
-                            : hasBoth
-                              ? '0 0 10px rgba(168,85,247,0.4)'
-                              : hasSingle
-                                ? '0 0 10px rgba(220,38,38,0.35)'
-                                : hasPairOnly
-                                  ? '0 0 10px rgba(59,130,246,0.35)'
-                                  : '0 1px 3px rgba(0,0,0,0.15)',
-                      }}>
-                      <img src={`/symbols/${symbol}.png`} alt={symbol} className="h-10 w-10 object-contain" />
-                      <div className="absolute top-1 right-1 flex h-4 w-4 items-center justify-center rounded-full text-[8px] font-bold"
-                        style={{ background: 'rgba(76,29,149,0.9)', color: '#fde68a', border: '1px solid #a78bfa' }}>
-                        {SYMBOL_VALUES[symbol]}
-                      </div>
-                      {bet > 0 && (
-                        <div className="absolute bottom-1 right-1 rounded-full px-1.5 py-0.5 text-[8px] font-bold"
-                          style={{ background: '#dc2626', color: '#fff' }}>
-                          {formatAmount(bet)}
+                                    ? '0 0 10px rgba(59,130,246,0.35)'
+                                    : '0 1px 3px rgba(0,0,0,0.15)',
+                        }}>
+                        <img src={`/symbols/${symbol}.png`} alt={symbol} className="h-10 w-10 object-contain" />
+                        <div className="absolute top-1 right-1 flex h-4 w-4 items-center justify-center rounded-full text-[8px] font-bold"
+                          style={{ background: 'rgba(76,29,149,0.9)', color: '#fde68a', border: '1px solid #a78bfa' }}>
+                          {SYMBOL_VALUES[symbol]}
                         </div>
-                      )}
-                      {pairBet > 0 && (
-                        <div className="absolute top-1 left-1 rounded-full px-1.5 py-0.5 text-[8px] font-bold"
-                          style={{ background: '#2563eb', color: '#fff' }}>
-                          {formatAmount(pairBet)}
-                        </div>
-                      )}
-                    </button>
-                  )
-                })}
-              </div>
+                        {bet > 0 && (
+                          <div className="absolute bottom-1 right-1 rounded-full px-1.5 py-0.5 text-[8px] font-bold"
+                            style={{ background: '#dc2626', color: '#fff' }}>
+                            {formatAmount(bet)}
+                          </div>
+                        )}
+                        {pairBet > 0 && (
+                          <div className="absolute top-1 left-1 rounded-full px-1.5 py-0.5 text-[8px] font-bold"
+                            style={{ background: '#2563eb', color: '#fff' }}>
+                            {formatAmount(pairBet)}
+                          </div>
+                        )}
+                      </button>
+                    )
+                  })}
+                </div>
 
-              {/* SVG pair connector lines */}
-              {sheetGridSize.w > 0 && currentPairBets.length > 0 && (() => {
-                const GAP = 8
-                const cols = 4
-                const cellW = (sheetGridSize.w - (cols - 1) * GAP) / cols
-                const cellH = cellW // aspect-square
-                const rowH = cellH + GAP
-                const centerOf = (i: number) => ({
-                  x: (i % cols) * (cellW + GAP) + cellW / 2,
-                  y: Math.floor(i / cols) * rowH + cellH / 2,
-                })
-                return (
-                  <svg className="pointer-events-none absolute inset-0"
-                    width={sheetGridSize.w} height={cellH * 2 + GAP}
-                    style={{ zIndex: 10 }}>
-                    {currentPairBets.map((pb, pi) => {
-                      const c1 = centerOf(pb.cellA)
-                      const c2 = centerOf(pb.cellB)
-                      const color = pairColor(pb.cellA, pb.cellB)
-                      return (
-                        <g key={pi}>
-                          <line x1={c1.x} y1={c1.y} x2={c2.x} y2={c2.y}
-                            stroke={color} strokeWidth={4} strokeLinecap="round" opacity={0.9} />
-                          <circle cx={c1.x} cy={c1.y} r={6} fill={color} opacity={0.95} />
-                          <circle cx={c2.x} cy={c2.y} r={6} fill={color} opacity={0.95} />
-                        </g>
-                      )
-                    })}
-                  </svg>
-                )
-              })()}
+                {/* SVG pair connector lines */}
+                {sheetGridSize.w > 0 && currentPairBets.length > 0 && (() => {
+                  const GAP = 8
+                  const cols = 4
+                  const cellW = (sheetGridSize.w - (cols - 1) * GAP) / cols
+                  const cellH = cellW // aspect-square
+                  const rowH = cellH + GAP
+                  const centerOf = (i: number) => ({
+                    x: (i % cols) * (cellW + GAP) + cellW / 2,
+                    y: Math.floor(i / cols) * rowH + cellH / 2,
+                  })
+                  return (
+                    <svg className="pointer-events-none absolute inset-0"
+                      width={sheetGridSize.w} height={cellH * 2 + GAP}
+                      style={{ zIndex: 10 }}>
+                      {currentPairBets.map((pb, pi) => {
+                        const c1 = centerOf(pb.cellA)
+                        const c2 = centerOf(pb.cellB)
+                        const color = pairColor(pb.cellA, pb.cellB)
+                        return (
+                          <g key={pi}>
+                            <line x1={c1.x} y1={c1.y} x2={c2.x} y2={c2.y}
+                              stroke={color} strokeWidth={4} strokeLinecap="round" opacity={0.9} />
+                            <circle cx={c1.x} cy={c1.y} r={6} fill={color} opacity={0.95} />
+                            <circle cx={c2.x} cy={c2.y} r={6} fill={color} opacity={0.95} />
+                          </g>
+                        )
+                      })}
+                    </svg>
+                  )
+                })()}
               </div>{/* end relative wrapper */}
 
               {/* Pair hint */}
