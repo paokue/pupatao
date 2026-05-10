@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Form, NavLink, Outlet, useLoaderData, useNavigation, useRevalidator } from 'react-router'
-import { Banknote, Dices, LayoutDashboard, Loader, LogOut, Radio, ShieldCheck, Users, Wallet } from 'lucide-react'
+import { BarChart2, Banknote, Dices, LayoutDashboard, Loader, LogOut, Radio, ShieldCheck, Users, Wallet } from 'lucide-react'
 import { Skeleton } from '~/components/ui/skeleton'
 import { toast } from 'sonner'
 import type { Route } from './+types/admin'
@@ -58,11 +58,12 @@ type NavItem = {
 
 const NAV: NavItem[] = [
   { to: '/admin', end: true, label: 'Dashboard', mobileLabel: 'Home', Icon: LayoutDashboard },
-  { to: '/admin/customers', label: 'Customers', Icon: Users },
+  { to: '/admin/customers', label: 'Customers', mobileLabel: 'Users', Icon: Users },
   { to: '/admin/wallet', label: 'Wallet', Icon: Wallet },
-  { to: '/admin/transactions', label: 'Transactions', Icon: Banknote, badgeKey: 'pendingTx' },
+  { to: '/admin/transactions', label: 'Transactions', mobileLabel: 'Trans', Icon: Banknote, badgeKey: 'pendingTx' },
   { to: '/admin/play-history', label: 'Play History', mobileLabel: 'Plays', Icon: Dices, badgeKey: 'pendingBets' },
   { to: '/admin/live', label: 'Live Play', mobileLabel: 'Live', Icon: Radio },
+  { to: '/admin/financial', label: 'Financial', mobileLabel: 'Finance', Icon: BarChart2 },
 ]
 
 export default function AdminLayout() {

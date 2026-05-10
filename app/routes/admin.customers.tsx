@@ -141,8 +141,8 @@ export default function AdminCustomers() {
       {/* Mobile: cards */}
       <div className="flex flex-col gap-2 md:hidden">
         {data.users.length === 0 && <EmptyState />}
-        {data.users.map(u => (
-          <CustomerCard key={u.id} u={u} onAction={setPending} />
+        {data.users.map((u, i) => (
+          <CustomerCard key={u.id} u={u} rowNum={(data.page - 1) * data.pageSize + i + 1} onAction={setPending} />
         ))}
       </div>
 
@@ -154,6 +154,7 @@ export default function AdminCustomers() {
         <table className="w-full text-left text-sm">
           <thead style={{ color: '#a5b4fc' }}>
             <tr className="text-[10px] font-bold " style={{ background: '#1e1b4b' }}>
+              <th className="w-8 px-3 py-2 text-right" style={{ color: '#64748b' }}>#</th>
               <th className="px-3 py-2">PHONE</th>
               <th className="px-3 py-2">NAME</th>
               <th className="px-3 py-2 text-right">REAL</th>
@@ -165,13 +166,14 @@ export default function AdminCustomers() {
           <tbody>
             {data.users.length === 0 && (
               <tr>
-                <td colSpan={6} className="px-3 py-6 text-center text-xs" style={{ color: '#818cf8' }}>
+                <td colSpan={7} className="px-3 py-6 text-center text-xs" style={{ color: '#818cf8' }}>
                   No customers match.
                 </td>
               </tr>
             )}
-            {data.users.map(u => (
+            {data.users.map((u, i) => (
               <tr key={u.id} style={{ borderTop: '1px solid #1e1b4b', color: '#e9d5ff' }}>
+                <td className="px-3 py-2 text-right text-[10px] font-bold tabular-nums" style={{ color: '#64748b' }}>{(data.page - 1) * data.pageSize + i + 1}</td>
                 <td className="px-3 py-2 font-semibold">{u.tel}</td>
                 <td className="px-3 py-2">{[u.firstName, u.lastName].filter(Boolean).join(' ') || <span style={{ color: '#64748b' }}>—</span>}</td>
                 <td className="px-3 py-2 text-right" style={{ color: '#fde68a' }}>{u.real.toLocaleString()}</td>
@@ -187,28 +189,30 @@ export default function AdminCustomers() {
       </div>
 
       {totalPages > 1 && (
-        <div className="flex items-center justify-center gap-2">
-          <button
-            type="button"
-            onClick={() => gotoPage(data.page - 1)}
-            disabled={data.page <= 1 || loading}
-            className="rounded-md px-3 py-1.5 text-xs font-bold disabled:opacity-30"
-            style={{ background: '#1e1b4b', color: '#a5b4fc', border: '1px solid #4338ca' }}
-          >
-            ← Prev
-          </button>
-          <span className="text-xs" style={{ color: '#a5b4fc' }}>
-            Page {data.page} / {totalPages}
+        <div className="flex flex-col items-center gap-1.5">
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => gotoPage(data.page - 1)}
+              disabled={data.page <= 1 || loading}
+              className="rounded-md px-3 py-1.5 text-xs font-bold disabled:opacity-30"
+              style={{ background: '#1e1b4b', color: '#a5b4fc', border: '1px solid #4338ca' }}
+            >
+              ← Prev
+            </button>
+            <button
+              type="button"
+              onClick={() => gotoPage(data.page + 1)}
+              disabled={data.page >= totalPages || loading}
+              className="rounded-md px-3 py-1.5 text-xs font-bold disabled:opacity-30"
+              style={{ background: '#1e1b4b', color: '#a5b4fc', border: '1px solid #4338ca' }}
+            >
+              Next →
+            </button>
+          </div>
+          <span className="text-xs tabular-nums" style={{ color: '#a5b4fc' }}>
+            Showing {(data.page - 1) * data.pageSize + 1}–{Math.min(data.page * data.pageSize, data.total).toLocaleString()} of {data.total.toLocaleString()} customers · Page {data.page}/{totalPages}
           </span>
-          <button
-            type="button"
-            onClick={() => gotoPage(data.page + 1)}
-            disabled={data.page >= totalPages || loading}
-            className="rounded-md px-3 py-1.5 text-xs font-bold disabled:opacity-30"
-            style={{ background: '#1e1b4b', color: '#a5b4fc', border: '1px solid #4338ca' }}
-          >
-            Next →
-          </button>
         </div>
       )}
 
@@ -234,7 +238,7 @@ export default function AdminCustomers() {
   )
 }
 
-function CustomerCard({ u, onAction }: { u: CustomerRow; onAction: (u: CustomerRow) => void }) {
+function CustomerCard({ u, onAction, rowNum }: { u: CustomerRow; onAction: (u: CustomerRow) => void; rowNum: number }) {
   return (
     <div
       className="rounded-xl p-3"
@@ -242,7 +246,10 @@ function CustomerCard({ u, onAction }: { u: CustomerRow; onAction: (u: CustomerR
     >
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
-          <div className="text-sm font-semibold" style={{ color: '#fde68a' }}>{u.tel}</div>
+          <div className="flex items-center gap-1.5">
+            <span className="text-[10px] font-bold tabular-nums" style={{ color: '#64748b' }}>#{rowNum}</span>
+            <div className="text-sm font-semibold" style={{ color: '#fde68a' }}>{u.tel}</div>
+          </div>
           <div className="truncate text-xs" style={{ color: '#e9d5ff' }}>
             {[u.firstName, u.lastName].filter(Boolean).join(' ') || <span style={{ color: '#64748b' }}>—</span>}
           </div>

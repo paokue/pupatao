@@ -33,5 +33,6 @@ export default [
     route("transactions", "routes/admin.transactions.tsx"),
     route("play-history", "routes/admin.play-history.tsx"),
     route("live", "routes/admin.live.tsx"),
+    route("financial", "routes/admin.financial.tsx"),
   ]),
 ] satisfies RouteConfig

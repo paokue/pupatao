@@ -49,6 +49,12 @@ export async function loader({ request }: Route.LoaderArgs) {
     }
     : {}
 
+  const [pendingDepositCount, pendingWithdrawCount, pendingTransferCount] = await Promise.all([
+    prisma.transaction.count({ where: { type: 'DEPOSIT', status: 'PENDING' } }),
+    prisma.transaction.count({ where: { type: 'WITHDRAW', status: 'PENDING' } }),
+    prisma.transaction.count({ where: { type: 'TRANSFER_OUT', status: 'PENDING' } }),
+  ])
+
   if (tab === 'transfer') {
     const cfInclude = { user: { select: USER_SELECT }, targetUser: { select: USER_SELECT } }
     const baseWhere = { type: 'TRANSFER_OUT' as const, ...transferTelFilter }
@@ -81,6 +87,9 @@ export async function loader({ request }: Route.LoaderArgs) {
       page,
       total,
       pageSize: PAGE_SIZE,
+      pendingDepositCount,
+      pendingWithdrawCount,
+      pendingTransferCount,
       txs: rows.map(t => ({
         id: t.id,
         type: 'transfer' as const,
@@ -132,6 +141,9 @@ export async function loader({ request }: Route.LoaderArgs) {
     page,
     total,
     pageSize: PAGE_SIZE,
+    pendingDepositCount,
+    pendingWithdrawCount,
+    pendingTransferCount,
     txs: txs.map(t => ({
       id: t.id,
       type: tab as 'deposit' | 'withdraw',
@@ -369,20 +381,28 @@ export default function AdminTransactions() {
         {/* LEFT: tabs (row) + status pills (row) stacked */}
         <div className="flex flex-col gap-2">
           <div className="flex gap-2">
-            {TABS.map(t => (
-              <Link
-                key={t.key}
-                to={tabHref(t.key)}
-                className="rounded-lg px-4 py-1.5 text-xs font-bold capitalize"
-                style={{
-                  background: data.tab === t.key ? '#4338ca' : '#1e1b4b',
-                  color: data.tab === t.key ? '#fff' : '#a5b4fc',
-                  border: `1px solid ${data.tab === t.key ? '#818cf8' : '#4338ca'}`,
-                }}
-              >
-                {t.label}
-              </Link>
-            ))}
+            {TABS.map(t => {
+              const count = t.key === 'deposit' ? data.pendingDepositCount : t.key === 'withdraw' ? data.pendingWithdrawCount : data.pendingTransferCount
+              return (
+                <Link
+                  key={t.key}
+                  to={tabHref(t.key)}
+                  className="inline-flex items-center gap-1.5 rounded-lg px-4 py-1.5 text-xs font-bold capitalize"
+                  style={{
+                    background: data.tab === t.key ? '#4338ca' : '#1e1b4b',
+                    color: data.tab === t.key ? '#fff' : '#a5b4fc',
+                    border: `1px solid ${data.tab === t.key ? '#818cf8' : '#4338ca'}`,
+                  }}
+                >
+                  {t.label}
+                  {count > 0 && (
+                    <span className="inline-flex h-4 min-w-[16px] items-center justify-center rounded-full px-1 text-[9px] font-bold" style={{ background: '#ef4444', color: '#fff' }}>
+                      {count}
+                    </span>
+                  )}
+                </Link>
+              )
+            })}
           </div>
           <div className="flex flex-wrap gap-1.5">
             {STATUS_FILTERS.map(s => (
@@ -451,13 +471,14 @@ export default function AdminTransactions() {
             No {data.tab} transactions match.
           </div>
         )}
-        {data.txs.map(tx =>
+        {data.txs.map((tx, i) =>
           tx.type === 'transfer' ? (
-            <TransferCard key={tx.id} tx={tx} />
+            <TransferCard key={tx.id} tx={tx} rowNum={(data.page - 1) * data.pageSize + i + 1} />
           ) : (
             <TxCard
               key={tx.id}
               tx={tx}
+              rowNum={(data.page - 1) * data.pageSize + i + 1}
               tab={data.tab as 'deposit' | 'withdraw'}
               loading={loading}
               onApprove={() => setPending({ tx, op: 'approve' })}
@@ -469,20 +490,24 @@ export default function AdminTransactions() {
       </div>
 
       {totalPages > 1 && (
-        <div className="flex items-center justify-center gap-2">
-          {data.page > 1 && (
-            <Link to={pageHref(data.page - 1)} className="rounded-md px-3 py-1.5 text-xs font-bold"
-              style={{ background: '#1e1b4b', color: '#a5b4fc', border: '1px solid #4338ca' }}>
-              ← Prev
-            </Link>
-          )}
-          <span className="text-xs" style={{ color: '#a5b4fc' }}>Page {data.page} / {totalPages}</span>
-          {data.page < totalPages && (
-            <Link to={pageHref(data.page + 1)} className="rounded-md px-3 py-1.5 text-xs font-bold"
-              style={{ background: '#1e1b4b', color: '#a5b4fc', border: '1px solid #4338ca' }}>
-              Next →
-            </Link>
-          )}
+        <div className="flex flex-col items-center gap-1.5">
+          <div className="flex items-center gap-2">
+            {data.page > 1 && (
+              <Link to={pageHref(data.page - 1)} className="rounded-md px-3 py-1.5 text-xs font-bold"
+                style={{ background: '#1e1b4b', color: '#a5b4fc', border: '1px solid #4338ca' }}>
+                ← Prev
+              </Link>
+            )}
+            {data.page < totalPages && (
+              <Link to={pageHref(data.page + 1)} className="rounded-md px-3 py-1.5 text-xs font-bold"
+                style={{ background: '#1e1b4b', color: '#a5b4fc', border: '1px solid #4338ca' }}>
+                Next →
+              </Link>
+            )}
+          </div>
+          <span className="text-xs tabular-nums" style={{ color: '#a5b4fc' }}>
+            Showing {(data.page - 1) * data.pageSize + 1}–{Math.min(data.page * data.pageSize, data.total).toLocaleString()} of {data.total.toLocaleString()} transactions · Page {data.page}/{totalPages}
+          </span>
         </div>
       )}
 
@@ -532,11 +557,12 @@ function StatusBadge({ status }: { status: string }) {
 }
 
 function TxCard({
-  tx, tab, loading, onApprove, onReject, onSlipPreview,
+  tx, tab, loading, rowNum, onApprove, onReject, onSlipPreview,
 }: {
   tx: TxLite
   tab: 'deposit' | 'withdraw'
   loading: boolean
+  rowNum: number
   onApprove: () => void
   onReject: () => void
   onSlipPreview: (url: string) => void
@@ -560,6 +586,7 @@ function TxCard({
       )}
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-2">
+          <span className="text-[10px] font-bold tabular-nums" style={{ color: '#64748b' }}>#{rowNum}</span>
           <span className="font-semibold" style={{ color: '#e9d5ff' }}>
             {tx.sender.name !== tx.sender.tel ? `${tx.sender.name} · ` : ''}{tx.sender.tel}
           </span>
@@ -604,9 +631,8 @@ function TxCard({
   )
 }
 
-function TransferCard({ tx }: { tx: TxLite }) {
+function TransferCard({ tx, rowNum }: { tx: TxLite; rowNum: number }) {
   const isPending = tx.status === 'PENDING'
-  // Parse note to detect if transfer was encrypted (note contains "encrypted")
   const isEncrypted = tx.note ? /encrypt/i.test(tx.note) : false
 
   return (
@@ -616,6 +642,7 @@ function TransferCard({ tx }: { tx: TxLite }) {
         <div className="flex flex-wrap items-center gap-2">
           {/* Sender → Recipient */}
           <div className="flex items-center gap-1.5 flex-wrap">
+            <span className="text-[10px] font-bold tabular-nums" style={{ color: '#64748b' }}>#{rowNum}</span>
             <span className="font-semibold" style={{ color: '#e9d5ff' }}>{tx.sender.name}</span>
             <ArrowRight size={12} style={{ color: '#818cf8' }} />
             {tx.recipient ? (

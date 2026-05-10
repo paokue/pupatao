@@ -181,8 +181,8 @@ export default function AdminWallet() {
       {/* Mobile cards */}
       <div className="flex flex-col gap-2 md:hidden">
         {data.users.length === 0 && <Empty />}
-        {data.users.map(u => (
-          <WalletCard key={u.id} u={u} onAction={(wallet) => setOpenModal({ wallet, user: u })} />
+        {data.users.map((u, i) => (
+          <WalletCard key={u.id} u={u} rowNum={(data.page - 1) * data.pageSize + i + 1} onAction={(wallet) => setOpenModal({ wallet, user: u })} />
         ))}
       </div>
 
@@ -194,6 +194,7 @@ export default function AdminWallet() {
         <table className="w-full text-left text-sm">
           <thead style={{ color: '#a5b4fc' }}>
             <tr className="text-[10px] font-bold" style={{ background: '#1e1b4b' }}>
+              <th className="w-8 px-3 py-2 text-right" style={{ color: '#64748b' }}>#</th>
               <th className="px-3 py-2">PHONE</th>
               <th className="px-3 py-2">NAME</th>
               <th className="px-3 py-2 text-right">TOTAL DEPOSIT</th>
@@ -208,13 +209,14 @@ export default function AdminWallet() {
           <tbody>
             {data.users.length === 0 && (
               <tr>
-                <td colSpan={9} className="px-3 py-6 text-center text-xs" style={{ color: '#818cf8' }}>
+                <td colSpan={10} className="px-3 py-6 text-center text-xs" style={{ color: '#818cf8' }}>
                   No customers match.
                 </td>
               </tr>
             )}
-            {data.users.map(u => (
+            {data.users.map((u, i) => (
               <tr key={u.id} style={{ borderTop: '1px solid #1e1b4b', color: '#e9d5ff' }}>
+                <td className="px-3 py-2 text-right text-[10px] font-bold tabular-nums" style={{ color: '#64748b' }}>{(data.page - 1) * data.pageSize + i + 1}</td>
                 <td className="px-3 py-2 font-semibold">{u.tel}</td>
                 <td className="px-3 py-2">
                   {[u.firstName, u.lastName].filter(Boolean).join(' ') || <span style={{ color: '#64748b' }}>—</span>}
@@ -235,28 +237,30 @@ export default function AdminWallet() {
       </div>
 
       {totalPages > 1 && (
-        <div className="flex items-center justify-center gap-2">
-          <button
-            type="button"
-            onClick={() => gotoPage(data.page - 1)}
-            disabled={data.page <= 1 || loading}
-            className="rounded-md px-3 py-1.5 text-xs font-bold disabled:opacity-30"
-            style={{ background: '#1e1b4b', color: '#a5b4fc', border: '1px solid #4338ca' }}
-          >
-            ← Prev
-          </button>
-          <span className="text-xs" style={{ color: '#a5b4fc' }}>
-            Page {data.page} / {totalPages}
+        <div className="flex flex-col items-center gap-1.5">
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => gotoPage(data.page - 1)}
+              disabled={data.page <= 1 || loading}
+              className="rounded-md px-3 py-1.5 text-xs font-bold disabled:opacity-30"
+              style={{ background: '#1e1b4b', color: '#a5b4fc', border: '1px solid #4338ca' }}
+            >
+              ← Prev
+            </button>
+            <button
+              type="button"
+              onClick={() => gotoPage(data.page + 1)}
+              disabled={data.page >= totalPages || loading}
+              className="rounded-md px-3 py-1.5 text-xs font-bold disabled:opacity-30"
+              style={{ background: '#1e1b4b', color: '#a5b4fc', border: '1px solid #4338ca' }}
+            >
+              Next →
+            </button>
+          </div>
+          <span className="text-xs tabular-nums" style={{ color: '#a5b4fc' }}>
+            Showing {(data.page - 1) * data.pageSize + 1}–{Math.min(data.page * data.pageSize, data.total).toLocaleString()} of {data.total.toLocaleString()} customers · Page {data.page}/{totalPages}
           </span>
-          <button
-            type="button"
-            onClick={() => gotoPage(data.page + 1)}
-            disabled={data.page >= totalPages || loading}
-            className="rounded-md px-3 py-1.5 text-xs font-bold disabled:opacity-30"
-            style={{ background: '#1e1b4b', color: '#a5b4fc', border: '1px solid #4338ca' }}
-          >
-            Next →
-          </button>
         </div>
       )}
 
@@ -577,12 +581,15 @@ function Field({ label, value }: { label: string; value: React.ReactNode }) {
   )
 }
 
-function WalletCard({ u, onAction }: { u: Row; onAction: (wallet: 'REAL' | 'DEMO' | 'PROMO') => void }) {
+function WalletCard({ u, onAction, rowNum }: { u: Row; onAction: (wallet: 'REAL' | 'DEMO' | 'PROMO') => void; rowNum: number }) {
   return (
     <div className="rounded-xl p-3" style={{ background: '#0f172a', border: '1px solid #1e1b4b' }}>
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
-          <div className="text-sm font-semibold" style={{ color: '#fde68a' }}>{u.tel}</div>
+          <div className="flex items-center gap-1.5">
+            <span className="text-[10px] font-bold tabular-nums" style={{ color: '#64748b' }}>#{rowNum}</span>
+            <div className="text-sm font-semibold" style={{ color: '#fde68a' }}>{u.tel}</div>
+          </div>
           <div className="truncate text-xs" style={{ color: '#e9d5ff' }}>
             {[u.firstName, u.lastName].filter(Boolean).join(' ') || <span style={{ color: '#64748b' }}>—</span>}
           </div>

@@ -136,54 +136,39 @@ export function playLose() {
 }
 
 // ── Background music engine ───────────────────────────────────────────────────
+// Uses an HTMLAudioElement playing the bundled MPEG file so the admin can
+// swap the track by replacing /sounds/background-sound.mpeg without any
+// code changes.
 
-let bgNodes: { osc: OscillatorNode; gain: GainNode }[] = []
-let bgMasterGain: GainNode | null = null
-let bgRunning = false
+let bgAudio: HTMLAudioElement | null = null
 
-// Pentatonic scale loop — soothing casino ambience
-const BG_NOTES = [261, 294, 330, 392, 440, 523, 587, 659]
-const BG_TEMPO = 0.55 // seconds per beat
-
-export function startBgMusic(volumeFraction = 0.12) {
-  const ctx = getCtx()
-  if (!ctx || bgRunning) return
-  resumeCtx(ctx)
-  bgRunning = true
-
-  bgMasterGain = ctx.createGain()
-  bgMasterGain.gain.setValueAtTime(volumeFraction, ctx.currentTime)
-  bgMasterGain.connect(ctx.destination)
-
-  let step = 0
-
-  function scheduleBeat() {
-    if (!bgRunning || !bgMasterGain) return
-    const t = ctx.currentTime
-    const freq = BG_NOTES[step % BG_NOTES.length]
-    playTone(ctx, freq, 'sine', t, BG_TEMPO * 0.8, 0.5, bgMasterGain)
-    playTone(ctx, freq / 2, 'sine', t, BG_TEMPO * 0.8, 0.25, bgMasterGain)
-    step++
-    setTimeout(scheduleBeat, BG_TEMPO * 1000)
+function getBgAudio(): HTMLAudioElement | null {
+  if (typeof window === 'undefined') return null
+  if (!bgAudio) {
+    bgAudio = new Audio('/sounds/background-sound.mpeg')
+    bgAudio.loop = true
+    bgAudio.volume = 0.3
   }
+  return bgAudio
+}
 
-  scheduleBeat()
+export function startBgMusic(volumeFraction = 0.3) {
+  const audio = getBgAudio()
+  if (!audio || !audio.paused) return
+  audio.volume = volumeFraction
+  audio.play().catch(() => { /* autoplay blocked — user must interact first */ })
 }
 
 export function stopBgMusic() {
-  bgRunning = false
-  if (bgMasterGain) {
-    try {
-      bgMasterGain.gain.linearRampToValueAtTime(0, (getCtx()?.currentTime ?? 0) + 0.5)
-    } catch {}
-    bgMasterGain = null
-  }
+  const audio = getBgAudio()
+  if (!audio || audio.paused) return
+  audio.pause()
+  audio.currentTime = 0
 }
 
 export function setBgVolume(v: number) {
-  if (bgMasterGain) {
-    bgMasterGain.gain.setValueAtTime(v, getCtx()?.currentTime ?? 0)
-  }
+  const audio = getBgAudio()
+  if (audio) audio.volume = v
 }
 
 // ── React hook ────────────────────────────────────────────────────────────────
