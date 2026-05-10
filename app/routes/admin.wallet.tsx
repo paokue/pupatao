@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { Form, useFetcher, useLoaderData, useNavigation, useSearchParams, useSubmit } from 'react-router'
-import { ArrowDownCircle, ArrowUpCircle, Eye, FileText, Loader, MoreVertical, Search, X } from 'lucide-react'
+import { ArrowDownCircle, ArrowUpCircle, Loader, MoreVertical, Search, Wallet, X } from 'lucide-react'
 import type { Route } from './+types/admin.wallet'
 import { requireAdmin } from '~/lib/admin-auth.server'
 import { prisma } from '~/lib/prisma.server'
@@ -87,13 +88,13 @@ export async function loader({ request }: Route.LoaderArgs) {
 
 type Row = ReturnType<typeof useLoaderData<typeof loader>>['users'][number]
 type UserBase = { id: string; tel: string; name: string | null; status: string; role: string; createdAt: string }
-type WalletsBase = { real: number; demo: number; promo: number }
+type WalletBase = { type: string; balance: number }
 type DetailData = {
   view: 'detail'
   user: UserBase
-  wallets: WalletsBase
+  wallet: WalletBase
   recent: {
-    id: string; type: string; walletType: string | null; amount: number;
+    id: string; type: string; amount: number;
     status: string; balanceBefore: number; balanceAfter: number;
     note: string | null; createdAt: string
   }[]
@@ -101,7 +102,7 @@ type DetailData = {
 type SummaryData = {
   view: 'summary'
   user: UserBase
-  wallets: WalletsBase
+  wallet: WalletBase
   incoming: { type: string; total: number; count: number }[]
   outgoing: { type: string; total: number; count: number }[]
   incomingTotal: number
@@ -139,7 +140,7 @@ export default function AdminWallet() {
   const loading = navigation.state !== 'idle'
   const totalPages = Math.max(1, Math.ceil(data.total / data.pageSize))
 
-  const [openModal, setOpenModal] = useState<{ kind: 'detail' | 'summary'; user: Row } | null>(null)
+  const [openModal, setOpenModal] = useState<{ wallet: 'REAL' | 'DEMO' | 'PROMO'; user: Row } | null>(null)
 
   function gotoPage(n: number) {
     const next = new URLSearchParams(params)
@@ -181,7 +182,7 @@ export default function AdminWallet() {
       <div className="flex flex-col gap-2 md:hidden">
         {data.users.length === 0 && <Empty />}
         {data.users.map(u => (
-          <WalletCard key={u.id} u={u} onAction={(kind) => setOpenModal({ kind, user: u })} />
+          <WalletCard key={u.id} u={u} onAction={(wallet) => setOpenModal({ wallet, user: u })} />
         ))}
       </div>
 
@@ -225,7 +226,7 @@ export default function AdminWallet() {
                 <td className="px-3 py-2 text-right" style={{ color: '#fcd34d' }} title={u.promo.toLocaleString()}>{formatAmount(u.promo)}</td>
                 <td className="px-3 py-2"><StatusPill status={u.status} /></td>
                 <td className="px-3 py-2 text-right">
-                  <ActionMenu onPick={(kind) => setOpenModal({ kind, user: u })} />
+                  <ActionMenu onPick={(wallet) => setOpenModal({ wallet, user: u })} />
                 </td>
               </tr>
             ))}
@@ -261,10 +262,9 @@ export default function AdminWallet() {
 
       {openModal && (
         <WalletModal
-          kind={openModal.kind}
+          wallet={openModal.wallet}
           user={openModal.user}
           onClose={() => setOpenModal(null)}
-          onSwitch={(kind) => setOpenModal({ kind, user: openModal.user })}
         />
       )}
     </div>
@@ -274,14 +274,16 @@ export default function AdminWallet() {
 // ─── Modal — one fetcher per view so switching tabs only loads the data the
 //   visible tab actually needs (detail = recent transactions; summary = the
 //   per-type aggregate). The other tab's fetch never runs unless opened.
+//   `wallet` is the account scope chosen from the action menu (REAL/DEMO/PROMO);
+//   `kind` is the active tab (detail/summary), managed internally.
 function WalletModal({
-  kind, user, onClose, onSwitch,
+  wallet, user, onClose,
 }: {
-  kind: 'detail' | 'summary'
+  wallet: 'REAL' | 'DEMO' | 'PROMO'
   user: Row
   onClose: () => void
-  onSwitch: (k: 'detail' | 'summary') => void
 }) {
+  const [kind, setKind] = useState<'detail' | 'summary'>('detail')
   const detailFetcher = useFetcher<DetailData | { error: string }>()
   const summaryFetcher = useFetcher<SummaryData | { error: string }>()
 
@@ -291,20 +293,22 @@ function WalletModal({
   const error = active.data && 'error' in active.data ? active.data.error : null
 
   useEffect(() => {
-    // Only load the visible view, and only if it hasn't been loaded yet.
     if (kind === 'detail' && detailFetcher.state === 'idle' && !detailFetcher.data) {
-      detailFetcher.load(`/api/admin/wallet-summary?userId=${user.id}&view=detail`)
+      detailFetcher.load(`/api/admin/wallet-summary?userId=${user.id}&view=detail&wallet=${wallet}`)
     }
     if (kind === 'summary' && summaryFetcher.state === 'idle' && !summaryFetcher.data) {
-      summaryFetcher.load(`/api/admin/wallet-summary?userId=${user.id}&view=summary`)
+      summaryFetcher.load(`/api/admin/wallet-summary?userId=${user.id}&view=summary&wallet=${wallet}`)
     }
-  }, [kind, user.id, detailFetcher, summaryFetcher])
+  }, [kind, user.id, wallet, detailFetcher, summaryFetcher])
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) { if (e.key === 'Escape') onClose() }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [onClose])
+
+  const walletLabel: Record<string, string> = { REAL: 'Real Account', DEMO: 'Demo Account', PROMO: 'Promo Account' }
+  const walletColor: Record<string, string> = { REAL: '#fde68a', DEMO: '#a5b4fc', PROMO: '#fcd34d' }
 
   return (
     <div
@@ -322,8 +326,9 @@ function WalletModal({
         {/* Header */}
         <div className="flex items-center justify-between gap-3 border-b px-5 py-4" style={{ borderColor: '#1e1b4b', background: '#1e1b4b' }}>
           <div className="min-w-0">
-            <div className="text-xs font-bold" style={{ color: '#a5b4fc' }}>
-              {kind === 'summary' ? 'WALLET SUMMARY' : 'WALLET DETAIL'}
+            <div className="flex items-center gap-1.5 text-xs font-bold" style={{ color: walletColor[wallet] }}>
+              <Wallet size={12} />
+              {walletLabel[wallet]}
             </div>
             <div className="truncate text-sm font-bold" style={{ color: '#fde68a' }}>
               {user.tel}
@@ -335,11 +340,10 @@ function WalletModal({
             </div>
           </div>
           <div className="flex items-center gap-2">
-            {/* Switch tab */}
             <div className="flex overflow-hidden rounded-md text-[11px] font-bold" style={{ border: '1px solid #4338ca' }}>
               <button
                 type="button"
-                onClick={() => onSwitch('detail')}
+                onClick={() => setKind('detail')}
                 className="px-2.5 py-1 transition-colors"
                 style={{ background: kind === 'detail' ? '#4338ca' : 'transparent', color: kind === 'detail' ? '#fff' : '#a5b4fc' }}
               >
@@ -347,7 +351,7 @@ function WalletModal({
               </button>
               <button
                 type="button"
-                onClick={() => onSwitch('summary')}
+                onClick={() => setKind('summary')}
                 className="px-2.5 py-1 transition-colors"
                 style={{ background: kind === 'summary' ? '#4338ca' : 'transparent', color: kind === 'summary' ? '#fff' : '#a5b4fc' }}
               >
@@ -387,13 +391,21 @@ function WalletModal({
 }
 
 function DetailView({ data }: { data: DetailData }) {
+  const walletColor: Record<string, string> = { REAL: '#fde68a', DEMO: '#a5b4fc', PROMO: '#fcd34d' }
+  const color = walletColor[data.wallet.type] ?? '#e9d5ff'
   return (
     <div className="flex flex-col gap-4">
-      {/* Wallet balances */}
-      <div className="grid grid-cols-3 gap-2">
-        <Stat label="REAL"  value={data.wallets.real}  color="#fde68a" />
-        <Stat label="DEMO"  value={data.wallets.demo}  color="#a5b4fc" />
-        <Stat label="PROMO" value={data.wallets.promo} color="#fcd34d" />
+      {/* Scoped wallet balance */}
+      <div
+        className="rounded-xl p-4"
+        style={{ background: 'linear-gradient(135deg, #1e1b4b, #0f172a)', border: '1px solid #4338ca' }}
+      >
+        <div className="text-[10px] font-bold tracking-wider" style={{ color: '#a5b4fc' }}>
+          {data.wallet.type} BALANCE
+        </div>
+        <div className="mt-1 text-3xl font-bold" style={{ color }}>
+          {data.wallet.balance.toLocaleString()} ₭
+        </div>
       </div>
 
       {/* Account info */}
@@ -412,7 +424,6 @@ function DetailView({ data }: { data: DetailData }) {
               <tr style={{ background: '#1e1b4b' }}>
                 <th className="px-3 py-2">WHEN</th>
                 <th className="px-3 py-2">TYPE</th>
-                <th className="px-3 py-2">WALLET</th>
                 <th className="px-3 py-2 text-right">AMOUNT</th>
                 <th className="px-3 py-2 text-right">BALANCE AFTER</th>
                 <th className="px-3 py-2">STATUS</th>
@@ -421,7 +432,7 @@ function DetailView({ data }: { data: DetailData }) {
             <tbody>
               {data.recent.length === 0 && (
                 <tr>
-                  <td colSpan={6} className="px-3 py-3 text-center" style={{ color: '#64748b' }}>
+                  <td colSpan={5} className="px-3 py-3 text-center" style={{ color: '#64748b' }}>
                     No transactions yet.
                   </td>
                 </tr>
@@ -434,11 +445,10 @@ function DetailView({ data }: { data: DetailData }) {
                       {new Date(t.createdAt).toLocaleString()}
                     </td>
                     <td className="px-3 py-2">{TYPE_LABEL[t.type] ?? t.type}</td>
-                    <td className="px-3 py-2 text-[10px] font-bold" style={{ color: '#a5b4fc' }}>{t.walletType ?? '—'}</td>
                     <td className="px-3 py-2 text-right" style={{ color: isOut ? '#f87171' : '#4ade80' }}>
                       {isOut ? '−' : '+'}{t.amount.toLocaleString()}
                     </td>
-                    <td className="px-3 py-2 text-right" style={{ color: '#fde68a' }}>{t.balanceAfter.toLocaleString()}</td>
+                    <td className="px-3 py-2 text-right" style={{ color }}>{t.balanceAfter.toLocaleString()}</td>
                     <td className="px-3 py-2"><StatusPill status={t.status} /></td>
                   </tr>
                 )
@@ -452,6 +462,8 @@ function DetailView({ data }: { data: DetailData }) {
 }
 
 function SummaryView({ data }: { data: SummaryData }) {
+  const walletColor: Record<string, string> = { REAL: '#fde68a', DEMO: '#a5b4fc', PROMO: '#fcd34d' }
+  const color = walletColor[data.wallet.type] ?? '#e9d5ff'
   return (
     <div className="flex flex-col gap-4">
       {/* Two-column ledger: deposits/earnings on the left, withdraw/loss on the right. */}
@@ -472,7 +484,7 @@ function SummaryView({ data }: { data: SummaryData }) {
         />
       </div>
 
-      {/* Calculated available — IN − OUT — and DB-recorded balances for sanity */}
+      {/* Calculated available — IN − OUT — plus the DB-recorded balance for this wallet */}
       <div
         className="rounded-xl p-4"
         style={{ background: 'linear-gradient(135deg, #1e1b4b, #0f172a)', border: '1px solid #4338ca' }}
@@ -483,10 +495,9 @@ function SummaryView({ data }: { data: SummaryData }) {
         <div className="mt-1 text-3xl font-bold" style={{ color: '#fde68a' }}>
           {data.calculatedAvailable.toLocaleString()} ₭
         </div>
-        <div className="mt-3 grid grid-cols-3 gap-2 text-xs">
-          <Stat label="REAL"  value={data.wallets.real}  color="#fde68a" small />
-          <Stat label="DEMO"  value={data.wallets.demo}  color="#a5b4fc" small />
-          <Stat label="PROMO" value={data.wallets.promo} color="#fcd34d" small />
+        <div className="mt-3 flex items-center justify-between text-xs">
+          <span style={{ color: '#64748b' }}>Current {data.wallet.type} balance</span>
+          <span className="font-bold" style={{ color }}>{data.wallet.balance.toLocaleString()} ₭</span>
         </div>
       </div>
     </div>
@@ -558,7 +569,7 @@ function Field({ label, value }: { label: string; value: React.ReactNode }) {
   )
 }
 
-function WalletCard({ u, onAction }: { u: Row; onAction: (kind: 'detail' | 'summary') => void }) {
+function WalletCard({ u, onAction }: { u: Row; onAction: (wallet: 'REAL' | 'DEMO' | 'PROMO') => void }) {
   return (
     <div className="rounded-xl p-3" style={{ background: '#0f172a', border: '1px solid #1e1b4b' }}>
       <div className="flex items-start justify-between gap-2">
@@ -593,32 +604,53 @@ function CardCell({ label, value, color }: { label: string; value: number; color
   )
 }
 
-function ActionMenu({ onPick }: { onPick: (kind: 'detail' | 'summary') => void }) {
+// Renders the dropdown into document.body via a portal so the table wrapper's
+// `overflow-x-auto` (needed for narrow viewports) can't clip it. Position is
+// derived from the trigger's bounding rect; we close on scroll/resize rather
+// than tracking the rect, which keeps the implementation tiny.
+function ActionMenu({ onPick }: { onPick: (wallet: 'REAL' | 'DEMO' | 'PROMO') => void }) {
   const [open, setOpen] = useState(false)
-  const ref = useRef<HTMLDivElement>(null)
+  const [pos, setPos] = useState<{ top: number; right: number } | null>(null)
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
+
+  useLayoutEffect(() => {
+    if (!open || !triggerRef.current) return
+    const r = triggerRef.current.getBoundingClientRect()
+    setPos({ top: r.bottom + 4, right: window.innerWidth - r.right })
+  }, [open])
 
   useEffect(() => {
     if (!open) return
     function onDoc(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+      const t = e.target as Node
+      if (triggerRef.current?.contains(t)) return
+      if (menuRef.current?.contains(t)) return
+      setOpen(false)
     }
     function onKey(e: KeyboardEvent) { if (e.key === 'Escape') setOpen(false) }
+    function onDismiss() { setOpen(false) }
     document.addEventListener('mousedown', onDoc)
     document.addEventListener('keydown', onKey)
+    window.addEventListener('scroll', onDismiss, true)
+    window.addEventListener('resize', onDismiss)
     return () => {
       document.removeEventListener('mousedown', onDoc)
       document.removeEventListener('keydown', onKey)
+      window.removeEventListener('scroll', onDismiss, true)
+      window.removeEventListener('resize', onDismiss)
     }
   }, [open])
 
-  function pick(kind: 'detail' | 'summary') {
+  function pick(wallet: 'REAL' | 'DEMO' | 'PROMO') {
     setOpen(false)
-    onPick(kind)
+    onPick(wallet)
   }
 
   return (
-    <div ref={ref} className="relative inline-block text-left">
+    <>
       <button
+        ref={triggerRef}
         type="button"
         onClick={() => setOpen(v => !v)}
         aria-haspopup="menu"
@@ -629,21 +661,28 @@ function ActionMenu({ onPick }: { onPick: (kind: 'detail' | 'summary') => void }
       >
         <MoreVertical size={14} />
       </button>
-      {open && (
+      {open && pos && typeof document !== 'undefined' && createPortal(
         <div
+          ref={menuRef}
           role="menu"
-          className="absolute right-0 z-30 mt-1 min-w-[160px] overflow-hidden rounded-md shadow-2xl"
-          style={{ background: '#0f172a', border: '1px solid #4338ca', boxShadow: '0 8px 30px rgba(0,0,0,0.5)' }}
+          className="fixed z-[100] min-w-[168px] overflow-hidden rounded-md shadow-2xl"
+          style={{
+            top: pos.top, right: pos.right,
+            background: '#0f172a', border: '1px solid #4338ca',
+            boxShadow: '0 8px 30px rgba(0,0,0,0.5)',
+          }}
         >
-          <MenuItem icon={<Eye size={12} />} label="View Detail" onClick={() => pick('detail')} />
-          <MenuItem icon={<FileText size={12} />} label="Summary" onClick={() => pick('summary')} />
-        </div>
+          <MenuItem icon={<Wallet size={12} />} label="Real Account" color="#fde68a" onClick={() => pick('REAL')} />
+          <MenuItem icon={<Wallet size={12} />} label="Demo Account" color="#a5b4fc" onClick={() => pick('DEMO')} />
+          <MenuItem icon={<Wallet size={12} />} label="Promo Account" color="#fcd34d" onClick={() => pick('PROMO')} />
+        </div>,
+        document.body,
       )}
-    </div>
+    </>
   )
 }
 
-function MenuItem({ icon, label, onClick }: { icon: React.ReactNode; label: string; onClick: () => void }) {
+function MenuItem({ icon, label, color, onClick }: { icon: React.ReactNode; label: string; color?: string; onClick: () => void }) {
   return (
     <button
       type="button"
@@ -654,7 +693,7 @@ function MenuItem({ icon, label, onClick }: { icon: React.ReactNode; label: stri
       className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs font-semibold transition-colors"
       style={{ color: '#e9d5ff', background: 'transparent' }}
     >
-      <span style={{ color: '#a5b4fc' }}>{icon}</span>
+      <span style={{ color: color ?? '#a5b4fc' }}>{icon}</span>
       {label}
     </button>
   )
