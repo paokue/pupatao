@@ -21,3 +21,6 @@ __v0_jsx-dev-runtime.ts
 # React Router
 .react-router/
 build/
+
+# seed:
+/prisma/seed.ts
