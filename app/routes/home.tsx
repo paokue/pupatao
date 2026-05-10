@@ -602,8 +602,8 @@ const CHIP_CONFIG = [
 ]
 
 function formatAmount(n: number): string {
-  if (n >= 1000000) return `${(n / 1000000).toFixed(n % 1000000 === 0 ? 0 : 1)}M`
-  if (n >= 1000) return `${(n / 1000).toFixed(n % 1000 === 0 ? 0 : 1)}K`
+  if (n >= 1_000_000) return `${parseFloat((n / 1_000_000).toFixed(2))}M`
+  if (n >= 1_000) return `${parseFloat((n / 1_000).toFixed(2))}K`
   return n.toString()
 }
 
@@ -978,6 +978,7 @@ export default function FishPrawnCrabGame() {
   const [sheetGridSize, setSheetGridSize] = useState({ w: 0, h: 0 })
   const cancelBetFetcher = useFetcher<{ ok?: boolean; newBalance?: number; error?: string }>()
   const resetDemoFetcher = useFetcher<{ ok?: boolean; balance?: number; error?: string }>()
+  const resetDemoHandled = useRef(false)
   const [cancelledBetIds, setCancelledBetIds] = useState<Set<string>>(new Set())
   const [cancelConfirmBet, setCancelConfirmBet] = useState<{ id: string; amount: number } | null>(null)
   // Separate dropdown state for the overlay header so it doesn't conflict with the main header.
@@ -1567,21 +1568,22 @@ export default function FishPrawnCrabGame() {
   }, [playRoundFetcher.state, playRoundFetcher.data, revalidator, t, mode])
 
   // Demo-reset response — DB now holds 1,000,000. Update the in-memory store
-  // optimistically so the UI flips immediately, then revalidate to confirm
-  // from the source of truth.
+  // and revalidate silently. A ref guards against the effect re-firing when
+  // the revalidator object reference changes mid-revalidation.
   useEffect(() => {
-    if (resetDemoFetcher.state !== 'idle') return
+    if (resetDemoFetcher.state !== 'idle') {
+      resetDemoHandled.current = false
+      return
+    }
     const data = resetDemoFetcher.data
-    if (!data) return
+    if (!data || resetDemoHandled.current) return
+    resetDemoHandled.current = true
     if (data.ok) {
       storeSetWalletBalance('demo', DEMO_RESET_AMOUNT)
       if (user.activeWallet === 'demo') setBalance(DEMO_RESET_AMOUNT)
-      toast.success(t('game.demoBalance', { amount: DEMO_RESET_AMOUNT.toLocaleString() }))
       revalidator.revalidate()
-    } else if (data.error) {
-      toast.error(data.error)
     }
-  }, [resetDemoFetcher.state, resetDemoFetcher.data, revalidator, t, user.activeWallet])
+  }, [resetDemoFetcher.state, resetDemoFetcher.data, revalidator, user.activeWallet])
 
   // Mode toggle: switching modes clears any staged bets to avoid mixing
   // RANDOM (client-rolled) and LIVE (server-attached) bets. Switching INTO
@@ -1819,7 +1821,7 @@ export default function FishPrawnCrabGame() {
                   onClose={() => setOverlayWalletOpen(false)}
                 />
               )}
-              <span className="text-sm font-bold text-white">{formatAmount(balance)}₭</span>
+              <a href="/wallet" className="text-sm font-bold text-white">{formatAmount(balance)}</a>
             </div>
           </div>
 
@@ -2448,9 +2450,9 @@ export default function FishPrawnCrabGame() {
               )
             })()}
           </div>
-          <span className="text-md font-bold tracking-wider" style={{ color: '#fde68a' }}>
-            {balance.toLocaleString()}₭
-          </span>
+          <a href="/wallet" className="text-md font-bold tracking-wider" style={{ color: '#fde68a' }}>
+            {formatAmount(balance)}
+          </a>
           {user.activeWallet === 'demo' && (
             <button
               onClick={() => {
