@@ -403,36 +403,36 @@ function DetailView({ data }: { data: DetailData }) {
         <div className="text-[10px] font-bold tracking-wider" style={{ color: '#a5b4fc' }}>
           {data.wallet.type} BALANCE
         </div>
-        <div className="mt-1 text-3xl font-bold" style={{ color }}>
+        <div className="mt-1 text-xl font-bold md:text-3xl" style={{ color }}>
           {data.wallet.balance.toLocaleString()} ₭
         </div>
       </div>
 
-      {/* Account info */}
-      <div className="rounded-lg p-3 text-xs" style={{ background: '#1e1b4b', color: '#e9d5ff' }}>
-        <Field label="Status" value={<StatusPill status={data.user.status} />} />
-        <Field label="Role" value={data.user.role} />
-        <Field label="Joined" value={new Date(data.user.createdAt).toLocaleString()} />
-      </div>
-
       {/* Recent transactions */}
       <div>
-        <div className="mb-2 text-[10px] font-bold" style={{ color: '#a5b4fc' }}>RECENT TRANSACTIONS</div>
-        <div className="overflow-hidden rounded-lg" style={{ border: '1px solid #1e1b4b' }}>
-          <table className="w-full text-left text-xs">
+        <div className="mb-2 flex items-end justify-between gap-3">
+          <div className="text-[10px] font-bold" style={{ color: '#a5b4fc' }}>RECENT TRANSACTIONS</div>
+          <div className="text-right">
+            <div className="text-[9px]" style={{ color: '#64748b' }}>BALANCE AFTER</div>
+            <div className="text-xs font-bold" style={{ color }}>
+              {(data.recent[0]?.balanceAfter ?? data.wallet.balance).toLocaleString()} ₭
+            </div>
+          </div>
+        </div>
+        <div className="overflow-x-auto rounded-lg" style={{ border: '1px solid #1e1b4b' }}>
+          <table className="w-full min-w-[480px] text-left text-xs">
             <thead style={{ color: '#a5b4fc' }}>
               <tr style={{ background: '#1e1b4b' }}>
                 <th className="px-3 py-2">WHEN</th>
                 <th className="px-3 py-2">TYPE</th>
                 <th className="px-3 py-2 text-right">AMOUNT</th>
-                <th className="px-3 py-2 text-right">BALANCE AFTER</th>
                 <th className="px-3 py-2">STATUS</th>
               </tr>
             </thead>
             <tbody>
               {data.recent.length === 0 && (
                 <tr>
-                  <td colSpan={5} className="px-3 py-3 text-center" style={{ color: '#64748b' }}>
+                  <td colSpan={4} className="px-3 py-3 text-center" style={{ color: '#64748b' }}>
                     No transactions yet.
                   </td>
                 </tr>
@@ -448,13 +448,21 @@ function DetailView({ data }: { data: DetailData }) {
                     <td className="px-3 py-2 text-right" style={{ color: isOut ? '#f87171' : '#4ade80' }}>
                       {isOut ? '−' : '+'}{t.amount.toLocaleString()}
                     </td>
-                    <td className="px-3 py-2 text-right" style={{ color }}>{t.balanceAfter.toLocaleString()}</td>
                     <td className="px-3 py-2"><StatusPill status={t.status} /></td>
                   </tr>
                 )
               })}
             </tbody>
           </table>
+        </div>
+        <div className="mt-3 flex justify-center">
+          <a
+            href={`/admin/transactions?q=${encodeURIComponent(data.user.tel)}`}
+            className="rounded-md px-4 py-1.5 text-xs font-bold transition-opacity hover:opacity-80"
+            style={{ background: '#1e1b4b', color: '#a5b4fc', border: '1px solid #4338ca' }}
+          >
+            View more →
+          </a>
         </div>
       </div>
     </div>
@@ -492,7 +500,7 @@ function SummaryView({ data }: { data: SummaryData }) {
         <div className="text-[10px] font-bold tracking-wider" style={{ color: '#a5b4fc' }}>
           CALCULATED AVAILABLE (IN − OUT)
         </div>
-        <div className="mt-1 text-3xl font-bold" style={{ color: '#fde68a' }}>
+        <div className="mt-1 text-xl font-bold md:text-3xl" style={{ color: '#fde68a' }}>
           {data.calculatedAvailable.toLocaleString()} ₭
         </div>
         <div className="mt-3 flex items-center justify-between text-xs">

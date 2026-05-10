@@ -69,7 +69,7 @@ export async function loader({ request }: Route.LoaderArgs) {
     const recent = await prisma.transaction.findMany({
       where: { userId, walletId: wallet.id },
       orderBy: { createdAt: 'desc' },
-      take: 25,
+      take: 100,
       select: {
         id: true, type: true, amount: true, status: true,
         balanceBefore: true, balanceAfter: true, note: true, createdAt: true,
