@@ -141,7 +141,15 @@ export async function action({ request }: Route.ActionArgs) {
     })
     if (!wallet) return Response.json({ error: `${walletKey} wallet not found.` }, { status: 404 })
     if (wallet.balance < totalStake) {
-      return Response.json({ error: 'Insufficient balance.' }, { status: 400 })
+      return Response.json(
+        {
+          error: `Insufficient ${walletKey} balance: ${wallet.balance.toLocaleString()} ₭ available, ${totalStake.toLocaleString()} ₭ requested.`,
+          balance: wallet.balance,
+          required: totalStake,
+          wallet: walletKey,
+        },
+        { status: 400 },
+      )
     }
 
     if (mode === 'LIVE') {
@@ -382,7 +390,9 @@ async function handleLiveBets(args: {
     // submits two bet payloads in quick succession.
     const fresh = await db.wallet.findUnique({ where: { id: wallet.id } })
     if (!fresh) throw new Error('Wallet not found.')
-    if (fresh.balance < totalStake) throw new Error('Insufficient balance.')
+    if (fresh.balance < totalStake) {
+      throw new Error(`Insufficient ${args.walletKey} balance: ${fresh.balance.toLocaleString()} ₭ available, ${totalStake.toLocaleString()} ₭ requested.`)
+    }
 
     const newBalance = fresh.balance - totalStake
 

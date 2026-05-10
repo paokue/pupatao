@@ -1,5 +1,5 @@
-import { Link, useLoaderData, useRevalidator, useSearchParams } from 'react-router'
-import { ArrowDown, ArrowUp, ArrowUpDown } from 'lucide-react'
+import { Form, Link, useLoaderData, useNavigation, useRevalidator, useSearchParams } from 'react-router'
+import { ArrowDown, ArrowUp, ArrowUpDown, Loader, Search } from 'lucide-react'
 import type { Route } from './+types/admin.play-history'
 import type { WalletType } from '@prisma/client'
 import { requireAdmin } from '~/lib/admin-auth.server'
@@ -16,10 +16,15 @@ export async function loader({ request }: Route.LoaderArgs) {
   const page = Math.max(1, parseInt(url.searchParams.get('page') ?? '1', 10) || 1)
   const walletParam = url.searchParams.get('wallet')
   const walletType: 'REAL' | 'DEMO' = walletParam === 'DEMO' ? 'DEMO' : 'REAL'
+  const q = url.searchParams.get('q')?.trim() ?? ''
 
   // Filter bets by the wallet they were placed against, so REAL and DEMO
-  // play streams are auditable separately.
-  const where = { wallet: { is: { type: walletType } } }
+  // play streams are auditable separately. Optional phone filter narrows to a
+  // specific player when investigating their bets.
+  const where = {
+    wallet: { is: { type: walletType } },
+    ...(q ? { user: { is: { tel: { contains: q, mode: 'insensitive' as const } } } } : {}),
+  }
 
   const [total, bets] = await Promise.all([
     prisma.bet.count({ where }),
@@ -40,6 +45,7 @@ export async function loader({ request }: Route.LoaderArgs) {
     total,
     pageSize: PAGE_SIZE,
     walletType,
+    q,
     bets: bets.map(b => ({
       id: b.id,
       kind: b.kind,
@@ -70,7 +76,9 @@ export async function loader({ request }: Route.LoaderArgs) {
 export default function AdminPlayHistory() {
   const data = useLoaderData<typeof loader>()
   const [params] = useSearchParams()
+  const navigation = useNavigation()
   const revalidator = useRevalidator()
+  const loading = navigation.state !== 'idle'
   const totalPages = Math.max(1, Math.ceil(data.total / data.pageSize))
 
   // Each new bet (and every round resolution) re-fetches the page-1 list. We
@@ -123,6 +131,44 @@ export default function AdminPlayHistory() {
           )
         })}
       </div>
+
+      {/* Phone-number filter — keeps the active wallet tab and resets to
+          page 1 on submit. */}
+      <Form method="get" className="flex items-center gap-2">
+        <input type="hidden" name="wallet" value={data.walletType} />
+        <input type="hidden" name="page" value="1" />
+        <div className="relative flex-1">
+          <Search size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2" style={{ color: '#818cf8' }} />
+          <input
+            name="q"
+            defaultValue={data.q}
+            placeholder="Filter by phone number…"
+            className="w-full rounded-lg py-2 pl-9 pr-3 text-sm outline-none"
+            style={{ background: '#0f172a', color: '#fde68a', border: '1.5px solid #4338ca' }}
+          />
+        </div>
+        <button
+          type="submit"
+          className="rounded-lg px-3 py-2 text-xs font-bold"
+          style={{ background: '#4338ca', color: '#fff', border: '1.5px solid #818cf8' }}
+        >
+          {loading ? <Loader size={14} className="animate-spin" /> : 'SEARCH'}
+        </button>
+        {data.q && (
+          <Link
+            to={(() => {
+              const next = new URLSearchParams(params)
+              next.delete('q')
+              next.delete('page')
+              return `?${next.toString()}`
+            })()}
+            className="rounded-lg px-3 py-2 text-xs font-bold"
+            style={{ background: '#1e1b4b', color: '#a5b4fc', border: '1.5px solid #4338ca' }}
+          >
+            CLEAR
+          </Link>
+        )}
+      </Form>
 
       {data.bets.length === 0 && (
         <div

@@ -1,6 +1,6 @@
-import { useState } from 'react'
-import { Link, useLoaderData, useNavigation, useRevalidator, useSearchParams } from 'react-router'
-import { ArrowRight, Check, ExternalLink, X } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { Form, Link, useLoaderData, useNavigation, useRevalidator, useSearchParams } from 'react-router'
+import { ArrowRight, Check, Loader, Maximize2, Search, X } from 'lucide-react'
 import { toast } from 'sonner'
 import type { Route } from './+types/admin.transactions'
 import { requireAdmin } from '~/lib/admin-auth.server'
@@ -33,10 +33,25 @@ export async function loader({ request }: Route.LoaderArgs) {
   const tab: Tab = isTab(tabRaw) ? tabRaw : 'deposit'
   const status: StatusFilter = isStatus(statusRaw) ? statusRaw : 'ALL'
   const page = Math.max(1, parseInt(url.searchParams.get('page') ?? '1', 10) || 1)
+  const q = url.searchParams.get('q')?.trim() ?? ''
+
+  // Phone-number filter on the user (sender) — and on the target user too for
+  // transfers, so admins can find a transfer by either side's tel.
+  const telFilter = q
+    ? { user: { is: { tel: { contains: q, mode: 'insensitive' as const } } } }
+    : {}
+  const transferTelFilter = q
+    ? {
+      OR: [
+        { user: { is: { tel: { contains: q, mode: 'insensitive' as const } } } },
+        { targetUser: { is: { tel: { contains: q, mode: 'insensitive' as const } } } },
+      ],
+    }
+    : {}
 
   if (tab === 'transfer') {
     const cfInclude = { user: { select: USER_SELECT }, targetUser: { select: USER_SELECT } }
-    const baseWhere = { type: 'TRANSFER_OUT' as const }
+    const baseWhere = { type: 'TRANSFER_OUT' as const, ...transferTelFilter }
 
     let total: number
     let rows: Awaited<ReturnType<typeof prisma.transaction.findMany<{ include: typeof cfInclude }>>>
@@ -62,6 +77,7 @@ export async function loader({ request }: Route.LoaderArgs) {
     return {
       tab,
       status,
+      q,
       page,
       total,
       pageSize: PAGE_SIZE,
@@ -84,7 +100,7 @@ export async function loader({ request }: Route.LoaderArgs) {
 
   // Deposit / Withdraw
   const txType = tab === 'deposit' ? 'DEPOSIT' as const : 'WITHDRAW' as const
-  const baseWhere = { type: txType }
+  const baseWhere = { type: txType, ...telFilter }
 
   let total: number
   let rows: Awaited<ReturnType<typeof prisma.transaction.findMany<{ include: { user: { select: typeof USER_SELECT } } }>>>
@@ -112,6 +128,7 @@ export async function loader({ request }: Route.LoaderArgs) {
   return {
     tab,
     status,
+    q,
     page,
     total,
     pageSize: PAGE_SIZE,
@@ -301,6 +318,8 @@ export default function AdminTransactions() {
   const totalPages = Math.max(1, Math.ceil(data.total / data.pageSize))
 
   const [pending, setPending] = useState<PendingAction>(null)
+  // Active slip URL for the fullscreen preview modal — null = closed.
+  const [slipPreview, setSlipPreview] = useState<string | null>(null)
 
   usePusherEvent<TxCreatedPayload>(ADMIN_CHANNEL, 'transaction:created', tx => {
     if (tx.type !== 'DEPOSIT' && tx.type !== 'WITHDRAW') return
@@ -344,40 +363,83 @@ export default function AdminTransactions() {
         <span className="text-xs" style={{ color: '#a5b4fc' }}>{data.total.toLocaleString()} total</span>
       </div>
 
-      {/* Tabs */}
-      <div className="flex gap-2">
-        {TABS.map(t => (
-          <Link
-            key={t.key}
-            to={tabHref(t.key)}
-            className="rounded-lg px-4 py-1.5 text-xs font-bold capitalize"
-            style={{
-              background: data.tab === t.key ? '#4338ca' : '#1e1b4b',
-              color: data.tab === t.key ? '#fff' : '#a5b4fc',
-              border: `1px solid ${data.tab === t.key ? '#818cf8' : '#4338ca'}`,
-            }}
-          >
-            {t.label}
-          </Link>
-        ))}
-      </div>
+      {/* Filters bar — tabs + status on the left, phone search on the right.
+          Stacks on mobile; aligns side-by-side from md+. */}
+      <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between md:gap-4">
+        {/* LEFT: tabs (row) + status pills (row) stacked */}
+        <div className="flex flex-col gap-2">
+          <div className="flex gap-2">
+            {TABS.map(t => (
+              <Link
+                key={t.key}
+                to={tabHref(t.key)}
+                className="rounded-lg px-4 py-1.5 text-xs font-bold capitalize"
+                style={{
+                  background: data.tab === t.key ? '#4338ca' : '#1e1b4b',
+                  color: data.tab === t.key ? '#fff' : '#a5b4fc',
+                  border: `1px solid ${data.tab === t.key ? '#818cf8' : '#4338ca'}`,
+                }}
+              >
+                {t.label}
+              </Link>
+            ))}
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {STATUS_FILTERS.map(s => (
+              <Link
+                key={s}
+                to={statusHref(s)}
+                className="rounded-md px-2 py-1 text-[10px] font-bold"
+                style={{
+                  background: data.status === s ? '#1e1b4b' : 'transparent',
+                  color: data.status === s ? '#fde68a' : '#818cf8',
+                  border: `1px solid ${data.status === s ? '#4338ca' : '#1e1b4b'}`,
+                }}
+              >
+                {s}
+              </Link>
+            ))}
+          </div>
+        </div>
 
-      {/* Status filter */}
-      <div className="flex flex-wrap gap-1.5">
-        {STATUS_FILTERS.map(s => (
-          <Link
-            key={s}
-            to={statusHref(s)}
-            className="rounded-md px-2 py-1 text-[10px] font-bold"
-            style={{
-              background: data.status === s ? '#1e1b4b' : 'transparent',
-              color: data.status === s ? '#fde68a' : '#818cf8',
-              border: `1px solid ${data.status === s ? '#4338ca' : '#1e1b4b'}`,
-            }}
+        {/* RIGHT: phone-number filter — preserves active tab/status, resets
+            to page 1 on submit so we don't land out-of-range. */}
+        <Form method="get" className="flex items-center gap-2 md:w-96 md:shrink-0">
+          <input type="hidden" name="tab" value={data.tab} />
+          <input type="hidden" name="status" value={data.status} />
+          <input type="hidden" name="page" value="1" />
+          <div className="relative flex-1">
+            <Search size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2" style={{ color: '#818cf8' }} />
+            <input
+              name="q"
+              defaultValue={data.q}
+              placeholder="Filter by phone number…"
+              className="w-full rounded-lg py-2 pl-9 pr-3 text-sm outline-none"
+              style={{ background: '#0f172a', color: '#fde68a', border: '1.5px solid #4338ca' }}
+            />
+          </div>
+          <button
+            type="submit"
+            className="rounded-lg px-3 py-2 text-xs font-bold"
+            style={{ background: '#4338ca', color: '#fff', border: '1.5px solid #818cf8' }}
           >
-            {s}
-          </Link>
-        ))}
+            {loading ? <Loader size={14} className="animate-spin" /> : 'SEARCH'}
+          </button>
+          {data.q && (
+            <Link
+              to={(() => {
+                const next = new URLSearchParams(params)
+                next.delete('q')
+                next.delete('page')
+                return `?${next.toString()}`
+              })()}
+              className="rounded-lg px-3 py-2 text-xs font-bold"
+              style={{ background: '#1e1b4b', color: '#a5b4fc', border: '1.5px solid #4338ca' }}
+            >
+              CLEAR
+            </Link>
+          )}
+        </Form>
       </div>
 
       <div className="flex flex-col gap-2">
@@ -400,6 +462,7 @@ export default function AdminTransactions() {
               loading={loading}
               onApprove={() => setPending({ tx, op: 'approve' })}
               onReject={() => setPending({ tx, op: 'reject' })}
+              onSlipPreview={url => setSlipPreview(url)}
             />
           )
         )}
@@ -421,6 +484,10 @@ export default function AdminTransactions() {
             </Link>
           )}
         </div>
+      )}
+
+      {slipPreview && (
+        <SlipPreview url={slipPreview} onClose={() => setSlipPreview(null)} />
       )}
 
       {pending && pending.tx.type !== 'transfer' && (
@@ -465,26 +532,31 @@ function StatusBadge({ status }: { status: string }) {
 }
 
 function TxCard({
-  tx, tab, loading, onApprove, onReject,
+  tx, tab, loading, onApprove, onReject, onSlipPreview,
 }: {
   tx: TxLite
   tab: 'deposit' | 'withdraw'
   loading: boolean
   onApprove: () => void
   onReject: () => void
+  onSlipPreview: (url: string) => void
 }) {
   const isPending = tx.status === 'PENDING'
   return (
     <div className="flex flex-col gap-3 rounded-xl p-4 md:flex-row md:items-center"
       style={{ background: '#0f172a', border: `1px solid ${isPending ? '#4338ca' : '#1e1b4b'}` }}>
       {tx.slipUrl && (
-        <a href={tx.slipUrl} target="_blank" rel="noreferrer"
-          className="flex h-20 w-20 shrink-0 items-center justify-center overflow-hidden rounded-lg"
-          style={{ background: '#1e1b4b', border: '1px solid #4338ca' }}>
+        <button
+          type="button"
+          onClick={() => onSlipPreview(tx.slipUrl!)}
+          className="flex h-20 w-20 shrink-0 items-center justify-center overflow-hidden rounded-lg transition-opacity hover:opacity-80"
+          style={{ background: '#1e1b4b', border: '1px solid #4338ca' }}
+          aria-label="Preview slip"
+        >
           {tx.slipUrl.endsWith('.pdf')
             ? <span className="text-xs font-bold" style={{ color: '#fde68a' }}>📄 PDF</span>
             : <img src={tx.slipUrl} alt="Slip" className="h-full w-full object-cover" />}
-        </a>
+        </button>
       )}
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-2">
@@ -517,11 +589,14 @@ function TxCard({
           </div>
         ) : (
           tx.slipUrl && (
-            <a href={tx.slipUrl} target="_blank" rel="noreferrer"
+            <button
+              type="button"
+              onClick={() => onSlipPreview(tx.slipUrl!)}
               className="inline-flex items-center gap-1 text-[10px] font-bold underline"
-              style={{ color: '#a5b4fc' }}>
-              <ExternalLink size={10} /> SLIP
-            </a>
+              style={{ color: '#a5b4fc' }}
+            >
+              <Maximize2 size={10} /> SLIP
+            </button>
           )
         )}
       </div>
@@ -577,6 +652,63 @@ function TransferCard({ tx }: { tx: TxLite }) {
         <span className="text-[10px]" style={{ color: '#818cf8' }}>
           Balance after: {tx.balanceAfter.toLocaleString()} ₭
         </span>
+      </div>
+    </div>
+  )
+}
+
+// Fullscreen viewer for a payment slip. Click backdrop or press Esc to close.
+// PDFs render via <iframe>; everything else is treated as an image with
+// `object-contain` so it never overflows the viewport.
+function SlipPreview({ url, onClose }: { url: string; onClose: () => void }) {
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) { if (e.key === 'Escape') onClose() }
+    window.addEventListener('keydown', onKey)
+    // Lock background scroll while open.
+    const prevOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => {
+      window.removeEventListener('keydown', onKey)
+      document.body.style.overflow = prevOverflow
+    }
+  }, [onClose])
+
+  const isPdf = url.toLowerCase().endsWith('.pdf')
+
+  return (
+    <div
+      className="fixed inset-0 z-[200] flex items-center justify-center"
+      style={{ background: 'rgba(0,0,0,0.92)' }}
+      onClick={onClose}
+      role="dialog"
+      aria-modal="true"
+      aria-label="Slip preview"
+    >
+      <button
+        type="button"
+        onClick={onClose}
+        className="absolute right-4 top-4 z-10 flex h-10 w-10 items-center justify-center rounded-full transition-opacity hover:opacity-80"
+        style={{ background: '#0f172a', color: '#fde68a', border: '1px solid #4338ca' }}
+        aria-label="Close preview"
+      >
+        <X size={18} />
+      </button>
+      <div className="flex h-full w-full items-center justify-center p-4 md:p-10" onClick={e => e.stopPropagation()}>
+        {isPdf ? (
+          <iframe
+            src={url}
+            title="Slip PDF"
+            className="h-full w-full max-w-5xl rounded-lg"
+            style={{ background: '#fff', border: '1px solid #4338ca' }}
+          />
+        ) : (
+          <img
+            src={url}
+            alt="Payment slip"
+            className="max-h-full max-w-full rounded-lg object-contain"
+            style={{ boxShadow: '0 8px 40px rgba(0,0,0,0.6)' }}
+          />
+        )}
       </div>
     </div>
   )

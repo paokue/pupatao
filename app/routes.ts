@@ -17,7 +17,9 @@ export default [
   route("api/lookup-tel", "routes/api.lookup-tel.tsx"),
   route("api/pusher-auth", "routes/api.pusher-auth.tsx"),
   route("api/cancel-live-bet", "routes/api.cancel-live-bet.tsx"),
+  route("api/reset-demo", "routes/api.reset-demo.tsx"),
   route("api/admin/live-history", "routes/api.admin.live-history.tsx"),
+  route("api/admin/wallet-summary", "routes/api.admin.wallet-summary.tsx"),
 
   // Admin auth (outside the admin layout — login can't require admin).
   route("admin/login", "routes/admin.login.tsx"),
@@ -27,6 +29,7 @@ export default [
   route("admin", "routes/admin.tsx", [
     index("routes/admin._index.tsx"),
     route("customers", "routes/admin.customers.tsx"),
+    route("wallet", "routes/admin.wallet.tsx"),
     route("transactions", "routes/admin.transactions.tsx"),
     route("play-history", "routes/admin.play-history.tsx"),
     route("live", "routes/admin.live.tsx"),

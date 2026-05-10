@@ -977,6 +977,7 @@ export default function FishPrawnCrabGame() {
   const sheetGridRef = useRef<HTMLDivElement>(null)
   const [sheetGridSize, setSheetGridSize] = useState({ w: 0, h: 0 })
   const cancelBetFetcher = useFetcher<{ ok?: boolean; newBalance?: number; error?: string }>()
+  const resetDemoFetcher = useFetcher<{ ok?: boolean; balance?: number; error?: string }>()
   const [cancelledBetIds, setCancelledBetIds] = useState<Set<string>>(new Set())
   const [cancelConfirmBet, setCancelConfirmBet] = useState<{ id: string; amount: number } | null>(null)
   // Separate dropdown state for the overlay header so it doesn't conflict with the main header.
@@ -1489,6 +1490,20 @@ export default function FishPrawnCrabGame() {
       snapshot.range.reduce((s, b) => s + b.amount, 0) +
       snapshot.pair.reduce((s, b) => s + b.amount, 0)
 
+    // Defensive: don't even hit the server if the staged total exceeds the
+    // wallet balance the store knows about. This avoids a confusing
+    // "Insufficient balance" round-trip when the UI got out of sync with the
+    // server (e.g. after a background revalidation reset the optimistic
+    // chip-deduction).
+    const walletKey = user.activeWallet
+    const walletBalance = user.balances[walletKey]
+    if (betTotal > walletBalance) {
+      toast.error(t('live.betNotPlaced'), {
+        description: `${walletKey.toUpperCase()}: ${walletBalance.toLocaleString()} ₭ available, ${betTotal.toLocaleString()} ₭ requested.`,
+      })
+      return
+    }
+
     const payload = {
       mode: 'LIVE',
       wallet: user.activeWallet === 'real' ? 'REAL' : user.activeWallet === 'promo' ? 'PROMO' : 'DEMO',
@@ -1550,6 +1565,23 @@ export default function FishPrawnCrabGame() {
       revalidator.revalidate()
     }
   }, [playRoundFetcher.state, playRoundFetcher.data, revalidator, t, mode])
+
+  // Demo-reset response — DB now holds 1,000,000. Update the in-memory store
+  // optimistically so the UI flips immediately, then revalidate to confirm
+  // from the source of truth.
+  useEffect(() => {
+    if (resetDemoFetcher.state !== 'idle') return
+    const data = resetDemoFetcher.data
+    if (!data) return
+    if (data.ok) {
+      storeSetWalletBalance('demo', DEMO_RESET_AMOUNT)
+      if (user.activeWallet === 'demo') setBalance(DEMO_RESET_AMOUNT)
+      toast.success(t('game.demoBalance', { amount: DEMO_RESET_AMOUNT.toLocaleString() }))
+      revalidator.revalidate()
+    } else if (data.error) {
+      toast.error(data.error)
+    }
+  }, [resetDemoFetcher.state, resetDemoFetcher.data, revalidator, t, user.activeWallet])
 
   // Mode toggle: switching modes clears any staged bets to avoid mixing
   // RANDOM (client-rolled) and LIVE (server-attached) bets. Switching INTO
@@ -2428,10 +2460,18 @@ export default function FishPrawnCrabGame() {
                 setCurrentRangeBets([])
                 setCurrentPairBets([])
                 setPendingCell(null)
-                resetDemoBalance()
-                setBalance(DEMO_RESET_AMOUNT)
+                if (authUser) {
+                  // Authoritative reset — writes to the DB so the new balance
+                  // survives logout/login (required for the demo competition).
+                  resetDemoFetcher.submit(null, { method: 'post', action: '/api/reset-demo' })
+                } else {
+                  // Anonymous visitor — no DB wallet, fall back to client-only.
+                  resetDemoBalance()
+                  setBalance(DEMO_RESET_AMOUNT)
+                }
               }}
-              className="flex h-7 w-7 items-center justify-center rounded-full transition-opacity hover:opacity-90"
+              disabled={resetDemoFetcher.state !== 'idle'}
+              className="flex h-7 w-7 items-center justify-center rounded-full transition-opacity hover:opacity-90 disabled:opacity-60"
               style={{
                 background: 'linear-gradient(135deg, #16a34a, #15803d)',
                 color: '#fff',
@@ -2440,7 +2480,7 @@ export default function FishPrawnCrabGame() {
               title={`Reset demo balance to ${DEMO_RESET_AMOUNT.toLocaleString()} ₭`}
               aria-label="Refresh demo balance"
             >
-              <RefreshCw size={12} />
+              <RefreshCw size={12} className={resetDemoFetcher.state !== 'idle' ? 'animate-spin' : ''} />
             </button>
           )}
         </div>
