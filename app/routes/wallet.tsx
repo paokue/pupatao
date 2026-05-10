@@ -7,6 +7,7 @@ import bcrypt from 'bcryptjs'
 import { requireUser } from '~/lib/auth.server'
 import { prisma } from '~/lib/prisma.server'
 import { notifyAdmin, notifyUser } from '~/lib/pusher.server'
+import { notifyAdminByEmail } from '~/lib/mail.server'
 import { useUIStore } from '~/lib/ui-store'
 import { userChannel, type TxCreatedPayload, type TxUpdatedPayload } from '~/lib/pusher-channels'
 import { usePusherEvent } from '~/hooks/use-pusher'
@@ -234,6 +235,16 @@ export async function action({ request }: Route.ActionArgs) {
         },
       })
       notifyAdmin('transaction:created', toTxCreatedPayload(created, user))
+      void notifyAdminByEmail({
+        subject: 'New deposit request — awaiting verification',
+        intro: `${user.tel} submitted a deposit slip and is waiting for admin approval.`,
+        lines: [
+          { label: 'Phone', value: user.tel },
+          { label: 'Amount', value: `${amount.toLocaleString()} ₭` },
+          { label: 'Transaction ID', value: created.id },
+          { label: 'Submitted at', value: created.createdAt.toLocaleString() },
+        ],
+      })
       return { op, ok: true }
     } catch (err) {
       console.error('[wallet/deposit]', err)
@@ -290,6 +301,17 @@ export async function action({ request }: Route.ActionArgs) {
         },
       })
       notifyAdmin('transaction:created', toTxCreatedPayload(created, user))
+      void notifyAdminByEmail({
+        subject: 'New withdraw request — awaiting verification',
+        intro: `${user.tel} requested a withdrawal and is waiting for admin approval.`,
+        lines: [
+          { label: 'Phone', value: user.tel },
+          { label: 'Amount', value: `${amount.toLocaleString()} ₭` },
+          { label: 'Available balance', value: `${wallet.balance.toLocaleString()} ₭` },
+          { label: 'Transaction ID', value: created.id },
+          { label: 'Submitted at', value: created.createdAt.toLocaleString() },
+        ],
+      })
       return { op, ok: true }
     } catch (err) {
       console.error('[wallet/withdraw]', err)
@@ -384,6 +406,17 @@ export async function action({ request }: Route.ActionArgs) {
         balanceAfter: recvTx.balanceAfter,
         note: recvTx.note,
       })
+      void notifyAdminByEmail({
+        subject: 'New transfer (instant)',
+        intro: `${user.tel} transferred funds to another customer.`,
+        lines: [
+          { label: 'Sender', value: user.tel },
+          { label: 'Recipient', value: recipient.tel },
+          { label: 'Amount', value: `${amount.toLocaleString()} ₭` },
+          { label: 'Type', value: 'Instant transfer' },
+          { label: 'Submitted at', value: new Date().toLocaleString() },
+        ],
+      })
 
       return { op, ok: true }
     } catch (err) {
@@ -451,6 +484,18 @@ export async function action({ request }: Route.ActionArgs) {
             note: `Locked transfer #${transfer.id.slice(-6)} to ${recipient.tel}`,
           },
         })
+      })
+
+      void notifyAdminByEmail({
+        subject: 'New transfer (locked / code-protected)',
+        intro: `${user.tel} sent a code-protected transfer awaiting recipient claim.`,
+        lines: [
+          { label: 'Sender', value: user.tel },
+          { label: 'Recipient', value: recipient.tel },
+          { label: 'Amount', value: `${amount.toLocaleString()} ₭` },
+          { label: 'Type', value: 'Locked transfer (recipient must enter code)' },
+          { label: 'Submitted at', value: new Date().toLocaleString() },
+        ],
       })
 
       return { op, ok: true }
