@@ -43,13 +43,8 @@ export function pickAdversarialDice(
   pairBets: PairBetIn[],
   cfg: PayoutConfig,
 ): [DiceSymbol, DiceSymbol, DiceSymbol] {
-  if (rangeBets.length === 0) {
-    return [
-      VALID_SYMBOLS[Math.floor(Math.random() * 6)],
-      VALID_SYMBOLS[Math.floor(Math.random() * 6)],
-      VALID_SYMBOLS[Math.floor(Math.random() * 6)],
-    ]
-  }
+  // Always enumerate all 216 outcomes and pick the one that pays the customer
+  // the least — covers symbol-only, pair-only, range-only and mixed bets.
   let minPayout = Infinity
   const best: Array<[DiceSymbol, DiceSymbol, DiceSymbol]> = []
   for (let a = 1; a <= 6; a++) {

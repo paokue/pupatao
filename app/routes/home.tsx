@@ -962,6 +962,11 @@ export default function FishPrawnCrabGame() {
   const revealCountdownRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const [revealCountdown, setRevealCountdown] = useState(3)
   const hasWarmed = useRef(false)
+  // Pre-computed adversarial dice — filled in the background when bets change,
+  // consumed at roll time so the user never waits for the pick-dice response.
+  const [precomputedRound, setPrecomputedRound] = useState<{ dice: string[]; token: string; betsKey: string } | null>(null)
+  const pendingDiceRef = useRef<{ dice: string[]; token: string } | null>(null)
+  const precomputeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   // Yellow winner-highlight on the board (cells + range buttons) only stays
   // up for ~5s after a roll resolves — long enough for the player to clock
   // which bets won, short enough that the next set of chips doesn't sit
@@ -1169,14 +1174,51 @@ export default function FishPrawnCrabGame() {
   const diceSum = diceResults.reduce((s, sym) => s + SYMBOL_VALUES[sym], 0)
   const bettingLocked = isRolling || (mode === 'live' && livePhase !== 'betting')
 
-  // Pre-warm the serverless function + DB connection the first time the player
-  // places any bet, so the cold-start penalty is paid in the background while
-  // they finish setting up — not during the roll itself.
+  // Keep the serverless function warm by pinging /api/warm on mount and every
+  // 60 s. Vercel keeps a function instance alive for ~5 min after last use;
+  // regular pings prevent cold starts for active players.
   useEffect(() => {
-    if (!hasAnyBet || !authUser || hasWarmed.current) return
-    hasWarmed.current = true
+    if (!authUser) return
     fetch('/api/warm').catch(() => {})
-  }, [hasAnyBet, authUser])
+    const id = setInterval(() => fetch('/api/warm').catch(() => {}), 60_000)
+    return () => clearInterval(id)
+  }, [authUser])
+
+  // Pre-compute adversarial dice in the background whenever the bet layout
+  // changes so the result is ready the instant the player clicks Roll.
+  // Uses a 350 ms debounce to avoid hammering the server on rapid chip taps.
+  useEffect(() => {
+    if (!hasAnyBet || !authUser || mode !== 'random' || isRolling) return
+
+    const wallet = user.activeWallet === 'real' ? 'REAL' : user.activeWallet === 'promo' ? 'PROMO' : 'DEMO'
+    const betsPayload = {
+      wallet,
+      bets: {
+        symbol: currentBets.map(b => ({ symbol: b.symbol.toUpperCase(), cell: b.cell, amount: b.amount })),
+        range: currentRangeBets.map(b => ({ range: b.range.toUpperCase(), amount: b.amount })),
+        pair: currentPairBets.map(b => ({ symbolA: b.a.toUpperCase(), symbolB: b.b.toUpperCase(), cellA: b.cellA, cellB: b.cellB, amount: b.amount })),
+      },
+    }
+    const betsKey = JSON.stringify(betsPayload)
+    if (precomputedRound?.betsKey === betsKey) return // already fresh
+
+    if (precomputeTimerRef.current) clearTimeout(precomputeTimerRef.current)
+    precomputeTimerRef.current = setTimeout(() => {
+      fetch('/api/pick-dice', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(betsPayload),
+      })
+        .then(r => r.json())
+        .then(data => {
+          if (data.ok && data.dice && data.token) {
+            setPrecomputedRound({ dice: data.dice, token: data.token, betsKey })
+          }
+        })
+        .catch(() => {})
+    }, 350)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentBets, currentRangeBets, currentPairBets, hasAnyBet, authUser, mode, isRolling, user.activeWallet])
 
   const placeRangeBet = useCallback((range: RangeKey) => {
     ensureBgMusic()
@@ -1405,6 +1447,7 @@ export default function FishPrawnCrabGame() {
     setCurrentPairBets([])
     setIsRolling(false)
     setWinnerHighlight(true)
+    setPrecomputedRound(null) // force fresh dice for next round
     if (win > 0) {
       setMessage(t('game.youWin', { amount: formatAmount(win) }))
       soundEnabled && playWin()
@@ -1451,21 +1494,28 @@ export default function FishPrawnCrabGame() {
     setLastWin(0)
     soundEnabled && startRollSound()
 
-    // Authenticated: call /api/pick-dice (no DB — returns in ~50 ms even cold).
-    // The DB write happens via /api/save-round fired in the background after
-    // the dice are revealed, so the user never waits for it.
     if (authUser) {
-      playRoundFetcher.submit(
-        {
-          wallet: user.activeWallet === 'real' ? 'REAL' : user.activeWallet === 'promo' ? 'PROMO' : 'DEMO',
-          bets: {
-            symbol: currentBets.map(b => ({ symbol: b.symbol.toUpperCase(), cell: b.cell, amount: b.amount })),
-            range: currentRangeBets.map(b => ({ range: b.range.toUpperCase(), amount: b.amount })),
-            pair: currentPairBets.map(b => ({ symbolA: b.a.toUpperCase(), symbolB: b.b.toUpperCase(), cellA: b.cellA, cellB: b.cellB, amount: b.amount })),
-          },
+      const wallet = user.activeWallet === 'real' ? 'REAL' : user.activeWallet === 'promo' ? 'PROMO' : 'DEMO'
+      const betsPayload = {
+        wallet,
+        bets: {
+          symbol: currentBets.map(b => ({ symbol: b.symbol.toUpperCase(), cell: b.cell, amount: b.amount })),
+          range: currentRangeBets.map(b => ({ range: b.range.toUpperCase(), amount: b.amount })),
+          pair: currentPairBets.map(b => ({ symbolA: b.a.toUpperCase(), symbolB: b.b.toUpperCase(), cellA: b.cellA, cellB: b.cellB, amount: b.amount })),
         },
-        { method: 'post', action: '/api/pick-dice', encType: 'application/json' },
-      )
+      }
+      const betsKey = JSON.stringify(betsPayload)
+
+      if (precomputedRound?.betsKey === betsKey) {
+        // Fast path — dice were pre-computed while bets were being placed.
+        // No server round-trip needed; result applied as soon as animation ends.
+        pendingDiceRef.current = precomputedRound
+        setPrecomputedRound(null)
+      } else {
+        // Slow path — call pick-dice now (function should be warm from keep-alive).
+        pendingDiceRef.current = null
+        playRoundFetcher.submit(betsPayload, { method: 'post', action: '/api/pick-dice', encType: 'application/json' })
+      }
     }
 
     const rollInterval = setInterval(() => {
@@ -1580,10 +1630,31 @@ export default function FishPrawnCrabGame() {
     })
   }, [mode, livePhase, authUser, hasAnyBet, currentBets, currentRangeBets, currentPairBets, user.activeWallet, playRoundFetcher, soundEnabled, t])
 
-  // RANDOM mode: once the animation ends AND /api/pick-dice has responded,
-  // show the dice immediately then fire /api/save-round in the background.
+  // RANDOM mode: apply the result once animation is done.
+  // Fast path  → pendingDiceRef has pre-computed dice (zero server wait).
+  // Slow path  → wait for the real-time /api/pick-dice fetcher response.
+  // Either way, /api/save-round is fired in the background so the user never
+  // waits for the DB write.
   useEffect(() => {
     if (!rollAnimationDone) return
+
+    // ── Fast path ──────────────────────────────────────────────────────────
+    if (pendingDiceRef.current) {
+      const { dice, token } = pendingDiceRef.current
+      pendingDiceRef.current = null
+      setRollAnimationDone(false)
+      applyResult(dice.map(d => d.toLowerCase() as SymbolKey))
+      fetch('/api/save-round', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token }),
+      })
+        .then(() => revalidator.revalidate())
+        .catch(() => revalidator.revalidate())
+      return
+    }
+
+    // ── Slow path ──────────────────────────────────────────────────────────
     if (playRoundFetcher.state !== 'idle') return
     const data = playRoundFetcher.data as { ok?: boolean; dice?: string[]; token?: string; error?: string } | undefined
     if (!data) return
@@ -1595,7 +1666,6 @@ export default function FishPrawnCrabGame() {
     }
     if (data.ok && data.dice) {
       applyResult(data.dice.map(d => d.toLowerCase() as SymbolKey))
-      // Save to DB in the background — user watches the 3s countdown meanwhile.
       if (data.token) {
         fetch('/api/save-round', {
           method: 'POST',
@@ -1735,14 +1805,8 @@ export default function FishPrawnCrabGame() {
               className={`relative overflow-hidden rounded-xl bg-white shadow-2xl ${isRolling ? 'animate-bounce' : ''}`}
               style={{
                 width: 72, height: 72,
-                border: isRevealingResult ? '2px solid #facc15' : '1px solid #f59e0b',
+                border: '1px solid #f59e0b',
                 animationDelay: `${i * 80}ms`,
-                boxShadow: isRevealingResult
-                  ? '0 0 18px 4px rgba(250,204,21,0.55), 0 0 40px 8px rgba(250,204,21,0.2)'
-                  : undefined,
-                animation: isRevealingResult
-                  ? 'revealPulse 1s ease-in-out infinite alternate'
-                  : undefined,
               }}
             >
               <img src={`/symbols/${sym}.png`} alt={sym} className="absolute inset-0 h-full w-full object-contain p-1" />
@@ -1758,37 +1822,6 @@ export default function FishPrawnCrabGame() {
             </div>
           ))}
 
-        {/* Countdown circle — appears to the right of the dice during the 5s reveal */}
-        {isRevealingResult && (() => {
-          const r = 22
-          const circ = 2 * Math.PI * r
-          const offset = circ * (1 - revealCountdown / 3)
-          return (
-            <div style={{ position: 'relative', width: 56, height: 56, flexShrink: 0 }}>
-              <svg width="56" height="56" viewBox="0 0 56 56">
-                <circle cx="28" cy="28" r={r} fill="none" stroke="rgba(250,204,21,0.15)" strokeWidth="3.5" />
-                <circle
-                  cx="28" cy="28" r={r}
-                  fill="none"
-                  stroke="#facc15"
-                  strokeWidth="3.5"
-                  strokeLinecap="round"
-                  strokeDasharray={circ}
-                  strokeDashoffset={offset}
-                  transform="rotate(-90 28 28)"
-                  style={{ transition: 'stroke-dashoffset 0.9s linear' }}
-                />
-              </svg>
-              <span style={{
-                position: 'absolute', inset: 0,
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                color: '#facc15', fontSize: 22, fontWeight: 900, lineHeight: 1,
-              }}>
-                {revealCountdown}
-              </span>
-            </div>
-          )
-        })()}
       </div>
 
       {!isRolling && !isRevealingResult && diceResults.length > 0 && (

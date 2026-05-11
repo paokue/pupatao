@@ -3,81 +3,17 @@ import type { DiceSymbol, RangeKey, BetResult } from '@prisma/client'
 import { prisma } from '~/lib/prisma.server'
 import { notifyAdmin, notifyUser } from '~/lib/pusher.server'
 import type { BetPlacedPayload } from '~/lib/pusher-channels'
-import { getPayoutConfig, type PayoutConfig } from '~/lib/payouts.server'
+import {
+  SYMBOL_VALUES, VALID_SYMBOLS, RANGE_BOUNDS, VALID_RANGES,
+  type SymbolBetIn, type RangeBetIn, type PairBetIn,
+  payoutForSymbol, payoutForRange, payoutForPair,
+  pickAdversarialDice, getPayoutConfig, type PayoutConfig,
+} from '~/lib/game-logic.server'
 
-const SYMBOL_VALUES: Record<DiceSymbol, number> = {
-  PRAWN: 1, FISH: 2, CRAB: 3, ROOSTER: 4, FROG: 5, GOURD: 6,
-}
-const VALID_SYMBOLS: ReadonlyArray<DiceSymbol> = ['PRAWN', 'CRAB', 'FISH', 'ROOSTER', 'FROG', 'GOURD']
-const RANGE_BOUNDS: Record<RangeKey, { min: number; max: number }> = {
-  LOW: { min: 3, max: 8 },
-  MIDDLE: { min: 9, max: 10 },
-  HIGH: { min: 11, max: 18 },
-}
-const VALID_RANGES: ReadonlyArray<RangeKey> = ['LOW', 'MIDDLE', 'HIGH']
-const MAX_BET_PER_ROUND = 10_000_000  // sanity cap, prevents abuse
-
-// Symbols ordered strictly by numeric value (1–6). VALID_SYMBOLS is ordered
-// differently (CRAB before FISH), so cannot be used for index→symbol mapping.
-const SYMBOLS_BY_VALUE: DiceSymbol[] = ['PRAWN', 'FISH', 'CRAB', 'ROOSTER', 'FROG', 'GOURD']
-
-// When range bets are present, enumerate all 216 possible dice outcomes and
-// pick the one that minimises the customer's TOTAL payout across every bet type
-// (symbol + range + pair). This prevents the "small range bet as a steering
-// weapon" exploit (e.g. tiny LOW+MIDDLE bets to force HIGH dice that then pay
-// out huge symbol bets on GOURD/FROG).
-// When no range bets exist, dice are fully random so symbol-only players are unaffected.
-function pickAdversarialDice(
-  symbolBets: SymbolBetIn[],
-  rangeBets: RangeBetIn[],
-  pairBets: PairBetIn[],
-  cfg: PayoutConfig,
-): [DiceSymbol, DiceSymbol, DiceSymbol] {
-  if (rangeBets.length === 0) {
-    return [
-      VALID_SYMBOLS[Math.floor(Math.random() * 6)],
-      VALID_SYMBOLS[Math.floor(Math.random() * 6)],
-      VALID_SYMBOLS[Math.floor(Math.random() * 6)],
-    ]
-  }
-
-  let minPayout = Infinity
-  const bestCombos: Array<[DiceSymbol, DiceSymbol, DiceSymbol]> = []
-
-  for (let a = 1; a <= 6; a++) {
-    for (let b = 1; b <= 6; b++) {
-      for (let c = 1; c <= 6; c++) {
-        const dice: [DiceSymbol, DiceSymbol, DiceSymbol] = [
-          SYMBOLS_BY_VALUE[a - 1],
-          SYMBOLS_BY_VALUE[b - 1],
-          SYMBOLS_BY_VALUE[c - 1],
-        ]
-        const sum = a + b + c
-        let payout = 0
-        for (const sb of symbolBets) payout += payoutForSymbol(sb, dice, cfg)
-        for (const rb of rangeBets) payout += payoutForRange(rb, sum, cfg)
-        for (const pb of pairBets) payout += payoutForPair(pb, dice, cfg)
-        if (payout < minPayout) {
-          minPayout = payout
-          bestCombos.length = 0
-          bestCombos.push(dice)
-        } else if (payout === minPayout) {
-          bestCombos.push(dice)
-        }
-      }
-    }
-  }
-
-  // Pick randomly among all tied minimum-payout combos to avoid predictable patterns.
-  return bestCombos[Math.floor(Math.random() * bestCombos.length)]
-}
+const MAX_BET_PER_ROUND = 10_000_000
 
 type Mode = 'RANDOM' | 'LIVE'
 type WalletKey = 'DEMO' | 'REAL' | 'PROMO'
-
-interface SymbolBetIn { symbol: DiceSymbol; cell: number; amount: number }
-interface RangeBetIn { range: RangeKey; amount: number }
-interface PairBetIn { symbolA: DiceSymbol; symbolB: DiceSymbol; cellA: number; cellB: number; amount: number }
 
 interface PlayRoundPayload {
   mode: Mode
@@ -119,25 +55,6 @@ function parsePayload(raw: unknown): PlayRoundPayload | { error: string } {
   }
 }
 
-// Computes win for a single bet given the rolled dice. Returns total payout
-// (includes stake on a win), 0 on a loss. Multipliers come from getPayoutConfig()
-// so they can be tuned via env without a code change.
-function payoutForSymbol(b: SymbolBetIn, dice: DiceSymbol[], cfg: PayoutConfig): number {
-  const matches = dice.filter(d => d === b.symbol).length
-  if (matches === 1) return b.amount * cfg.symbol1
-  if (matches === 2) return b.amount * cfg.symbol2
-  if (matches === 3) return b.amount * cfg.symbol3
-  return 0
-}
-function payoutForRange(b: RangeBetIn, sum: number, cfg: PayoutConfig): number {
-  const bounds = RANGE_BOUNDS[b.range]
-  if (sum < bounds.min || sum > bounds.max) return 0
-  const mul = b.range === 'LOW' ? cfg.rangeLow : b.range === 'MIDDLE' ? cfg.rangeMiddle : cfg.rangeHigh
-  return b.amount * mul
-}
-function payoutForPair(b: PairBetIn, dice: DiceSymbol[], cfg: PayoutConfig): number {
-  return dice.includes(b.symbolA) && dice.includes(b.symbolB) ? b.amount * cfg.pair : 0
-}
 
 export async function action({ request }: Route.ActionArgs) {
   // Resolve session manually instead of using `requireUser` so a missing/expired
