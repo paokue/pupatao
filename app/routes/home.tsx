@@ -959,6 +959,8 @@ export default function FishPrawnCrabGame() {
   const [isRevealingResult, setIsRevealingResult] = useState(false)
   const [rollAnimationDone, setRollAnimationDone] = useState(false)
   const waitingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const revealCountdownRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const [revealCountdown, setRevealCountdown] = useState(5)
   // Yellow winner-highlight on the board (cells + range buttons) only stays
   // up for ~5s after a roll resolves — long enough for the player to clock
   // which bets won, short enough that the next set of chips doesn't sit
@@ -1393,8 +1395,6 @@ export default function FishPrawnCrabGame() {
     setCurrentPairBets([])
     setIsRolling(false)
     setWinnerHighlight(true)
-    if (betTotal > 0) setIsRevealingResult(true)
-
     if (win > 0) {
       setMessage(t('game.youWin', { amount: formatAmount(win) }))
       soundEnabled && playWin()
@@ -1403,24 +1403,32 @@ export default function FishPrawnCrabGame() {
       soundEnabled && playLose()
     }
 
-    // Show dice for 5s before opening the summary modal.
+    // Show dice for 5s with a live countdown before opening the summary modal.
     if (betTotal > 0) {
+      setIsRevealingResult(true)
+      setRevealCountdown(3)
+      if (revealCountdownRef.current) clearInterval(revealCountdownRef.current)
+      revealCountdownRef.current = setInterval(() => {
+        setRevealCountdown(c => Math.max(0, c - 1))
+      }, 1000)
+
       setTimeout(() => {
-        setIsRevealingResult(false)
-        if (win > 0) {
-          // Birthday-cannon confetti from both sides.
-          confetti({ particleCount: 120, spread: 70, angle: 60,  origin: { x: 0,   y: 0.65 } })
-          confetti({ particleCount: 120, spread: 70, angle: 120, origin: { x: 1,   y: 0.65 } })
-          setTimeout(() => {
-            confetti({ particleCount: 60, spread: 90, angle: 90, origin: { x: 0.5, y: 0.4 }, startVelocity: 45 })
-          }, 300)
+        if (revealCountdownRef.current) {
+          clearInterval(revealCountdownRef.current)
+          revealCountdownRef.current = null
         }
+        setIsRevealingResult(false)
+        confetti({ particleCount: 120, spread: 70, angle: 60,  origin: { x: 0,   y: 0.65 } })
+        confetti({ particleCount: 120, spread: 70, angle: 120, origin: { x: 1,   y: 0.65 } })
+        setTimeout(() => {
+          confetti({ particleCount: 60, spread: 90, angle: 90, origin: { x: 0.5, y: 0.4 }, startVelocity: 45 })
+        }, 300)
         setResultModal({
           win, betTotal, newBalance,
           dice: finalResults, diceSum: sum,
           symbolResults, rangeResults, pairResults,
         })
-      }, 5000)
+      }, 3000)
     }
   }, [currentBets, currentRangeBets, currentPairBets, balance, soundEnabled, playWin, playLose])
 
@@ -1484,7 +1492,7 @@ export default function FishPrawnCrabGame() {
         ]
         applyResult(finalResults)
       }
-    }, 2000)
+    }, 800)
   }, [hasAnyBet, isRolling, ensureBgMusic, soundEnabled, startRollSound, stopRollSound, applyResult, authUser, currentBets, currentRangeBets, currentPairBets, user.activeWallet, playRoundFetcher])
 
   // LIVE bet submission — sends staged bets up to /api/play-round which
@@ -1732,6 +1740,38 @@ export default function FishPrawnCrabGame() {
               <span style={{ color: '#7c3aed', fontSize: 28 }}>?</span>
             </div>
           ))}
+
+        {/* Countdown circle — appears to the right of the dice during the 5s reveal */}
+        {isRevealingResult && (() => {
+          const r = 22
+          const circ = 2 * Math.PI * r
+          const offset = circ * (1 - revealCountdown / 3)
+          return (
+            <div style={{ position: 'relative', width: 56, height: 56, flexShrink: 0 }}>
+              <svg width="56" height="56" viewBox="0 0 56 56">
+                <circle cx="28" cy="28" r={r} fill="none" stroke="rgba(250,204,21,0.15)" strokeWidth="3.5" />
+                <circle
+                  cx="28" cy="28" r={r}
+                  fill="none"
+                  stroke="#facc15"
+                  strokeWidth="3.5"
+                  strokeLinecap="round"
+                  strokeDasharray={circ}
+                  strokeDashoffset={offset}
+                  transform="rotate(-90 28 28)"
+                  style={{ transition: 'stroke-dashoffset 0.9s linear' }}
+                />
+              </svg>
+              <span style={{
+                position: 'absolute', inset: 0,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                color: '#facc15', fontSize: 22, fontWeight: 900, lineHeight: 1,
+              }}>
+                {revealCountdown}
+              </span>
+            </div>
+          )
+        })()}
       </div>
 
       {!isRolling && !isRevealingResult && diceResults.length > 0 && (
