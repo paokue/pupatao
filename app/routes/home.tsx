@@ -1384,13 +1384,16 @@ export default function FishPrawnCrabGame() {
     setIsRolling(false)
     setWinnerHighlight(true)
 
-    // Show summary modal unless the round had no bets (e.g. live admin confirmed with zero wagers).
+    // Show summary modal after a short pause so the player can see the dice
+    // result for a few seconds before the overlay appears.
     if (betTotal > 0) {
-      setResultModal({
-        win, betTotal, newBalance,
-        dice: finalResults, diceSum: sum,
-        symbolResults, rangeResults, pairResults,
-      })
+      setTimeout(() => {
+        setResultModal({
+          win, betTotal, newBalance,
+          dice: finalResults, diceSum: sum,
+          symbolResults, rangeResults, pairResults,
+        })
+      }, 4000)
     }
 
     if (win > 0) {
