@@ -960,7 +960,8 @@ export default function FishPrawnCrabGame() {
   const [rollAnimationDone, setRollAnimationDone] = useState(false)
   const waitingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const revealCountdownRef = useRef<ReturnType<typeof setInterval> | null>(null)
-  const [revealCountdown, setRevealCountdown] = useState(5)
+  const [revealCountdown, setRevealCountdown] = useState(3)
+  const hasWarmed = useRef(false)
   // Yellow winner-highlight on the board (cells + range buttons) only stays
   // up for ~5s after a roll resolves — long enough for the player to clock
   // which bets won, short enough that the next set of chips doesn't sit
@@ -1167,6 +1168,15 @@ export default function FishPrawnCrabGame() {
   const hasAnyBet = currentBets.length > 0 || currentRangeBets.length > 0 || currentPairBets.length > 0
   const diceSum = diceResults.reduce((s, sym) => s + SYMBOL_VALUES[sym], 0)
   const bettingLocked = isRolling || (mode === 'live' && livePhase !== 'betting')
+
+  // Pre-warm the serverless function + DB connection the first time the player
+  // places any bet, so the cold-start penalty is paid in the background while
+  // they finish setting up — not during the roll itself.
+  useEffect(() => {
+    if (!hasAnyBet || !authUser || hasWarmed.current) return
+    hasWarmed.current = true
+    fetch('/api/warm').catch(() => {})
+  }, [hasAnyBet, authUser])
 
   const placeRangeBet = useCallback((range: RangeKey) => {
     ensureBgMusic()
