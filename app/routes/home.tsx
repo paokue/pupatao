@@ -1451,13 +1451,12 @@ export default function FishPrawnCrabGame() {
     setLastWin(0)
     soundEnabled && startRollSound()
 
-    // Authenticated: submit bets to server immediately so it can pick dice
-    // adversarially before the animation ends. Result is applied once both
-    // the 2s animation AND the server response are ready.
+    // Authenticated: call /api/pick-dice (no DB — returns in ~50 ms even cold).
+    // The DB write happens via /api/save-round fired in the background after
+    // the dice are revealed, so the user never waits for it.
     if (authUser) {
       playRoundFetcher.submit(
         {
-          mode: 'RANDOM',
           wallet: user.activeWallet === 'real' ? 'REAL' : user.activeWallet === 'promo' ? 'PROMO' : 'DEMO',
           bets: {
             symbol: currentBets.map(b => ({ symbol: b.symbol.toUpperCase(), cell: b.cell, amount: b.amount })),
@@ -1465,7 +1464,7 @@ export default function FishPrawnCrabGame() {
             pair: currentPairBets.map(b => ({ symbolA: b.a.toUpperCase(), symbolB: b.b.toUpperCase(), cellA: b.cellA, cellB: b.cellB, amount: b.amount })),
           },
         },
-        { method: 'post', action: '/api/play-round', encType: 'application/json' },
+        { method: 'post', action: '/api/pick-dice', encType: 'application/json' },
       )
     }
 
@@ -1581,23 +1580,31 @@ export default function FishPrawnCrabGame() {
     })
   }, [mode, livePhase, authUser, hasAnyBet, currentBets, currentRangeBets, currentPairBets, user.activeWallet, playRoundFetcher, soundEnabled, t])
 
-  // RANDOM mode: once the roll animation ends AND the server has responded,
-  // apply the server's adversarially-picked dice as the final result.
+  // RANDOM mode: once the animation ends AND /api/pick-dice has responded,
+  // show the dice immediately then fire /api/save-round in the background.
   useEffect(() => {
     if (!rollAnimationDone) return
     if (playRoundFetcher.state !== 'idle') return
-    const data = playRoundFetcher.data as { ok?: boolean; dice?: string[]; error?: string } | undefined
+    const data = playRoundFetcher.data as { ok?: boolean; dice?: string[]; token?: string; error?: string } | undefined
     if (!data) return
     setRollAnimationDone(false)
     if (data.error) {
       setIsRolling(false)
       setMessage(data.error)
-      revalidator.revalidate()
       return
     }
     if (data.ok && data.dice) {
       applyResult(data.dice.map(d => d.toLowerCase() as SymbolKey))
-      revalidator.revalidate()
+      // Save to DB in the background — user watches the 3s countdown meanwhile.
+      if (data.token) {
+        fetch('/api/save-round', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token: data.token }),
+        })
+          .then(() => revalidator.revalidate())
+          .catch(() => revalidator.revalidate())
+      }
     }
   }, [rollAnimationDone, playRoundFetcher.state, playRoundFetcher.data, applyResult, revalidator])
 
