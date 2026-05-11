@@ -187,7 +187,15 @@ async function handleRandomRound(args: {
   const cfg = getPayoutConfig()
   const diceSum = SYMBOL_VALUES[dice[0]] + SYMBOL_VALUES[dice[1]] + SYMBOL_VALUES[dice[2]]
   const symbolPayouts = symbolBets.map(b => payoutForSymbol(b, dice, cfg))
-  const rangePayouts = rangeBets.map(b => payoutForRange(b, diceSum, cfg))
+  // Two range exploit scenarios always lose in RANDOM mode:
+  //   1. Range-only player (no symbol/pair bets at all)
+  //   2. Player covers all three ranges simultaneously — guaranteeing one always
+  //      hits, turning MIDDLE into a 3× profit hedge. Zero out all range payouts.
+  const rangeKeys = new Set(rangeBets.map(b => b.range))
+  const allThreeCovered = rangeKeys.has('LOW') && rangeKeys.has('MIDDLE') && rangeKeys.has('HIGH')
+  const rangeOnlyPlayer = symbolBets.length === 0 && pairBets.length === 0 && rangeBets.length > 0
+  const forceRangeLoss = rangeOnlyPlayer || allThreeCovered
+  const rangePayouts = forceRangeLoss ? rangeBets.map(() => 0) : rangeBets.map(b => payoutForRange(b, diceSum, cfg))
   const pairPayouts = pairBets.map(b => payoutForPair(b, dice, cfg))
   const totalPayout =
     symbolPayouts.reduce((a, b) => a + b, 0) +
