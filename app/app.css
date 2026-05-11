@@ -137,26 +137,8 @@
   100% { transform: translateX(100%); }
 }
 
-/* ? ? ? anticipation — purple glow breathes while waiting for server dice. */
-@keyframes waitingPulse {
-  from { box-shadow: 0 0 8px 2px rgba(167,139,250,0.35), 0 0 18px 4px rgba(167,139,250,0.1); }
-  to   { box-shadow: 0 0 20px 6px rgba(167,139,250,0.7),  0 0 40px 10px rgba(167,139,250,0.25); }
-}
-
-/* ? mark bounces up/down with staggered delay per tile. */
-@keyframes waitingBounce {
-  from { transform: translateY(0px) scale(1); }
-  to   { transform: translateY(-8px) scale(1.15); }
-}
-
-/* Dice reveal pulse — golden glow breathes in/out while waiting for result modal. */
+/* Dice result — golden glow breathes in/out for 5s while player sees the result. */
 @keyframes revealPulse {
   from { box-shadow: 0 0 10px 2px rgba(250,204,21,0.4), 0 0 24px 4px rgba(250,204,21,0.15); }
   to   { box-shadow: 0 0 22px 6px rgba(250,204,21,0.75), 0 0 50px 12px rgba(250,204,21,0.3); }
-}
-
-/* Spin used for the dice/hourglass icons in indicators. */
-@keyframes spin {
-  from { transform: rotate(0deg); }
-  to   { transform: rotate(360deg); }
 }
