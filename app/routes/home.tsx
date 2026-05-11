@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect, useRef, type ReactNode } from 'react'
+import confetti from 'canvas-confetti'
 import { Form, useFetcher, useLoaderData, useNavigate, useOutletContext, useRevalidator, useSearchParams } from 'react-router'
 import { toast } from 'sonner'
 import type { Route } from './+types/home'
@@ -607,6 +608,21 @@ function formatAmount(n: number): string {
   return n.toString()
 }
 
+// Animated "..." dots shown while waiting for the result modal.
+function RevealingDots() {
+  const [frame, setFrame] = useState(0)
+  useEffect(() => {
+    const id = setInterval(() => setFrame(f => (f + 1) % 4), 420)
+    return () => clearInterval(id)
+  }, [])
+  const dots = '.'.repeat(frame)
+  return (
+    <span style={{ color: '#fde68a', fontSize: 13, fontWeight: 600, letterSpacing: 2, minWidth: 36 }}>
+      {dots}
+    </span>
+  )
+}
+
 interface ProfileDropdownProps {
   name: string
   onClose: () => void
@@ -953,6 +969,8 @@ export default function FishPrawnCrabGame() {
   const [diceResults, setDiceResults] = useState<SymbolKey[]>([])
   const [rollingDice, setRollingDice] = useState<SymbolKey[]>([])
   const [isRolling, setIsRolling] = useState(false)
+  const [isWaitingReveal, setIsWaitingReveal] = useState(false)
+  const [isRevealingResult, setIsRevealingResult] = useState(false)
   const [rollAnimationDone, setRollAnimationDone] = useState(false)
   // Yellow winner-highlight on the board (cells + range buttons) only stays
   // up for ~5s after a roll resolves — long enough for the player to clock
@@ -1308,6 +1326,7 @@ export default function FishPrawnCrabGame() {
   const applyResult = useCallback((finalResults: SymbolKey[]) => {
     const sum = finalResults.reduce((s, sym) => s + SYMBOL_VALUES[sym], 0)
     setRollingDice([])
+    setIsWaitingReveal(false)
     setDiceResults(finalResults)
     setHistory(prev => [finalResults, ...prev].slice(0, 30))
 
@@ -1383,18 +1402,7 @@ export default function FishPrawnCrabGame() {
     setCurrentPairBets([])
     setIsRolling(false)
     setWinnerHighlight(true)
-
-    // Show summary modal after a short pause so the player can see the dice
-    // result for a few seconds before the overlay appears.
-    if (betTotal > 0) {
-      setTimeout(() => {
-        setResultModal({
-          win, betTotal, newBalance,
-          dice: finalResults, diceSum: sum,
-          symbolResults, rangeResults, pairResults,
-        })
-      }, 4000)
-    }
+    if (betTotal > 0) setIsRevealingResult(true)
 
     if (win > 0) {
       setMessage(t('game.youWin', { amount: formatAmount(win) }))
@@ -1402,6 +1410,26 @@ export default function FishPrawnCrabGame() {
     } else {
       setMessage(t('game.betterLuck'))
       soundEnabled && playLose()
+    }
+
+    // Show dice for 3s before opening the summary modal.
+    if (betTotal > 0) {
+      setTimeout(() => {
+        setIsRevealingResult(false)
+        if (win > 0) {
+          // Birthday-cannon confetti from both sides.
+          confetti({ particleCount: 120, spread: 70, angle: 60,  origin: { x: 0,   y: 0.65 } })
+          confetti({ particleCount: 120, spread: 70, angle: 120, origin: { x: 1,   y: 0.65 } })
+          setTimeout(() => {
+            confetti({ particleCount: 60, spread: 90, angle: 90, origin: { x: 0.5, y: 0.4 }, startVelocity: 45 })
+          }, 300)
+        }
+        setResultModal({
+          win, betTotal, newBalance,
+          dice: finalResults, diceSum: sum,
+          symbolResults, rangeResults, pairResults,
+        })
+      }, 3000)
     }
   }, [currentBets, currentRangeBets, currentPairBets, balance, soundEnabled, playWin, playLose])
 
@@ -1445,8 +1473,8 @@ export default function FishPrawnCrabGame() {
       soundEnabled && stopRollSound()
       setRollingDice([])
       if (authUser) {
-        // Signal that animation is done; the rollAnimationDone effect will
-        // call applyResult once the server response is also available.
+        // Enter the "? ? ?" anticipation phase while waiting for server dice.
+        setIsWaitingReveal(true)
         setRollAnimationDone(true)
       } else {
         // Anonymous visitor: no server round, pick dice client-side directly.
@@ -1678,7 +1706,15 @@ export default function FishPrawnCrabGame() {
             <div
               key={i}
               className={`relative overflow-hidden rounded-xl bg-white shadow-2xl ${isRolling ? 'animate-bounce' : ''}`}
-              style={{ width: 72, height: 72, border: '1px solid #f59e0b', animationDelay: `${i * 80}ms` }}
+              style={{
+                width: 72, height: 72,
+                border: isRevealingResult ? '2px solid #facc15' : '1px solid #f59e0b',
+                animationDelay: `${i * 80}ms`,
+                boxShadow: isRevealingResult
+                  ? '0 0 18px 4px rgba(250,204,21,0.55), 0 0 40px 8px rgba(250,204,21,0.2)'
+                  : undefined,
+                animation: isRevealingResult ? 'revealPulse 1s ease-in-out infinite alternate' : undefined,
+              }}
             >
               <img src={`/symbols/${sym}.png`} alt={sym} className="absolute inset-0 h-full w-full object-contain p-1" />
             </div>
@@ -1687,13 +1723,44 @@ export default function FishPrawnCrabGame() {
             <div
               key={i}
               className="flex items-center justify-center rounded-xl"
-              style={{ width: 72, height: 72, background: '#3b0764', border: '2px dashed #7c3aed' }}
+              style={{
+                width: 72, height: 72,
+                background: isWaitingReveal ? 'rgba(59,0,100,0.9)' : '#3b0764',
+                border: isWaitingReveal ? '2px solid #a78bfa' : '2px dashed #7c3aed',
+                boxShadow: isWaitingReveal ? '0 0 14px 3px rgba(167,139,250,0.5)' : undefined,
+                animation: isWaitingReveal ? `waitingPulse 0.7s ease-in-out ${i * 150}ms infinite alternate` : undefined,
+              }}
             >
-              <span style={{ color: '#7c3aed', fontSize: 28 }}>?</span>
+              <span
+                style={{
+                  color: isWaitingReveal ? '#fde68a' : '#7c3aed',
+                  fontSize: 32,
+                  fontWeight: 900,
+                  animation: isWaitingReveal ? `waitingBounce 0.6s ease-in-out ${i * 150}ms infinite alternate` : undefined,
+                }}
+              >?</span>
             </div>
           ))}
       </div>
-      {!isRolling && diceResults.length > 0 && (
+
+      {/* Anticipation indicator — shown while ? ? ? waits for server dice */}
+      {isWaitingReveal && (
+        <div className="flex items-center gap-2">
+          <span style={{ animation: 'spin 1s linear infinite', fontSize: 16, display: 'inline-block' }}>🎲</span>
+          <span style={{ color: '#c4b5fd', fontSize: 13, fontWeight: 600, letterSpacing: 1 }}>Revealing</span>
+          <RevealingDots />
+        </div>
+      )}
+
+      {/* Countdown indicator — shown while dice are visible but modal hasn't opened */}
+      {isRevealingResult && (
+        <div className="flex items-center gap-2">
+          <span className="inline-block" style={{ animation: 'spin 1s linear infinite', fontSize: 16 }}>⏳</span>
+          <RevealingDots />
+        </div>
+      )}
+
+      {!isRolling && !isRevealingResult && diceResults.length > 0 && (
         <div
           className="rounded-full px-4 py-0.5 text-xs font-bold "
           style={{ background: 'rgba(30,0,64,0.6)', color: '#fde68a', border: '1px solid #a78bfa' }}
@@ -1701,7 +1768,7 @@ export default function FishPrawnCrabGame() {
           SUM: {diceSum}
         </div>
       )}
-      {!isRolling && lastWin > 0 && diceResults.length > 0 && (
+      {!isRolling && !isRevealingResult && lastWin > 0 && diceResults.length > 0 && (
         <div
           className="rounded-full px-5 py-1 text-sm font-bold animate-pulse"
           style={{ background: 'rgba(22,163,74,0.25)', color: '#4ade80', border: '1px solid #4ade80' }}
