@@ -953,6 +953,7 @@ export default function FishPrawnCrabGame() {
   const [diceResults, setDiceResults] = useState<SymbolKey[]>([])
   const [rollingDice, setRollingDice] = useState<SymbolKey[]>([])
   const [isRolling, setIsRolling] = useState(false)
+  const [rollAnimationDone, setRollAnimationDone] = useState(false)
   // Yellow winner-highlight on the board (cells + range buttons) only stays
   // up for ~5s after a roll resolves — long enough for the player to clock
   // which bets won, short enough that the next set of chips doesn't sit
@@ -1377,13 +1378,6 @@ export default function FishPrawnCrabGame() {
     setLastBetTotal(betTotal)
     setBalance(newBalance)
 
-    // Snapshot the bets BEFORE we clear them — the fetcher payload reads from this.
-    const snapshot = {
-      symbol: currentBets,
-      range: currentRangeBets,
-      pair: currentPairBets,
-    }
-
     setCurrentBets([])
     setCurrentRangeBets([])
     setCurrentPairBets([])
@@ -1406,39 +1400,7 @@ export default function FishPrawnCrabGame() {
       setMessage(t('game.betterLuck'))
       soundEnabled && playLose()
     }
-
-    // Persist the round to the server. Anonymous visitors play purely locally.
-    if (authUser && betTotal > 0) {
-      const payload = {
-        mode: mode === 'live' ? 'LIVE' : 'RANDOM',
-        wallet: user.activeWallet === 'real' ? 'REAL' : user.activeWallet === 'promo' ? 'PROMO' : 'DEMO',
-        dice: finalResults.map(s => s.toUpperCase()),
-        bets: {
-          symbol: snapshot.symbol.map(b => ({
-            symbol: b.symbol.toUpperCase(),
-            cell: b.cell,
-            amount: b.amount,
-          })),
-          range: snapshot.range.map(b => ({
-            range: b.range.toUpperCase(),
-            amount: b.amount,
-          })),
-          pair: snapshot.pair.map(b => ({
-            symbolA: b.a.toUpperCase(),
-            symbolB: b.b.toUpperCase(),
-            cellA: b.cellA,
-            cellB: b.cellB,
-            amount: b.amount,
-          })),
-        },
-      }
-      playRoundFetcher.submit(payload, {
-        method: 'post',
-        action: '/api/play-round',
-        encType: 'application/json',
-      })
-    }
-  }, [currentBets, currentRangeBets, currentPairBets, balance, soundEnabled, playWin, playLose, authUser, mode, user.activeWallet, playRoundFetcher])
+  }, [currentBets, currentRangeBets, currentPairBets, balance, soundEnabled, playWin, playLose])
 
   const rollDice = useCallback(() => {
     if (!hasAnyBet || isRolling) return
@@ -1448,6 +1410,24 @@ export default function FishPrawnCrabGame() {
     setMessage(t('game.rolling'))
     setLastWin(0)
     soundEnabled && startRollSound()
+
+    // Authenticated: submit bets to server immediately so it can pick dice
+    // adversarially before the animation ends. Result is applied once both
+    // the 2s animation AND the server response are ready.
+    if (authUser) {
+      playRoundFetcher.submit(
+        {
+          mode: 'RANDOM',
+          wallet: user.activeWallet === 'real' ? 'REAL' : user.activeWallet === 'promo' ? 'PROMO' : 'DEMO',
+          bets: {
+            symbol: currentBets.map(b => ({ symbol: b.symbol.toUpperCase(), cell: b.cell, amount: b.amount })),
+            range: currentRangeBets.map(b => ({ range: b.range.toUpperCase(), amount: b.amount })),
+            pair: currentPairBets.map(b => ({ symbolA: b.a.toUpperCase(), symbolB: b.b.toUpperCase(), cellA: b.cellA, cellB: b.cellB, amount: b.amount })),
+          },
+        },
+        { method: 'post', action: '/api/play-round', encType: 'application/json' },
+      )
+    }
 
     const rollInterval = setInterval(() => {
       setRollingDice([
@@ -1460,14 +1440,22 @@ export default function FishPrawnCrabGame() {
     setTimeout(() => {
       clearInterval(rollInterval)
       soundEnabled && stopRollSound()
-      const finalResults: SymbolKey[] = [
-        SYMBOLS[Math.floor(Math.random() * SYMBOLS.length)],
-        SYMBOLS[Math.floor(Math.random() * SYMBOLS.length)],
-        SYMBOLS[Math.floor(Math.random() * SYMBOLS.length)],
-      ]
-      applyResult(finalResults)
+      setRollingDice([])
+      if (authUser) {
+        // Signal that animation is done; the rollAnimationDone effect will
+        // call applyResult once the server response is also available.
+        setRollAnimationDone(true)
+      } else {
+        // Anonymous visitor: no server round, pick dice client-side directly.
+        const finalResults: SymbolKey[] = [
+          SYMBOLS[Math.floor(Math.random() * SYMBOLS.length)],
+          SYMBOLS[Math.floor(Math.random() * SYMBOLS.length)],
+          SYMBOLS[Math.floor(Math.random() * SYMBOLS.length)],
+        ]
+        applyResult(finalResults)
+      }
     }, 2000)
-  }, [hasAnyBet, isRolling, ensureBgMusic, soundEnabled, startRollSound, stopRollSound, applyResult])
+  }, [hasAnyBet, isRolling, ensureBgMusic, soundEnabled, startRollSound, stopRollSound, applyResult, authUser, currentBets, currentRangeBets, currentPairBets, user.activeWallet, playRoundFetcher])
 
   // LIVE bet submission — sends staged bets up to /api/play-round which
   // attaches them to the admin's open round and debits the stake. No dice
@@ -1545,25 +1533,37 @@ export default function FishPrawnCrabGame() {
     })
   }, [mode, livePhase, authUser, hasAnyBet, currentBets, currentRangeBets, currentPairBets, user.activeWallet, playRoundFetcher, soundEnabled, t])
 
-  // Show server errors (insufficient balance, no open round, betting closed)
-  // only for LIVE bet placement — that's where the toast actually informs the
-  // user the bet didn't happen. In RANDOM mode the local result modal has
-  // already shown the outcome by the time this submission resolves; a stray
-  // toast over the modal is confusing, so we just revalidate to pull the
-  // server's true balance and stay in sync silently.
+  // RANDOM mode: once the roll animation ends AND the server has responded,
+  // apply the server's adversarially-picked dice as the final result.
+  useEffect(() => {
+    if (!rollAnimationDone) return
+    if (playRoundFetcher.state !== 'idle') return
+    const data = playRoundFetcher.data as { ok?: boolean; dice?: string[]; error?: string } | undefined
+    if (!data) return
+    setRollAnimationDone(false)
+    if (data.error) {
+      setIsRolling(false)
+      setMessage(data.error)
+      revalidator.revalidate()
+      return
+    }
+    if (data.ok && data.dice) {
+      applyResult(data.dice.map(d => d.toLowerCase() as SymbolKey))
+      revalidator.revalidate()
+    }
+  }, [rollAnimationDone, playRoundFetcher.state, playRoundFetcher.data, applyResult, revalidator])
+
+  // LIVE mode only: show server errors (insufficient balance, no open round, betting closed).
   useEffect(() => {
     if (playRoundFetcher.state !== 'idle') return
     const data = playRoundFetcher.data
     if (!data) return
-    if (data.error) {
-      if (mode === 'live') {
+    if (mode === 'live') {
+      if (data.error) {
         toast.error(t('live.betNotPlaced'), { description: data.error })
-      } else {
-        console.warn('[play-round] server rejected RANDOM submission:', data.error)
+      } else if (data.ok) {
         revalidator.revalidate()
       }
-    } else if (data.ok) {
-      revalidator.revalidate()
     }
   }, [playRoundFetcher.state, playRoundFetcher.data, revalidator, t, mode])
 

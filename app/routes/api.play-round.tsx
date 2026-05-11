@@ -17,6 +17,61 @@ const RANGE_BOUNDS: Record<RangeKey, { min: number; max: number }> = {
 const VALID_RANGES: ReadonlyArray<RangeKey> = ['LOW', 'MIDDLE', 'HIGH']
 const MAX_BET_PER_ROUND = 10_000_000  // sanity cap, prevents abuse
 
+// Symbols ordered strictly by numeric value (1–6). VALID_SYMBOLS is ordered
+// differently (CRAB before FISH), so cannot be used for index→symbol mapping.
+const SYMBOLS_BY_VALUE: DiceSymbol[] = ['PRAWN', 'FISH', 'CRAB', 'ROOSTER', 'FROG', 'GOURD']
+
+// When range bets are present, enumerate all 216 possible dice outcomes and
+// pick the one that minimises the customer's TOTAL payout across every bet type
+// (symbol + range + pair). This prevents the "small range bet as a steering
+// weapon" exploit (e.g. tiny LOW+MIDDLE bets to force HIGH dice that then pay
+// out huge symbol bets on GOURD/FROG).
+// When no range bets exist, dice are fully random so symbol-only players are unaffected.
+function pickAdversarialDice(
+  symbolBets: SymbolBetIn[],
+  rangeBets: RangeBetIn[],
+  pairBets: PairBetIn[],
+  cfg: PayoutConfig,
+): [DiceSymbol, DiceSymbol, DiceSymbol] {
+  if (rangeBets.length === 0) {
+    return [
+      VALID_SYMBOLS[Math.floor(Math.random() * 6)],
+      VALID_SYMBOLS[Math.floor(Math.random() * 6)],
+      VALID_SYMBOLS[Math.floor(Math.random() * 6)],
+    ]
+  }
+
+  let minPayout = Infinity
+  const bestCombos: Array<[DiceSymbol, DiceSymbol, DiceSymbol]> = []
+
+  for (let a = 1; a <= 6; a++) {
+    for (let b = 1; b <= 6; b++) {
+      for (let c = 1; c <= 6; c++) {
+        const dice: [DiceSymbol, DiceSymbol, DiceSymbol] = [
+          SYMBOLS_BY_VALUE[a - 1],
+          SYMBOLS_BY_VALUE[b - 1],
+          SYMBOLS_BY_VALUE[c - 1],
+        ]
+        const sum = a + b + c
+        let payout = 0
+        for (const sb of symbolBets) payout += payoutForSymbol(sb, dice, cfg)
+        for (const rb of rangeBets) payout += payoutForRange(rb, sum, cfg)
+        for (const pb of pairBets) payout += payoutForPair(pb, dice, cfg)
+        if (payout < minPayout) {
+          minPayout = payout
+          bestCombos.length = 0
+          bestCombos.push(dice)
+        } else if (payout === minPayout) {
+          bestCombos.push(dice)
+        }
+      }
+    }
+  }
+
+  // Pick randomly among all tied minimum-payout combos to avoid predictable patterns.
+  return bestCombos[Math.floor(Math.random() * bestCombos.length)]
+}
+
 type Mode = 'RANDOM' | 'LIVE'
 type WalletKey = 'DEMO' | 'REAL' | 'PROMO'
 
@@ -27,9 +82,6 @@ interface PairBetIn { symbolA: DiceSymbol; symbolB: DiceSymbol; cellA: number; c
 interface PlayRoundPayload {
   mode: Mode
   wallet: WalletKey
-  // Required for RANDOM (self-play, customer rolls); ignored for LIVE — the
-  // admin/host enters dice on the admin Live page.
-  dice?: [DiceSymbol, DiceSymbol, DiceSymbol]
   bets: {
     symbol?: SymbolBetIn[]
     range?: RangeBetIn[]
@@ -42,12 +94,6 @@ function parsePayload(raw: unknown): PlayRoundPayload | { error: string } {
   const p = raw as Partial<PlayRoundPayload>
   if (p.mode !== 'RANDOM' && p.mode !== 'LIVE') return { error: 'mode must be RANDOM or LIVE.' }
   if (p.wallet !== 'DEMO' && p.wallet !== 'REAL' && p.wallet !== 'PROMO') return { error: 'wallet must be DEMO, REAL or PROMO.' }
-  if (p.mode === 'RANDOM') {
-    if (!Array.isArray(p.dice) || p.dice.length !== 3) return { error: 'dice must be 3 symbols.' }
-    for (const d of p.dice) {
-      if (!VALID_SYMBOLS.includes(d as DiceSymbol)) return { error: `Invalid dice symbol: ${d}.` }
-    }
-  }
   const bets = p.bets ?? {}
   const symbol = bets.symbol ?? []
   const range = bets.range ?? []
@@ -69,7 +115,6 @@ function parsePayload(raw: unknown): PlayRoundPayload | { error: string } {
   return {
     mode: p.mode,
     wallet: p.wallet,
-    dice: p.mode === 'RANDOM' ? (p.dice as [DiceSymbol, DiceSymbol, DiceSymbol]) : undefined,
     bets: { symbol, range, pair },
   }
 }
@@ -118,7 +163,7 @@ export async function action({ request }: Route.ActionArgs) {
 
   const parsed = parsePayload(raw)
   if ('error' in parsed) return Response.json(parsed, { status: 400 })
-  const { mode, wallet: walletKey, dice, bets } = parsed
+  const { mode, wallet: walletKey, bets } = parsed
 
   const symbolBets = bets.symbol ?? []
   const rangeBets = bets.range ?? []
@@ -157,7 +202,6 @@ export async function action({ request }: Route.ActionArgs) {
     }
     return await handleRandomRound({
       user, wallet, walletKey, totalStake,
-      dice: dice as [DiceSymbol, DiceSymbol, DiceSymbol],
       symbolBets, rangeBets, pairBets,
     })
   } catch (err) {
@@ -172,30 +216,23 @@ export async function action({ request }: Route.ActionArgs) {
   }
 }
 
-// ─── RANDOM (self-play) — original flow: round + bets + ledger all settle in one shot.
+// ─── RANDOM (self-play) — dice are picked server-side adversarially, then
+//   round + bets + ledger all settle in one shot.
 async function handleRandomRound(args: {
   user: { id: string; tel: string; firstName: string | null; lastName: string | null }
   wallet: { id: string; balance: number }
   walletKey: WalletKey
   totalStake: number
-  dice: [DiceSymbol, DiceSymbol, DiceSymbol]
   symbolBets: SymbolBetIn[]
   rangeBets: RangeBetIn[]
   pairBets: PairBetIn[]
 }) {
-  const { user, wallet, walletKey, totalStake, dice, symbolBets, rangeBets, pairBets } = args
+  const { user, wallet, walletKey, totalStake, symbolBets, rangeBets, pairBets } = args
   const cfg = getPayoutConfig()
+  const dice = pickAdversarialDice(symbolBets, rangeBets, pairBets, cfg)
   const diceSum = SYMBOL_VALUES[dice[0]] + SYMBOL_VALUES[dice[1]] + SYMBOL_VALUES[dice[2]]
   const symbolPayouts = symbolBets.map(b => payoutForSymbol(b, dice, cfg))
-  // Two range exploit scenarios always lose in RANDOM mode:
-  //   1. Range-only player (no symbol/pair bets at all)
-  //   2. Player covers all three ranges simultaneously — guaranteeing one always
-  //      hits, turning MIDDLE into a 3× profit hedge. Zero out all range payouts.
-  const rangeKeys = new Set(rangeBets.map(b => b.range))
-  const allThreeCovered = rangeKeys.has('LOW') && rangeKeys.has('MIDDLE') && rangeKeys.has('HIGH')
-  const rangeOnlyPlayer = symbolBets.length === 0 && pairBets.length === 0 && rangeBets.length > 0
-  const forceRangeLoss = rangeOnlyPlayer || allThreeCovered
-  const rangePayouts = forceRangeLoss ? rangeBets.map(() => 0) : rangeBets.map(b => payoutForRange(b, diceSum, cfg))
+  const rangePayouts = rangeBets.map(b => payoutForRange(b, diceSum, cfg))
   const pairPayouts = pairBets.map(b => payoutForPair(b, dice, cfg))
   const totalPayout =
     symbolPayouts.reduce((a, b) => a + b, 0) +
@@ -356,6 +393,7 @@ async function handleRandomRound(args: {
   return Response.json({
     ok: true,
     roundId: result.roundId,
+    dice: dice as string[],
     stake: totalStake,
     payout: totalPayout,
     net: netDelta,
@@ -390,7 +428,6 @@ async function handleLiveBets(args: {
     return Response.json({ error: 'Betting window closed for this round.' }, { status: 409 })
   }
 
-  const balanceAfterStake = wallet.balance - totalStake
   const placedAt = new Date()
 
   const result = await prisma.$transaction(async db => {
