@@ -6,6 +6,7 @@ import type { DiceSymbol, RangeKey } from '@prisma/client'
 import {
   VALID_SYMBOLS, VALID_RANGES,
   type SymbolBetIn, type RangeBetIn, type PairBetIn,
+  type WalletType,
   pickAdversarialDice, getPayoutConfig,
 } from '~/lib/game-logic.server'
 import { signRoundToken } from '~/lib/round-token.server'
@@ -56,7 +57,7 @@ export async function action({ request }: { request: Request }) {
   if ('error' in parsed) return Response.json(parsed, { status: 400 })
 
   const cfg  = getPayoutConfig()
-  const dice = pickAdversarialDice(parsed.symbolBets, parsed.rangeBets, parsed.pairBets, cfg)
+  const dice = pickAdversarialDice(parsed.symbolBets, parsed.rangeBets, parsed.pairBets, cfg, parsed.wallet as WalletType)
 
   const token = signRoundToken({
     dice,

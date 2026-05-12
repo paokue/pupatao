@@ -174,26 +174,25 @@ export function setBgVolume(v: number) {
 // ── React hook ────────────────────────────────────────────────────────────────
 
 export function useSoundEngine() {
-  const rollTickRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  // Use an explicit number ref so window.clearInterval always gets the correct type.
+  const rollTickRef = useRef<number | null>(null)
 
   const startRollSound = useCallback(() => {
-    let speed = 80
-    rollTickRef.current = setInterval(() => {
-      playRollTick()
-      speed = Math.min(speed + 4, 160)
-    }, speed) as unknown as ReturnType<typeof setInterval>
+    // Clear any previously leaked interval before starting a new one.
+    if (rollTickRef.current !== null) window.clearInterval(rollTickRef.current)
+    rollTickRef.current = window.setInterval(playRollTick, 80)
   }, [])
 
   const stopRollSound = useCallback(() => {
-    if (rollTickRef.current) {
-      clearInterval(rollTickRef.current)
+    if (rollTickRef.current !== null) {
+      window.clearInterval(rollTickRef.current)
       rollTickRef.current = null
     }
   }, [])
 
   useEffect(() => {
     return () => {
-      if (rollTickRef.current) clearInterval(rollTickRef.current)
+      if (rollTickRef.current !== null) window.clearInterval(rollTickRef.current)
     }
   }, [])
 

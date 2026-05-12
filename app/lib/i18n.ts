@@ -406,6 +406,8 @@ export const STRINGS = {
   "game.custom": { lo: "ໃສ່ຈໍານວນເອງ", en: "CUSTOM" },
   "game.undo": { lo: "ກັບຄືນ", en: "UNDO" },
   "game.roll": { lo: "ຫຼີ້ນ", en: "ROLL" },
+  "game.bet": { lo: "ວາງເດີມພັນ", en: "BET" },
+  "game.betCountdown": { lo: "ປິດຮັບ", en: "CLOSING" },
   "game.okay": { lo: "ຕົກລົງ", en: "OKAY" },
   "game.waiting": { lo: "ກຳລັງລໍ", en: "WAITING" },
 

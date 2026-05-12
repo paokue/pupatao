@@ -602,6 +602,28 @@ const CHIP_CONFIG = [
   { value: 100000, label: '100,000', colors: 'from-yellow-500 to-yellow-700', border: '#FCD34D' },
 ]
 
+function BetCountdownRing({ countdown, size }: { countdown: number; size: 'sm' | 'lg' }) {
+  const dim = size === 'sm' ? 64 : 80
+  const cx = dim / 2
+  const r = size === 'sm' ? 26 : 32
+  const circ = 2 * Math.PI * r
+  return (
+    <div style={{ position: 'relative', width: dim, height: dim, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <svg width={dim} height={dim} viewBox={`0 0 ${dim} ${dim}`} style={{ position: 'absolute' }}>
+        <circle cx={cx} cy={cx} r={r} fill="none" stroke="rgba(250,204,21,0.2)" strokeWidth={size === 'sm' ? 3 : 4} />
+        <circle cx={cx} cy={cx} r={r} fill="none" stroke="#facc15"
+          strokeWidth={size === 'sm' ? 3 : 4} strokeLinecap="round"
+          strokeDasharray={circ} strokeDashoffset={circ * (1 - countdown / 15)}
+          transform={`rotate(-90 ${cx} ${cx})`}
+          style={{ transition: 'stroke-dashoffset 0.9s linear' }} />
+      </svg>
+      <span style={{ color: '#fde68a', fontWeight: 900, fontSize: size === 'sm' ? 18 : 24, position: 'relative' }}>
+        {countdown}
+      </span>
+    </div>
+  )
+}
+
 function formatAmount(n: number): string {
   if (n >= 1_000_000) return `${parseFloat((n / 1_000_000).toFixed(2))}M`
   if (n >= 1_000) return `${parseFloat((n / 1_000).toFixed(2))}K`
@@ -961,6 +983,14 @@ export default function FishPrawnCrabGame() {
   const waitingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const revealCountdownRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const [revealCountdown, setRevealCountdown] = useState(3)
+  // isRoundOpen: true while the 15s betting window is open (board enabled).
+  const [isRoundOpen, setIsRoundOpen] = useState(false)
+  const [betCountdown, setBetCountdown] = useState(15)
+  const [processingCountdown, setProcessingCountdown] = useState(8)
+  const [processingDiceIdx, setProcessingDiceIdx] = useState(0)
+  const betCountdownIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const startRollRef = useRef<(() => void) | null>(null)
+  const hasAnyBetRef = useRef(false)
   const hasWarmed = useRef(false)
   // Pre-computed adversarial dice — filled in the background when bets change,
   // consumed at roll time so the user never waits for the pick-dice response.
@@ -1172,15 +1202,19 @@ export default function FishPrawnCrabGame() {
     currentPairBets.filter(p => p.cellA === cellIdx || p.cellB === cellIdx).reduce((s, p) => s + p.amount, 0)
   const hasAnyBet = currentBets.length > 0 || currentRangeBets.length > 0 || currentPairBets.length > 0
   const diceSum = diceResults.reduce((s, sym) => s + SYMBOL_VALUES[sym], 0)
-  const bettingLocked = isRolling || (mode === 'live' && livePhase !== 'betting')
+  const bettingLocked = isRolling ||
+    (mode === 'random' && !isRoundOpen) ||
+    (mode === 'live' && livePhase !== 'betting')
+  // True while the random board AND chip selectors should appear disabled.
+  const randomBoardLocked = mode === 'random' && bettingLocked
 
   // Keep the serverless function warm by pinging /api/warm on mount and every
   // 60 s. Vercel keeps a function instance alive for ~5 min after last use;
   // regular pings prevent cold starts for active players.
   useEffect(() => {
     if (!authUser) return
-    fetch('/api/warm').catch(() => {})
-    const id = setInterval(() => fetch('/api/warm').catch(() => {}), 60_000)
+    fetch('/api/warm').catch(() => { })
+    const id = setInterval(() => fetch('/api/warm').catch(() => { }), 60_000)
     return () => clearInterval(id)
   }, [authUser])
 
@@ -1188,7 +1222,8 @@ export default function FishPrawnCrabGame() {
   // changes so the result is ready the instant the player clicks Roll.
   // Uses a 350 ms debounce to avoid hammering the server on rapid chip taps.
   useEffect(() => {
-    if (!hasAnyBet || !authUser || mode !== 'random' || isRolling) return
+    hasAnyBetRef.current = hasAnyBet
+    if (!hasAnyBet || !authUser || mode !== 'random' || isRolling || !isRoundOpen) return
 
     const wallet = user.activeWallet === 'real' ? 'REAL' : user.activeWallet === 'promo' ? 'PROMO' : 'DEMO'
     const betsPayload = {
@@ -1215,10 +1250,10 @@ export default function FishPrawnCrabGame() {
             setPrecomputedRound({ dice: data.dice, token: data.token, betsKey })
           }
         })
-        .catch(() => {})
+        .catch(() => { })
     }, 350)
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentBets, currentRangeBets, currentPairBets, hasAnyBet, authUser, mode, isRolling, user.activeWallet])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentBets, currentRangeBets, currentPairBets, hasAnyBet, authUser, mode, isRolling, isRoundOpen, user.activeWallet])
 
   const placeRangeBet = useCallback((range: RangeKey) => {
     ensureBgMusic()
@@ -1366,6 +1401,8 @@ export default function FishPrawnCrabGame() {
   // client-side win shown in the result modal matches what the server records.
   const applyResult = useCallback((finalResults: SymbolKey[]) => {
     const sum = finalResults.reduce((s, sym) => s + SYMBOL_VALUES[sym], 0)
+    // Always stop the roll sound — safety net in case the 8s timeout didn't.
+    stopRollSound()
     if (waitingIntervalRef.current) {
       clearInterval(waitingIntervalRef.current)
       waitingIntervalRef.current = null
@@ -1446,6 +1483,8 @@ export default function FishPrawnCrabGame() {
     setCurrentRangeBets([])
     setCurrentPairBets([])
     setIsRolling(false)
+    setIsRoundOpen(false)
+    setBetCountdown(15)
     setWinnerHighlight(true)
     setPrecomputedRound(null) // force fresh dice for next round
     if (win > 0) {
@@ -1471,8 +1510,8 @@ export default function FishPrawnCrabGame() {
           revealCountdownRef.current = null
         }
         setIsRevealingResult(false)
-        confetti({ particleCount: 120, spread: 70, angle: 60,  origin: { x: 0,   y: 0.65 } })
-        confetti({ particleCount: 120, spread: 70, angle: 120, origin: { x: 1,   y: 0.65 } })
+        confetti({ particleCount: 120, spread: 70, angle: 60, origin: { x: 0, y: 0.65 } })
+        confetti({ particleCount: 120, spread: 70, angle: 120, origin: { x: 1, y: 0.65 } })
         setTimeout(() => {
           confetti({ particleCount: 60, spread: 90, angle: 90, origin: { x: 0.5, y: 0.4 }, startVelocity: 45 })
         }, 300)
@@ -1483,17 +1522,25 @@ export default function FishPrawnCrabGame() {
         })
       }, 3000)
     }
-  }, [currentBets, currentRangeBets, currentPairBets, balance, soundEnabled, playWin, playLose])
+  }, [currentBets, currentRangeBets, currentPairBets, balance, soundEnabled, playWin, playLose, stopRollSound])
 
-  const rollDice = useCallback(() => {
-    if (!hasAnyBet || isRolling) return
-    ensureBgMusic()
-    setPendingCell(null)
+  // ── startRoll: 8-second processing animation, fires automatically when the
+  //    30s betting window closes. Dice may already be pre-computed; if not,
+  //    pick-dice is called now (function is warm from the keep-alive ping).
+  const startRoll = useCallback(() => {
+    if (!hasAnyBetRef.current) {
+      // No bets placed — just reopen for another round.
+      setIsRoundOpen(false)
+      setBetCountdown(15)
+      return
+    }
+    setIsRoundOpen(false)
+    setProcessingCountdown(8) // reset before mount so bar starts at 100%
     setIsRolling(true)
     setMessage(t('game.rolling'))
-    setLastWin(0)
     soundEnabled && startRollSound()
 
+    // Fire pick-dice with the finalised bets (or use pre-computed if ready).
     if (authUser) {
       const wallet = user.activeWallet === 'real' ? 'REAL' : user.activeWallet === 'promo' ? 'PROMO' : 'DEMO'
       const betsPayload = {
@@ -1505,14 +1552,10 @@ export default function FishPrawnCrabGame() {
         },
       }
       const betsKey = JSON.stringify(betsPayload)
-
       if (precomputedRound?.betsKey === betsKey) {
-        // Fast path — dice were pre-computed while bets were being placed.
-        // No server round-trip needed; result applied as soon as animation ends.
         pendingDiceRef.current = precomputedRound
         setPrecomputedRound(null)
       } else {
-        // Slow path — call pick-dice now (function should be warm from keep-alive).
         pendingDiceRef.current = null
         playRoundFetcher.submit(betsPayload, { method: 'post', action: '/api/pick-dice', encType: 'application/json' })
       }
@@ -1528,10 +1571,8 @@ export default function FishPrawnCrabGame() {
 
     setTimeout(() => {
       clearInterval(rollInterval)
-      soundEnabled && stopRollSound()
+      stopRollSound() // always stop — no soundEnabled guard so it can't leak
       if (authUser) {
-        // Keep random dice cycling (slower) so the player sees shuffling symbols
-        // instead of ? ? ? while the server picks the adversarial result.
         waitingIntervalRef.current = setInterval(() => {
           setRollingDice([
             SYMBOLS[Math.floor(Math.random() * SYMBOLS.length)],
@@ -1542,7 +1583,6 @@ export default function FishPrawnCrabGame() {
         setIsWaitingReveal(true)
         setRollAnimationDone(true)
       } else {
-        // Anonymous visitor: no server round, pick dice client-side directly.
         setRollingDice([])
         const finalResults: SymbolKey[] = [
           SYMBOLS[Math.floor(Math.random() * SYMBOLS.length)],
@@ -1551,8 +1591,51 @@ export default function FishPrawnCrabGame() {
         ]
         applyResult(finalResults)
       }
-    }, 800)
-  }, [hasAnyBet, isRolling, ensureBgMusic, soundEnabled, startRollSound, stopRollSound, applyResult, authUser, currentBets, currentRangeBets, currentPairBets, user.activeWallet, playRoundFetcher])
+    }, 8000)
+  }, [soundEnabled, startRollSound, stopRollSound, applyResult, authUser,
+    currentBets, currentRangeBets, currentPairBets, user.activeWallet,
+    playRoundFetcher, precomputedRound])
+
+  // Keep a stable ref so the countdown interval can call startRoll without
+  // stale-closure issues.
+  useEffect(() => { startRollRef.current = startRoll })
+
+  // Processing countdown: 8 → 0, shown in the top banner during isRolling.
+  useEffect(() => {
+    if (!isRolling || mode !== 'random') return
+    setProcessingCountdown(8)
+    const id = setInterval(() => setProcessingCountdown(c => Math.max(0, c - 1)), 1000)
+    return () => clearInterval(id)
+  }, [isRolling, mode])
+
+  // Cycle dice faces in the processing banner (left and right offset by 3).
+  useEffect(() => {
+    if (!isRolling || mode !== 'random') return
+    setProcessingDiceIdx(0)
+    const id = setInterval(() => setProcessingDiceIdx(i => (i + 1) % SYMBOLS.length), 250)
+    return () => clearInterval(id)
+  }, [isRolling, mode])
+
+  // ── openRound: user clicks ວາງເດີມພັນ → enables the board for 30 seconds.
+  const openRound = useCallback(() => {
+    if (isRoundOpen || isRolling) return
+    ensureBgMusic()
+    setIsRoundOpen(true)
+    setBetCountdown(15)
+    if (betCountdownIntervalRef.current) clearInterval(betCountdownIntervalRef.current)
+    betCountdownIntervalRef.current = setInterval(() => {
+      setBetCountdown(prev => {
+        const next = prev - 1
+        if (next <= 0) {
+          clearInterval(betCountdownIntervalRef.current!)
+          betCountdownIntervalRef.current = null
+          setTimeout(() => startRollRef.current?.(), 50)
+          return 0
+        }
+        return next
+      })
+    }, 1000)
+  }, [isRoundOpen, isRolling, ensureBgMusic])
 
   // LIVE bet submission — sends staged bets up to /api/play-round which
   // attaches them to the admin's open round and debits the stake. No dice
@@ -1660,6 +1743,7 @@ export default function FishPrawnCrabGame() {
     if (!data) return
     setRollAnimationDone(false)
     if (data.error) {
+      stopRollSound()
       setIsRolling(false)
       setMessage(data.error)
       return
@@ -1676,7 +1760,7 @@ export default function FishPrawnCrabGame() {
           .catch(() => revalidator.revalidate())
       }
     }
-  }, [rollAnimationDone, playRoundFetcher.state, playRoundFetcher.data, applyResult, revalidator])
+  }, [rollAnimationDone, playRoundFetcher.state, playRoundFetcher.data, applyResult, revalidator, stopRollSound])
 
   // LIVE mode only: show server errors (insufficient balance, no open round, betting closed).
   useEffect(() => {
@@ -1829,15 +1913,7 @@ export default function FishPrawnCrabGame() {
           className="rounded-full px-4 py-0.5 text-xs font-bold"
           style={{ background: 'rgba(30,0,64,0.6)', color: '#fde68a', border: '1px solid #a78bfa' }}
         >
-          SUM: {diceSum}
-        </div>
-      )}
-      {!isRolling && !isRevealingResult && lastWin > 0 && diceResults.length > 0 && (
-        <div
-          className="rounded-full px-5 py-1 text-sm font-bold animate-pulse"
-          style={{ background: 'rgba(22,163,74,0.25)', color: '#4ade80', border: '1px solid #4ade80' }}
-        >
-          +{formatAmount(lastWin)} coins!
+          ຄະແນນລວມ: {diceSum}
         </div>
       )}
     </>
@@ -1866,6 +1942,65 @@ export default function FishPrawnCrabGame() {
       }}
       onClick={ensureBgMusic}
     >
+      {/* ── 8-second processing overlay (random mode only) ──────────────── */}
+      {isRolling && mode === 'random' && (
+        // Replaces the header — same background, border and vertical padding.
+        <div
+          className="fixed top-0 left-0 right-0 z-50 flex items-center justify-between px-4 py-2"
+          style={{
+            background: '#1e0040',
+            borderBottom: '1px solid #a78bfa',
+            pointerEvents: 'none',
+            minHeight: 56,
+          }}
+        >
+          {/* Left: single die cycling through all symbols */}
+          <div style={{
+            width: 40, height: 40,
+            background: '#fff', borderRadius: 10,
+            border: '2px solid #f59e0b',
+            overflow: 'hidden', flexShrink: 0,
+            animation: 'diceRoll 0.8s linear infinite',
+            boxShadow: '0 0 10px rgba(245,158,11,0.5)',
+          }}>
+            <img
+              src={`/symbols/${SYMBOLS[processingDiceIdx]}.png`}
+              alt=""
+              style={{ width: '100%', height: '100%', objectFit: 'contain', padding: 4 }}
+            />
+          </div>
+
+          {/* Centre: pulsing countdown */}
+          <span style={{
+            color: '#facc15',
+            fontSize: 28,
+            fontWeight: 900,
+            lineHeight: 1,
+            textShadow: '0 0 14px rgba(250,204,21,0.9)',
+            animation: 'processingBanner 1s ease-in-out infinite alternate',
+          }}>
+            {processingCountdown}
+          </span>
+
+          {/* Right: single die cycling offset by 3 positions */}
+          <div style={{
+            width: 40, height: 40,
+            background: '#fff', borderRadius: 10,
+            border: '2px solid #f59e0b',
+            overflow: 'hidden', flexShrink: 0,
+            animation: 'diceRoll 0.8s linear infinite',
+            boxShadow: '0 0 10px rgba(245,158,11,0.5)',
+            animationDelay: '0.12s',
+          }}>
+            <img
+              src={`/symbols/${SYMBOLS[(processingDiceIdx + 3) % SYMBOLS.length]}.png`}
+              alt=""
+              style={{ width: '100%', height: '100%', objectFit: 'contain', padding: 4 }}
+            />
+          </div>
+        </div>
+      )}
+
       {/* ── LIVE FULL-SCREEN OVERLAY (mobile only) ──────────────────────── */}
       {mode === 'live' && (
         <div className="fixed inset-0 z-[100] bg-black md:hidden">
@@ -2313,7 +2448,8 @@ export default function FishPrawnCrabGame() {
                 {CHIP_CONFIG.map(chip => (
                   <button key={chip.value}
                     onClick={() => { soundEnabled && playCoin(); setSelectedChip(chip.value) }}
-                    className={`relative flex h-11 w-11 shrink-0 flex-col items-center justify-center rounded-full bg-gradient-to-b ${chip.colors} font-bold text-white transition-all`}
+                    disabled={randomBoardLocked}
+                    className={`relative flex h-11 w-11 shrink-0 flex-col items-center justify-center rounded-full bg-gradient-to-b ${chip.colors} font-bold text-white transition-all disabled:opacity-40`}
                     style={{
                       border: selectedChip === chip.value ? '2px solid #fff' : `1px solid ${chip.border}`,
                       transform: selectedChip === chip.value ? 'scale(1.15)' : 'scale(1)',
@@ -2333,7 +2469,8 @@ export default function FishPrawnCrabGame() {
                         setCustomAmount(isCustomChip ? String(selectedChip) : '')
                         setCustomModalOpen(true)
                       }}
-                      className="relative flex h-11 w-11 shrink-0 flex-col items-center justify-center rounded-full bg-gradient-to-b from-purple-600 to-purple-900 font-bold text-white transition-all"
+                      disabled={randomBoardLocked}
+                      className="relative flex h-11 w-11 shrink-0 flex-col items-center justify-center rounded-full bg-gradient-to-b from-purple-600 to-purple-900 font-bold text-white transition-all disabled:opacity-40"
                       style={{
                         border: isCustomChip ? '2px solid #fff' : '1px solid #c084fc',
                         transform: isCustomChip ? 'scale(1.15)' : 'scale(1)',
@@ -2773,7 +2910,16 @@ export default function FishPrawnCrabGame() {
           )}
 
           {/* Bottom betting grid — hidden on desktop when not betting (strip fills full height) */}
-          <div className={`p-3 overflow-auto${mode === 'live' && livePhase !== 'betting' ? ' hidden' : ' flex-1'}`} style={{ background: '#7c3aed' }}>
+          <div
+            className={`p-3 overflow-auto${mode === 'live' && livePhase !== 'betting' ? ' hidden' : ' flex-1'}`}
+            style={{
+              background: '#7c3aed',
+              filter: randomBoardLocked ? 'blur(2px) grayscale(0.8)' : 'none',
+              opacity: randomBoardLocked ? 0.45 : 1,
+              pointerEvents: randomBoardLocked ? 'none' : 'auto',
+              transition: 'filter 0.3s, opacity 0.3s',
+            }}
+          >
             {mode === 'live' && livePhase !== 'betting' ? null : (<>
               <div
                 ref={gridRef}
@@ -3051,7 +3197,8 @@ export default function FishPrawnCrabGame() {
                 <button
                   key={chip.value}
                   onClick={() => { soundEnabled && playCoin(); ensureBgMusic(); setSelectedChip(chip.value) }}
-                  className={`relative flex h-12 w-12 flex-col items-center justify-center rounded-full bg-gradient-to-b ${chip.colors} font-bold text-white transition-all`}
+                  disabled={randomBoardLocked}
+                  className={`relative flex h-12 w-12 flex-col items-center justify-center rounded-full bg-gradient-to-b ${chip.colors} font-bold text-white transition-all disabled:opacity-40`}
                   style={{
                     border: `1px solid ${chip.border}`,
                     transform: selectedChip === chip.value ? 'scale(1.1)' : 'scale(1)',
@@ -3072,7 +3219,8 @@ export default function FishPrawnCrabGame() {
                       setCustomAmount(isCustomChip ? String(selectedChip) : '')
                       setCustomModalOpen(true)
                     }}
-                    className="relative flex h-12 w-12 flex-col items-center justify-center rounded-full bg-gradient-to-b from-purple-600 to-purple-900 font-bold text-white transition-all"
+                    disabled={randomBoardLocked}
+                    className="relative flex h-12 w-12 flex-col items-center justify-center rounded-full bg-gradient-to-b from-purple-600 to-purple-900 font-bold text-white transition-all disabled:opacity-40"
                     style={{
                       border: '1px solid #c084fc',
                       transform: isCustomChip ? 'scale(1.22)' : 'scale(1)',
@@ -3101,22 +3249,26 @@ export default function FishPrawnCrabGame() {
 
         {/* Floating action button on mobile (right aside is hidden < md). */}
         {mode === 'random' ? (
-          <button
-            onClick={rollDice}
-            disabled={isRolling || !hasAnyBet}
-            className="fixed bottom-4 right-4 z-40 flex h-16 w-16 items-center justify-center rounded-full font-bold  text-sm transition-all disabled:opacity-40 md:hidden"
-            style={{
-              background: isRolling
-                ? 'linear-gradient(135deg, #15803d, #14532d)'
-                : 'linear-gradient(135deg, #16a34a, #15803d)',
-              color: '#fff',
-              border: '2px solid #14532d',
-              boxShadow: isRolling ? '0 4px 12px rgba(0,0,0,0.4)' : '0 4px 20px rgba(22,163,74,0.6)',
-            }}
-            aria-label="Roll dice"
-          >
-            {isRolling ? '...' : t('game.roll')}
-          </button>
+          isRoundOpen && !isRolling ? (
+            // 30s betting window — show countdown ring
+            <div className="fixed bottom-4 right-4 z-40 flex h-16 w-16 items-center justify-center rounded-full md:hidden"
+              style={{ background: '#1e0040', border: '2px solid #facc15' }}>
+              <BetCountdownRing countdown={betCountdown} size="sm" />
+            </div>
+          ) : (
+            <button
+              onClick={openRound}
+              disabled={isRolling}
+              className="fixed bottom-12 right-4 z-40 flex h-12 items-center justify-center rounded-xl px-5 font-bold text-sm transition-all disabled:opacity-40 md:hidden"
+              style={{
+                background: isRolling ? 'linear-gradient(135deg, #15803d, #14532d)' : 'linear-gradient(135deg, #16a34a, #15803d)',
+                color: '#fff', border: '2px solid #14532d',
+                boxShadow: isRolling ? '0 4px 12px rgba(0,0,0,0.4)' : '0 4px 20px rgba(22,163,74,0.6)',
+              }}
+            >
+              {isRolling ? '...' : t('game.bet')}
+            </button>
+          )
         ) : livePhase === 'betting' && (
           <button
             onClick={placeLiveBets}
@@ -3164,7 +3316,8 @@ export default function FishPrawnCrabGame() {
                   <button
                     key={chip.value}
                     onClick={() => { soundEnabled && playCoin(); ensureBgMusic(); setSelectedChip(chip.value) }}
-                    className={`relative flex h-11 w-full items-center justify-center rounded-xl font-bold text-white transition-all`}
+                    disabled={randomBoardLocked}
+                    className={`relative flex h-11 w-full items-center justify-center rounded-xl font-bold text-white transition-all disabled:opacity-40`}
                     style={{
                       border: selectedChip === chip.value ? "2px solid white" : `1px solid gray`,
                       boxShadow: selectedChip === chip.value ? `0 0 12px ${chip.border}` : '0 2px 6px rgba(0,0,0,0.5)',
@@ -3184,7 +3337,8 @@ export default function FishPrawnCrabGame() {
                         setCustomAmount(isCustomChip ? String(selectedChip) : '')
                         setCustomModalOpen(true)
                       }}
-                      className="col-span-2 flex h-10 w-full items-center justify-center gap-1 rounded-xl bg-gradient-to-b from-purple-600 to-purple-900 text-[11px] font-bold text-white"
+                      disabled={randomBoardLocked}
+                      className="col-span-2 flex h-10 w-full items-center justify-center gap-1 rounded-xl bg-gradient-to-b from-purple-600 to-purple-900 text-[11px] font-bold text-white disabled:opacity-40"
                       style={{
                         border: '1px solid #c084fc',
                       }}
@@ -3208,22 +3362,25 @@ export default function FishPrawnCrabGame() {
 
           <div className="mt-auto">
             {mode === 'random' ? (
-              <button
-                onClick={rollDice}
-                disabled={isRolling || !hasAnyBet}
-                className="flex h-20 w-20 items-center justify-center rounded-full font-bold  text-lg transition-all disabled:opacity-40"
-                style={{
-                  background: isRolling
-                    ? 'linear-gradient(135deg, #15803d, #14532d)'
-                    : 'linear-gradient(135deg, #16a34a, #15803d)',
-                  color: '#fff',
-                  border: '4px solid #f59e0b',
-                  boxShadow: isRolling ? 'none' : '0 0 22px rgba(22,163,74,0.55)',
-                  transform: isRolling ? 'scale(0.95)' : 'scale(1)',
-                }}
-              >
-                {isRolling ? '...' : t('game.roll')}
-              </button>
+              isRoundOpen && !isRolling ? (
+                // 30s betting window — countdown ring (desktop)
+                <div className="flex h-20 w-20 items-center justify-center rounded-full" style={{ background: '#1e0040', border: '4px solid #facc15' }}>
+                  <BetCountdownRing countdown={betCountdown} size="lg" />
+                </div>
+              ) : (
+                <button
+                  onClick={openRound}
+                  disabled={isRolling}
+                  className="flex w-full items-center justify-center rounded-xl px-4 py-4 font-bold text-sm transition-all disabled:opacity-40"
+                  style={{
+                    background: isRolling ? 'linear-gradient(135deg, #15803d, #14532d)' : 'linear-gradient(135deg, #16a34a, #15803d)',
+                    color: '#fff', border: '2px solid #f59e0b',
+                    boxShadow: isRolling ? 'none' : '0 0 22px rgba(22,163,74,0.55)',
+                  }}
+                >
+                  {isRolling ? '...' : t('game.bet')}
+                </button>
+              )
             ) : livePhase === 'betting' ? (
               <button
                 onClick={placeLiveBets}

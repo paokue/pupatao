@@ -137,6 +137,23 @@
   100% { transform: translateX(100%); }
 }
 
+/* Processing number — pulses gold glow. */
+@keyframes processingBanner {
+  from { opacity: 0.7; text-shadow: 0 0 6px rgba(250,204,21,0.4); }
+  to   { opacity: 1;   text-shadow: 0 0 18px rgba(250,204,21,1); }
+}
+/* Processing bars — staggered height pulse. */
+@keyframes processingBar {
+  from { height: 4px; opacity: 0.5; }
+  to   { height: 12px; opacity: 1; }
+}
+
+/* Dice spin — full 360° rotation. */
+@keyframes diceRoll {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
 /* Dice result — golden glow breathes in/out for 5s while player sees the result. */
 @keyframes revealPulse {
   from { box-shadow: 0 0 10px 2px rgba(250,204,21,0.4), 0 0 24px 4px rgba(250,204,21,0.15); }
