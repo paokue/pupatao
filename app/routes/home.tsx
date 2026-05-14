@@ -1567,7 +1567,7 @@ export default function FishPrawnCrabGame() {
           dice: finalResults, diceSum: sum,
           symbolResults, rangeResults, pairResults,
         })
-      }, 3000)
+      }, 1000)
     }
   }, [currentBets, currentRangeBets, currentPairBets, balance, soundEnabled, playWin, playLose, stopRollSound])
 
@@ -1665,7 +1665,7 @@ export default function FishPrawnCrabGame() {
 
   // ── openRound: user clicks ວາງເດີມພັນ → enables the board for 30 seconds.
   const openRound = useCallback(() => {
-    if (isRoundOpen || isRolling) return
+    if (isRoundOpen || isRolling || isRevealingResult || resultModal) return
     ensureBgMusic()
     setIsRoundOpen(true)
     setBetCountdown(15)
@@ -1682,7 +1682,7 @@ export default function FishPrawnCrabGame() {
         return next
       })
     }, 1000)
-  }, [isRoundOpen, isRolling, ensureBgMusic])
+  }, [isRoundOpen, isRolling, isRevealingResult, resultModal, ensureBgMusic])
 
   // LIVE bet submission — sends staged bets up to /api/play-round which
   // attaches them to the admin's open round and debits the stake. No dice
@@ -3250,7 +3250,7 @@ export default function FishPrawnCrabGame() {
               style={{ background: '#1e0040', border: '2px solid #facc15' }}>
               <BetCountdownRing countdown={betCountdown} size="sm" />
             </div>
-          ) : (
+          ) : !resultModal && !isRevealingResult ? (
             <button
               onClick={openRound}
               className="fixed bottom-4 right-4 z-40 flex h-14 items-center justify-center rounded-xl px-5 font-bold text-sm transition-all md:hidden"
@@ -3262,7 +3262,7 @@ export default function FishPrawnCrabGame() {
             >
               {t('game.bet')}
             </button>
-          )
+          ) : null
         ) : livePhase === 'betting' && (
           <button
             onClick={placeLiveBets}
@@ -3366,7 +3366,7 @@ export default function FishPrawnCrabGame() {
                 <div className="flex h-20 w-20 items-center justify-center rounded-full" style={{ background: '#1e0040', border: '4px solid #facc15' }}>
                   <BetCountdownRing countdown={betCountdown} size="lg" />
                 </div>
-              ) : (
+              ) : !resultModal && !isRevealingResult ? (
                 <button
                   onClick={openRound}
                   className="flex w-full items-center justify-center rounded-xl px-4 py-4 font-bold text-sm transition-all"
@@ -3378,7 +3378,7 @@ export default function FishPrawnCrabGame() {
                 >
                   {t('game.bet')}
                 </button>
-              )
+              ) : null
             ) : livePhase === 'betting' ? (
               <button
                 onClick={placeLiveBets}
