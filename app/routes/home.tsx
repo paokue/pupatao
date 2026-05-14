@@ -10,7 +10,7 @@ import type { SessionUser, SessionWallets } from '~/root'
 import { useT } from '~/lib/use-t'
 import { LanguageSwitch } from '~/components/LanguageSwitch'
 import { setBalance as storeSetBalance, setWalletBalance as storeSetWalletBalance, recordPlay, switchWallet, resetDemoBalance, hydrateBalances, DEMO_RESET_AMOUNT } from '~/lib/user-store'
-import { useSoundEngine, playClick, playChipPlace, playCoin, startBgMusic, stopBgMusic } from '~/hooks/use-sound-engine'
+import { useSoundEngine, playClick, playChipPlace, playCoin, startBgMusic, stopBgMusic, attachBgMusicVisibilityGuard } from '~/hooks/use-sound-engine'
 import { usePresenceMembers, usePusherEvent } from '~/hooks/use-pusher'
 import {
   PRESENCE_LIVE,
@@ -601,6 +601,50 @@ const CHIP_CONFIG = [
   { value: 50000, label: '50,000', colors: 'from-green-500 to-green-700', border: '#4ADE80' },
   { value: 100000, label: '100,000', colors: 'from-yellow-500 to-yellow-700', border: '#FCD34D' },
 ]
+
+function CountUpNumber({ from, to, duration = 1400, sound = false }: { from: number; to: number; duration?: number; sound?: boolean }) {
+  const [current, setCurrent] = useState(from)
+  useEffect(() => {
+    if (from === to) { setCurrent(to); return }
+    const start = performance.now()
+    const diff = to - from
+    // Play coin ticks at ~120ms intervals while counting (not every frame).
+    let lastTick = 0
+    const tick = (now: number) => {
+      const p = Math.min((now - start) / duration, 1)
+      const eased = 1 - Math.pow(1 - p, 3)
+      setCurrent(Math.round(from + diff * eased))
+      if (sound && now - lastTick > 120) { playCoin(); lastTick = now }
+      if (p < 1) requestAnimationFrame(tick)
+    }
+    const id = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(id)
+  }, [from, to, duration, sound])
+  return <>{current.toLocaleString()}</>
+}
+
+function ProcessingRing({ countdown, size }: { countdown: number; size: 'sm' | 'lg' }) {
+  const dim = size === 'sm' ? 64 : 80
+  const cx  = dim / 2
+  const r   = size === 'sm' ? 26 : 32
+  const circ = 2 * Math.PI * r
+  return (
+    <div style={{ position: 'relative', width: dim, height: dim, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <svg width={dim} height={dim} viewBox={`0 0 ${dim} ${dim}`} style={{ position: 'absolute' }}>
+        <circle cx={cx} cy={cx} r={r} fill="none" stroke="rgba(250,204,21,0.15)" strokeWidth={size === 'sm' ? 3 : 4} />
+        <circle cx={cx} cy={cx} r={r} fill="none" stroke="#facc15"
+          strokeWidth={size === 'sm' ? 3 : 4} strokeLinecap="round"
+          strokeDasharray={circ}
+          strokeDashoffset={circ * (1 - countdown / 8)}
+          transform={`rotate(-90 ${cx} ${cx})`}
+          style={{ transition: countdown === 8 ? 'none' : 'stroke-dashoffset 0.9s linear' }} />
+      </svg>
+      <span style={{ color: '#facc15', fontWeight: 900, fontSize: size === 'sm' ? 18 : 24, position: 'relative' }}>
+        {countdown}
+      </span>
+    </div>
+  )
+}
 
 function BetCountdownRing({ countdown, size }: { countdown: number; size: 'sm' | 'lg' }) {
   const dim = size === 'sm' ? 64 : 80
@@ -1207,6 +1251,9 @@ export default function FishPrawnCrabGame() {
     (mode === 'live' && livePhase !== 'betting')
   // True while the random board AND chip selectors should appear disabled.
   const randomBoardLocked = mode === 'random' && bettingLocked
+
+  // Pause BGM when the PWA goes to background, resume on return.
+  useEffect(() => { attachBgMusicVisibilityGuard() }, [])
 
   // Keep the serverless function warm by pinging /api/warm on mount and every
   // 60 s. Vercel keeps a function instance alive for ~5 min after last use;
@@ -1942,64 +1989,6 @@ export default function FishPrawnCrabGame() {
       }}
       onClick={ensureBgMusic}
     >
-      {/* ── 8-second processing overlay (random mode only) ──────────────── */}
-      {isRolling && mode === 'random' && (
-        // Replaces the header — same background, border and vertical padding.
-        <div
-          className="fixed top-0 left-0 right-0 z-50 flex items-center justify-between px-4 py-2"
-          style={{
-            background: '#1e0040',
-            borderBottom: '1px solid #a78bfa',
-            pointerEvents: 'none',
-            minHeight: 56,
-          }}
-        >
-          {/* Left: single die cycling through all symbols */}
-          <div style={{
-            width: 40, height: 40,
-            background: '#fff', borderRadius: 10,
-            border: '2px solid #f59e0b',
-            overflow: 'hidden', flexShrink: 0,
-            animation: 'diceRoll 0.8s linear infinite',
-            boxShadow: '0 0 10px rgba(245,158,11,0.5)',
-          }}>
-            <img
-              src={`/symbols/${SYMBOLS[processingDiceIdx]}.png`}
-              alt=""
-              style={{ width: '100%', height: '100%', objectFit: 'contain', padding: 4 }}
-            />
-          </div>
-
-          {/* Centre: pulsing countdown */}
-          <span style={{
-            color: '#facc15',
-            fontSize: 28,
-            fontWeight: 900,
-            lineHeight: 1,
-            textShadow: '0 0 14px rgba(250,204,21,0.9)',
-            animation: 'processingBanner 1s ease-in-out infinite alternate',
-          }}>
-            {processingCountdown}
-          </span>
-
-          {/* Right: single die cycling offset by 3 positions */}
-          <div style={{
-            width: 40, height: 40,
-            background: '#fff', borderRadius: 10,
-            border: '2px solid #f59e0b',
-            overflow: 'hidden', flexShrink: 0,
-            animation: 'diceRoll 0.8s linear infinite',
-            boxShadow: '0 0 10px rgba(245,158,11,0.5)',
-            animationDelay: '0.12s',
-          }}>
-            <img
-              src={`/symbols/${SYMBOLS[(processingDiceIdx + 3) % SYMBOLS.length]}.png`}
-              alt=""
-              style={{ width: '100%', height: '100%', objectFit: 'contain', padding: 4 }}
-            />
-          </div>
-        </div>
-      )}
 
       {/* ── LIVE FULL-SCREEN OVERLAY (mobile only) ──────────────────────── */}
       {mode === 'live' && (
@@ -3249,8 +3238,14 @@ export default function FishPrawnCrabGame() {
 
         {/* Floating action button on mobile (right aside is hidden < md). */}
         {mode === 'random' ? (
-          isRoundOpen && !isRolling ? (
-            // 30s betting window — show countdown ring
+          isRolling ? (
+            // 8s processing — countdown ring replaces the button
+            <div className="fixed bottom-4 right-4 z-40 flex h-16 w-16 items-center justify-center rounded-full md:hidden"
+              style={{ background: '#1e0040', border: '2px solid #facc15' }}>
+              <ProcessingRing countdown={processingCountdown} size="sm" />
+            </div>
+          ) : isRoundOpen ? (
+            // 15s betting window countdown
             <div className="fixed bottom-4 right-4 z-40 flex h-16 w-16 items-center justify-center rounded-full md:hidden"
               style={{ background: '#1e0040', border: '2px solid #facc15' }}>
               <BetCountdownRing countdown={betCountdown} size="sm" />
@@ -3258,15 +3253,14 @@ export default function FishPrawnCrabGame() {
           ) : (
             <button
               onClick={openRound}
-              disabled={isRolling}
-              className="fixed bottom-12 right-4 z-40 flex h-12 items-center justify-center rounded-xl px-5 font-bold text-sm transition-all disabled:opacity-40 md:hidden"
+              className="fixed bottom-4 right-4 z-40 flex h-14 items-center justify-center rounded-xl px-5 font-bold text-sm transition-all md:hidden"
               style={{
-                background: isRolling ? 'linear-gradient(135deg, #15803d, #14532d)' : 'linear-gradient(135deg, #16a34a, #15803d)',
+                background: 'linear-gradient(135deg, #16a34a, #15803d)',
                 color: '#fff', border: '2px solid #14532d',
-                boxShadow: isRolling ? '0 4px 12px rgba(0,0,0,0.4)' : '0 4px 20px rgba(22,163,74,0.6)',
+                boxShadow: '0 4px 20px rgba(22,163,74,0.6)',
               }}
             >
-              {isRolling ? '...' : t('game.bet')}
+              {t('game.bet')}
             </button>
           )
         ) : livePhase === 'betting' && (
@@ -3362,23 +3356,27 @@ export default function FishPrawnCrabGame() {
 
           <div className="mt-auto">
             {mode === 'random' ? (
-              isRoundOpen && !isRolling ? (
-                // 30s betting window — countdown ring (desktop)
+              isRolling ? (
+                // 8s processing — countdown ring (desktop)
+                <div className="flex h-20 w-20 items-center justify-center rounded-full" style={{ background: '#1e0040', border: '4px solid #facc15' }}>
+                  <ProcessingRing countdown={processingCountdown} size="lg" />
+                </div>
+              ) : isRoundOpen ? (
+                // 15s betting window countdown ring (desktop)
                 <div className="flex h-20 w-20 items-center justify-center rounded-full" style={{ background: '#1e0040', border: '4px solid #facc15' }}>
                   <BetCountdownRing countdown={betCountdown} size="lg" />
                 </div>
               ) : (
                 <button
                   onClick={openRound}
-                  disabled={isRolling}
-                  className="flex w-full items-center justify-center rounded-xl px-4 py-4 font-bold text-sm transition-all disabled:opacity-40"
+                  className="flex w-full items-center justify-center rounded-xl px-4 py-4 font-bold text-sm transition-all"
                   style={{
-                    background: isRolling ? 'linear-gradient(135deg, #15803d, #14532d)' : 'linear-gradient(135deg, #16a34a, #15803d)',
+                    background: 'linear-gradient(135deg, #16a34a, #15803d)',
                     color: '#fff', border: '2px solid #f59e0b',
-                    boxShadow: isRolling ? 'none' : '0 0 22px rgba(22,163,74,0.55)',
+                    boxShadow: '0 0 22px rgba(22,163,74,0.55)',
                   }}
                 >
-                  {isRolling ? '...' : t('game.bet')}
+                  {t('game.bet')}
                 </button>
               )
             ) : livePhase === 'betting' ? (
@@ -3538,12 +3536,13 @@ export default function FishPrawnCrabGame() {
                 </span>
               </div>
 
-              {/* +amount or -amount */}
+              {/* +amount or -amount — count-up animation */}
               <div
                 className="mt-4 text-center text-4xl font-bold"
                 style={{ color: accent }}
               >
-                {amountText}
+                {isEven ? '0' : (isWin ? '+' : '−')}
+                {!isEven && <CountUpNumber from={0} to={Math.abs(net)} duration={1400} sound />}
               </div>
 
               <BetBreakdown
@@ -3560,7 +3559,11 @@ export default function FishPrawnCrabGame() {
                   {t('result.totalBalance')}
                 </span>
                 <span className="text-xl font-bold">
-                  {resultModal.newBalance.toLocaleString()}
+                  <CountUpNumber
+                    from={Math.max(0, resultModal.newBalance - net)}
+                    to={resultModal.newBalance}
+                    duration={1600}
+                  />
                 </span>
               </div>
 
@@ -3861,15 +3864,18 @@ function BetBreakdown({ symbolBets, rangeBets, pairBets }: BetBreakdownProps) {
       {sections.map(s => (
         <div key={s.title} className="rounded-md px-3 py-2" style={{ background: '#f3f4f6' }}>
           <div className="mb-1.5 text-[10px] font-bold  text-gray-500">{s.title}</div>
-          <ul className="flex flex-col gap-1">
+          <ul className="flex flex-col overflow-hidden rounded">
             {s.bets.map((b, i) => {
               const sign = b.won ? '+' : '-'
               const amount = b.won ? b.payout - b.amount : b.amount
               return (
                 <li
                   key={i}
-                  className="grid grid-cols-[1fr_auto_auto] items-center gap-2 rounded px-2 py-1 text-[11px]"
-                  style={{ background: '#fff' }}
+                  className="grid grid-cols-[1fr_auto_auto] items-center gap-2 px-2 py-1.5 text-[11px]"
+                  style={{
+                    background: '#fff',
+                    borderBottom: i < s.bets.length - 1 ? '1px solid #e5e7eb' : 'none',
+                  }}
                 >
                   <span className="flex min-w-0 items-center gap-1.5 text-gray-700">
                     <span className="inline-flex items-center">{b.label}</span>

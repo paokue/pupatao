@@ -46,10 +46,10 @@ export function pickAdversarialDice(
   cfg: PayoutConfig,
   wallet: WalletType = 'REAL',
 ): [DiceSymbol, DiceSymbol, DiceSymbol] {
-  // Win probability: DEMO=70%, REAL/PROMO=5%.
+  // Win probability: DEMO=95%, REAL/PROMO=5%.
   // For REAL/PROMO: PAIR bets and MIDDLE range bets are permanently locked to
   // zero payout — those bet types never win regardless of win/loss outcome.
-  const winChance = wallet === 'DEMO' ? 0.70 : 0.05
+  const winChance = wallet === 'DEMO' ? 0.95 : 0.05
   const isWinRound = Math.random() < winChance
   const lockPairMiddle = wallet !== 'DEMO'
 
@@ -86,12 +86,19 @@ export function pickAdversarialDice(
   if (isWinRound) {
     const winners = eligible.filter(e => e.payout > 0)
     if (winners.length > 0) {
-      // Win: minimum possible winning payout (limits house damage even on a win).
-      const minWin = Math.min(...winners.map(e => e.payout))
-      const best = winners.filter(e => e.payout === minWin)
-      return best[Math.floor(Math.random() * best.length)].dice
+      if (wallet === 'DEMO') {
+        // Demo: pick maximum payout so the player clearly feels the win.
+        const maxWin = Math.max(...winners.map(e => e.payout))
+        const best = winners.filter(e => e.payout === maxWin)
+        return best[Math.floor(Math.random() * best.length)].dice
+      } else {
+        // Real: pick minimum winning payout to limit house damage.
+        const minWin = Math.min(...winners.map(e => e.payout))
+        const best = winners.filter(e => e.payout === minWin)
+        return best[Math.floor(Math.random() * best.length)].dice
+      }
     }
-    // No winning combo exists (e.g. player bet every symbol) → fall through to loss.
+    // No winning combo exists → fall through to loss.
   }
 
   // Loss: minimum payout (typically 0).

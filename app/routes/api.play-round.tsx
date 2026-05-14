@@ -146,7 +146,7 @@ async function handleRandomRound(args: {
 }) {
   const { user, wallet, walletKey, totalStake, symbolBets, rangeBets, pairBets } = args
   const cfg = getPayoutConfig()
-  const dice = pickAdversarialDice(symbolBets, rangeBets, pairBets, cfg)
+  const dice = pickAdversarialDice(symbolBets, rangeBets, pairBets, cfg, walletKey as 'DEMO' | 'REAL' | 'PROMO')
   const diceSum = SYMBOL_VALUES[dice[0]] + SYMBOL_VALUES[dice[1]] + SYMBOL_VALUES[dice[2]]
   const symbolPayouts = symbolBets.map(b => payoutForSymbol(b, dice, cfg))
   const rangePayouts = rangeBets.map(b => payoutForRange(b, diceSum, cfg))

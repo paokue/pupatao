@@ -166,6 +166,27 @@ export function stopBgMusic() {
   audio.currentTime = 0
 }
 
+// Pause BGM when the PWA is backgrounded / screen is locked, resume on return.
+// Called once at app startup — safe to call multiple times (guard prevents dups).
+let visibilityHandlerAttached = false
+export function attachBgMusicVisibilityGuard() {
+  if (typeof document === 'undefined' || visibilityHandlerAttached) return
+  visibilityHandlerAttached = true
+  document.addEventListener('visibilitychange', () => {
+    const audio = getBgAudio()
+    if (!audio) return
+    if (document.hidden) {
+      // App went to background — pause without resetting position.
+      if (!audio.paused) audio.pause()
+    } else {
+      // App came back to foreground — resume only if it was playing before.
+      if (audio.paused && audio.currentTime > 0) {
+        audio.play().catch(() => {})
+      }
+    }
+  })
+}
+
 export function setBgVolume(v: number) {
   const audio = getBgAudio()
   if (audio) audio.volume = v
