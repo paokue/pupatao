@@ -408,12 +408,13 @@ function GameRow({ round }: { round: Round }) {
 
   // Distinct kinds present in this round, ordered consistently — used by the
   // body to label each bet section.
-  const kindOrder: BetKind[] = ['SYMBOL', 'PAIR', 'RANGE']
+  const kindOrder: BetKind[] = ['SYMBOL', 'PAIR', 'RANGE', 'SUM']
   const kindsPresent = kindOrder.filter(k => round.bets.some(b => b.kind === k))
   const kindLabel: Record<BetKind, string> = {
     SYMBOL: t('history.kind.single'),
     PAIR: t('history.kind.pair'),
     RANGE: t('history.kind.range'),
+    SUM: 'ເດີມພັນຕົວເລກ',
   }
 
   return (

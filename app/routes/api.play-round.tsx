@@ -5,8 +5,8 @@ import { notifyAdmin, notifyUser } from '~/lib/pusher.server'
 import type { BetPlacedPayload } from '~/lib/pusher-channels'
 import {
   SYMBOL_VALUES, VALID_SYMBOLS, RANGE_BOUNDS, VALID_RANGES,
-  type SymbolBetIn, type RangeBetIn, type PairBetIn,
-  payoutForSymbol, payoutForRange, payoutForPair,
+  type SymbolBetIn, type RangeBetIn, type PairBetIn, type SumBetIn,
+  payoutForSymbol, payoutForRange, payoutForPair, payoutForSum,
   pickAdversarialDice, getPayoutConfig, type PayoutConfig,
 } from '~/lib/game-logic.server'
 
@@ -22,6 +22,7 @@ interface PlayRoundPayload {
     symbol?: SymbolBetIn[]
     range?: RangeBetIn[]
     pair?: PairBetIn[]
+    sum?: SumBetIn[]   // exact-sum bets, LIVE mode only (numbers 3–18)
   }
 }
 
@@ -34,6 +35,7 @@ function parsePayload(raw: unknown): PlayRoundPayload | { error: string } {
   const symbol = bets.symbol ?? []
   const range = bets.range ?? []
   const pair = bets.pair ?? []
+  const sum = bets.sum ?? []
   for (const s of symbol) {
     if (!VALID_SYMBOLS.includes(s.symbol)) return { error: `Invalid symbol: ${s.symbol}.` }
     if (!Number.isInteger(s.cell) || s.cell < 0 || s.cell > 7) return { error: 'Invalid symbol cell index.' }
@@ -48,10 +50,19 @@ function parsePayload(raw: unknown): PlayRoundPayload | { error: string } {
     if (!Number.isInteger(pp.cellA) || !Number.isInteger(pp.cellB)) return { error: 'Invalid pair cells.' }
     if (!Number.isInteger(pp.amount) || pp.amount <= 0) return { error: 'Pair bet amount must be positive integer.' }
   }
+  if (sum.length > 0) {
+    if (p.mode !== 'LIVE') return { error: 'Sum bets are only allowed in LIVE mode.' }
+    const uniqueSums = new Set(sum.map(b => b.sum))
+    if (uniqueSums.size > 3) return { error: 'Maximum 3 different numbers per round.' }
+    for (const sb of sum) {
+      if (!Number.isInteger(sb.sum) || sb.sum < 3 || sb.sum > 18) return { error: `Invalid sum: ${sb.sum}. Must be 3–18.` }
+      if (!Number.isInteger(sb.amount) || sb.amount <= 0) return { error: 'Sum bet amount must be positive integer.' }
+    }
+  }
   return {
     mode: p.mode,
     wallet: p.wallet,
-    bets: { symbol, range, pair },
+    bets: { symbol, range, pair, sum },
   }
 }
 
@@ -85,10 +96,12 @@ export async function action({ request }: Route.ActionArgs) {
   const symbolBets = bets.symbol ?? []
   const rangeBets = bets.range ?? []
   const pairBets = bets.pair ?? []
+  const sumBets = bets.sum ?? []
   const totalStake =
     symbolBets.reduce((s, b) => s + b.amount, 0) +
     rangeBets.reduce((s, b) => s + b.amount, 0) +
-    pairBets.reduce((s, b) => s + b.amount, 0)
+    pairBets.reduce((s, b) => s + b.amount, 0) +
+    sumBets.reduce((s, b) => s + b.amount, 0)
 
   if (totalStake <= 0) {
     return Response.json({ error: 'No bets placed.' }, { status: 400 })
@@ -115,10 +128,21 @@ export async function action({ request }: Route.ActionArgs) {
     }
 
     if (mode === 'LIVE') {
-      return await handleLiveBets({ user, wallet, walletKey, totalStake, symbolBets, rangeBets, pairBets })
+      return await handleLiveBets({ user, wallet, walletKey, totalStake, symbolBets, rangeBets, pairBets, sumBets })
     }
+
+    let netProfit = 0
+    if (walletKey !== 'DEMO') {
+      try {
+        const { getPlayerProfitSinceReset } = await import('~/lib/player-winnings.server')
+        netProfit = await getPlayerProfitSinceReset(user.id)
+      } catch {
+        netProfit = 200_000
+      }
+    }
+
     return await handleRandomRound({
-      user, wallet, walletKey, totalStake,
+      user, wallet, walletKey, totalStake, netProfit,
       symbolBets, rangeBets, pairBets,
     })
   } catch (err) {
@@ -140,13 +164,14 @@ async function handleRandomRound(args: {
   wallet: { id: string; balance: number }
   walletKey: WalletKey
   totalStake: number
+  netProfit: number
   symbolBets: SymbolBetIn[]
   rangeBets: RangeBetIn[]
   pairBets: PairBetIn[]
 }) {
-  const { user, wallet, walletKey, totalStake, symbolBets, rangeBets, pairBets } = args
+  const { user, wallet, walletKey, totalStake, netProfit, symbolBets, rangeBets, pairBets } = args
   const cfg = getPayoutConfig()
-  const dice = pickAdversarialDice(symbolBets, rangeBets, pairBets, cfg, walletKey as 'DEMO' | 'REAL' | 'PROMO')
+  const dice = pickAdversarialDice(symbolBets, rangeBets, pairBets, cfg, walletKey as 'DEMO' | 'REAL' | 'PROMO', netProfit)
   const diceSum = SYMBOL_VALUES[dice[0]] + SYMBOL_VALUES[dice[1]] + SYMBOL_VALUES[dice[2]]
   const symbolPayouts = symbolBets.map(b => payoutForSymbol(b, dice, cfg))
   const rangePayouts = rangeBets.map(b => payoutForRange(b, diceSum, cfg))
@@ -330,8 +355,9 @@ async function handleLiveBets(args: {
   symbolBets: SymbolBetIn[]
   rangeBets: RangeBetIn[]
   pairBets: PairBetIn[]
+  sumBets: SumBetIn[]
 }) {
-  const { user, wallet, totalStake, symbolBets, rangeBets, pairBets } = args
+  const { user, wallet, totalStake, symbolBets, rangeBets, pairBets, sumBets } = args
 
   const openRound = await prisma.gameRound.findFirst({
     where: { mode: 'LIVE', status: 'BETTING' },
@@ -358,7 +384,7 @@ async function handleLiveBets(args: {
 
     const newBalance = fresh.balance - totalStake
 
-    const createdBets: Array<{ kind: 'SYMBOL' | 'RANGE' | 'PAIR'; amount: number; symbol: DiceSymbol | null; range: RangeKey | null; pairA: DiceSymbol | null; pairB: DiceSymbol | null }> = []
+    const createdBets: Array<{ kind: 'SYMBOL' | 'RANGE' | 'PAIR' | 'SUM'; amount: number; symbol: DiceSymbol | null; range: RangeKey | null; pairA: DiceSymbol | null; pairB: DiceSymbol | null; exactSum: number | null }> = []
 
     for (const b of symbolBets) {
       await db.bet.create({
@@ -368,7 +394,7 @@ async function handleLiveBets(args: {
           symbol: b.symbol, cell: b.cell,
         },
       })
-      createdBets.push({ kind: 'SYMBOL', amount: b.amount, symbol: b.symbol, range: null, pairA: null, pairB: null })
+      createdBets.push({ kind: 'SYMBOL', amount: b.amount, symbol: b.symbol, range: null, pairA: null, pairB: null, exactSum: null })
     }
     for (const b of rangeBets) {
       await db.bet.create({
@@ -377,7 +403,7 @@ async function handleLiveBets(args: {
           kind: 'RANGE', amount: b.amount, range: b.range,
         },
       })
-      createdBets.push({ kind: 'RANGE', amount: b.amount, symbol: null, range: b.range, pairA: null, pairB: null })
+      createdBets.push({ kind: 'RANGE', amount: b.amount, symbol: null, range: b.range, pairA: null, pairB: null, exactSum: null })
     }
     for (const b of pairBets) {
       await db.bet.create({
@@ -387,7 +413,16 @@ async function handleLiveBets(args: {
           pairA: b.symbolA, pairB: b.symbolB, cellA: b.cellA, cellB: b.cellB,
         },
       })
-      createdBets.push({ kind: 'PAIR', amount: b.amount, symbol: null, range: null, pairA: b.symbolA, pairB: b.symbolB })
+      createdBets.push({ kind: 'PAIR', amount: b.amount, symbol: null, range: null, pairA: b.symbolA, pairB: b.symbolB, exactSum: null })
+    }
+    for (const b of sumBets) {
+      await db.bet.create({
+        data: {
+          roundId: openRound.id, userId: user.id, walletId: wallet.id,
+          kind: 'SUM', amount: b.amount, exactSum: b.sum,
+        },
+      })
+      createdBets.push({ kind: 'SUM', amount: b.amount, symbol: null, range: null, pairA: null, pairB: null, exactSum: b.sum })
     }
 
     await db.wallet.update({
@@ -415,6 +450,7 @@ async function handleLiveBets(args: {
       userId: user.id, userTel: user.tel, userName,
       kind: b.kind, amount: b.amount,
       symbol: b.symbol, range: b.range, pairA: b.pairA, pairB: b.pairB,
+      exactSum: b.exactSum,
       createdAt: placedAtIso,
     }
     notifyAdmin('bet:placed', payload)

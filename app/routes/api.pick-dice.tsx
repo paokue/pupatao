@@ -1,7 +1,7 @@
 // Phase-1 of the two-phase RANDOM round flow.
-// NO database access — just picks adversarial dice and signs the result so
-// Phase-2 (/api/save-round) can trust it. Returns in ~50 ms even on a
-// Vercel cold start because there is no MongoDB connection needed.
+// Picks adversarial dice and signs the result so Phase-2 (/api/save-round) can
+// trust it. For REAL/PROMO wallets a single aggregate query fetches the user's
+// cumulative winnings to select the correct house-edge tier; DEMO skips the DB.
 import type { DiceSymbol, RangeKey } from '@prisma/client'
 import {
   VALID_SYMBOLS, VALID_RANGES,
@@ -56,8 +56,29 @@ export async function action({ request }: { request: Request }) {
   const parsed = parseBets(raw)
   if ('error' in parsed) return Response.json(parsed, { status: 400 })
 
+  // For REAL/PROMO wallets fetch net profit since the last fresh-start deposit
+  // to select the correct tier. DEMO skips the DB entirely.
+  let netProfit = 0
+  if (parsed.wallet !== 'DEMO') {
+    const { getCurrentUser } = await import('~/lib/auth.server')
+    const { getPlayerProfitSinceReset } = await import('~/lib/player-winnings.server')
+    let user: Awaited<ReturnType<typeof getCurrentUser>>
+    try {
+      user = await getCurrentUser(request)
+    } catch {
+      return Response.json({ error: 'Session error.' }, { status: 503 })
+    }
+    if (!user) return Response.json({ error: 'Signed out.' }, { status: 401 })
+    try {
+      netProfit = await getPlayerProfitSinceReset(user.id)
+    } catch {
+      // On DB failure, default to the strictest tier (≥200k) to protect the house.
+      netProfit = 200_000
+    }
+  }
+
   const cfg  = getPayoutConfig()
-  const dice = pickAdversarialDice(parsed.symbolBets, parsed.rangeBets, parsed.pairBets, cfg, parsed.wallet as WalletType)
+  const dice = pickAdversarialDice(parsed.symbolBets, parsed.rangeBets, parsed.pairBets, cfg, parsed.wallet as WalletType, netProfit)
 
   const token = signRoundToken({
     dice,

@@ -29,7 +29,7 @@ const RANGE_BOUNDS: Record<'LOW' | 'MIDDLE' | 'HIGH', { min: number; max: number
 // produces the same numbers as a client-rolled RANDOM round would.
 // Multipliers come from getPayoutConfig() so a single env change tunes both.
 function computeBetPayout(
-  b: { kind: string; amount: number; symbol: string | null; range: string | null; pairA: string | null; pairB: string | null },
+  b: { kind: string; amount: number; symbol: string | null; range: string | null; pairA: string | null; pairB: string | null; exactSum?: number | null },
   dice: DiceSymbol[],
   diceSum: number,
   cfg: PayoutConfig,
@@ -52,6 +52,9 @@ function computeBetPayout(
     return dice.includes(b.pairA as DiceSymbol) && dice.includes(b.pairB as DiceSymbol)
       ? b.amount * cfg.pair
       : 0
+  }
+  if (b.kind === 'SUM' && b.exactSum != null) {
+    return diceSum === b.exactSum ? b.amount * cfg.sumNumber : 0
   }
   return 0
 }
@@ -161,12 +164,13 @@ export async function loader({ request }: Route.LoaderArgs) {
 // Shape used by both the seeded bets (from the loader) and the realtime feed.
 type LiveBet = {
   id: string
-  kind: 'SYMBOL' | 'RANGE' | 'PAIR'
+  kind: 'SYMBOL' | 'RANGE' | 'PAIR' | 'SUM'
   amount: number
   symbol: string | null
   range: string | null
   pairA: string | null
   pairB: string | null
+  exactSum?: number | null
   createdAt: string
   userId: string
   userTel: string
@@ -335,7 +339,7 @@ export async function action({ request }: Route.ActionArgs) {
       // guard above.
       const bets = await prisma.bet.findMany({
         where: { roundId },
-        select: { id: true, userId: true, walletId: true, kind: true, amount: true, symbol: true, range: true, pairA: true, pairB: true, user: { select: { tel: true, firstName: true, lastName: true } }, wallet: { select: { type: true } } },
+        select: { id: true, userId: true, walletId: true, kind: true, amount: true, symbol: true, range: true, pairA: true, pairB: true, exactSum: true, user: { select: { tel: true, firstName: true, lastName: true } }, wallet: { select: { type: true } } },
       })
 
       const cfg = getPayoutConfig()
@@ -476,17 +480,18 @@ export async function action({ request }: Route.ActionArgs) {
       // Build per-user bet lists for the round:settled events. The customer's
       // result modal renders one row per bet so they see exactly what they
       // placed and how each bet resolved.
-      const perUserBets = new Map<string, { kind: 'SYMBOL' | 'RANGE' | 'PAIR'; amount: number; symbol: string | null; range: string | null; pairA: string | null; pairB: string | null; payout: number; result: 'WIN' | 'LOSS' }[]>()
+      const perUserBets = new Map<string, { kind: 'SYMBOL' | 'RANGE' | 'PAIR' | 'SUM'; amount: number; symbol: string | null; range: string | null; pairA: string | null; pairB: string | null; exactSum: number | null; payout: number; result: 'WIN' | 'LOSS' }[]>()
       bets.forEach((b, i) => {
         const u = betUpdates[i]
         const list = perUserBets.get(b.userId) ?? []
         list.push({
-          kind: b.kind as 'SYMBOL' | 'RANGE' | 'PAIR',
+          kind: b.kind as 'SYMBOL' | 'RANGE' | 'PAIR' | 'SUM',
           amount: b.amount,
           symbol: b.symbol,
           range: b.range,
           pairA: b.pairA,
           pairB: b.pairB,
+          exactSum: b.exactSum ?? null,
           payout: u.payout,
           result: u.result,
         })

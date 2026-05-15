@@ -44,12 +44,13 @@ export interface BetPlacedPayload {
   userId: string
   userTel: string
   userName: string | null
-  kind: 'SYMBOL' | 'RANGE' | 'PAIR'
+  kind: 'SYMBOL' | 'RANGE' | 'PAIR' | 'SUM'
   amount: number
   symbol: string | null
   range: string | null
   pairA: string | null
   pairB: string | null
+  exactSum: number | null
   createdAt: string
 }
 
@@ -90,12 +91,13 @@ export interface RoundStreamUpdatedPayload {
 // personal stake/payout/net + new balance so their result modal can render
 // without an extra fetch.
 export interface SettledBet {
-  kind: 'SYMBOL' | 'RANGE' | 'PAIR'
+  kind: 'SYMBOL' | 'RANGE' | 'PAIR' | 'SUM'
   amount: number
   symbol: string | null
   range: string | null
   pairA: string | null
   pairB: string | null
+  exactSum: number | null
   payout: number   // 0 if lost
   result: 'WIN' | 'LOSS'
 }

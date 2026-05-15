@@ -14,6 +14,7 @@ export type PayoutConfig = {
   rangeLow: number     // sum 3-8  (default 2: 1,000 → 2,000)
   rangeMiddle: number  // sum 9-10 (default 6: 1,000 → 6,000)
   rangeHigh: number    // sum 11-18 (default 2: 1,000 → 2,000)
+  sumNumber: number    // exact-sum bet (default 4: stake 10,000 → 40,000; shown as ×3 profit)
 }
 
 function envInt(name: string, def: number): number {
@@ -33,5 +34,6 @@ export function getPayoutConfig(): PayoutConfig {
     rangeLow: envInt('PAYOUT_RANGE_LOW', 2),
     rangeMiddle: envInt('PAYOUT_RANGE_MIDDLE', 6),
     rangeHigh: envInt('PAYOUT_RANGE_HIGH', 2),
+    sumNumber: envInt('PAYOUT_SUM_NUMBER', 4),
   }
 }

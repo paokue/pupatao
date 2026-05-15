@@ -387,6 +387,9 @@ model Bet {
   cellA Int?
   cellB Int?
 
+  // SUM bet — exact dice-sum value (3–18), live mode only
+  exactSum Int?
+
   createdAt  DateTime  @default(now())
   resolvedAt DateTime?
 
@@ -404,6 +407,7 @@ enum BetKind {
   SYMBOL
   RANGE
   PAIR
+  SUM    // exact dice-sum bet (3–18), live mode only
 }
 
 enum RangeKey {

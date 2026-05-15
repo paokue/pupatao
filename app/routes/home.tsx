@@ -841,12 +841,13 @@ function PickerDropdown({ items, active, onSelect, onClose, align = 'left' }: Pi
 // Shape of a single bet in the customer's "your bets in this round" list.
 type MyLiveBet = {
   id: string
-  kind: 'SYMBOL' | 'RANGE' | 'PAIR'
+  kind: 'SYMBOL' | 'RANGE' | 'PAIR' | 'SUM'
   amount: number
   symbol: string | null
   range: string | null
   pairA: string | null
   pairB: string | null
+  exactSum: number | null
 }
 
 // Recent rolls for the HISTORY sidebar. Self-play list is per-user (rounds
@@ -918,15 +919,16 @@ export async function loader({ request }: Route.LoaderArgs) {
     ? (await prisma.bet.findMany({
       where: { roundId: liveRound.id, userId: user.id },
       orderBy: { createdAt: 'asc' },
-      select: { id: true, kind: true, amount: true, symbol: true, range: true, pairA: true, pairB: true },
+      select: { id: true, kind: true, amount: true, symbol: true, range: true, pairA: true, pairB: true, exactSum: true },
     })).map(b => ({
       id: b.id,
-      kind: b.kind as 'SYMBOL' | 'RANGE' | 'PAIR',
+      kind: b.kind as 'SYMBOL' | 'RANGE' | 'PAIR' | 'SUM',
       amount: b.amount,
       symbol: b.symbol as string | null,
       range: b.range as string | null,
       pairA: b.pairA as string | null,
       pairB: b.pairB as string | null,
+      exactSum: b.exactSum as number | null,
     }))
     : []
 
@@ -1007,6 +1009,7 @@ export default function FishPrawnCrabGame() {
 
   const [currentBets, setCurrentBets] = useState<Bet[]>([])
   const [currentRangeBets, setCurrentRangeBets] = useState<RangeBet[]>([])
+  const [currentSumBets, setCurrentSumBets] = useState<{ sum: number; amount: number }[]>([])
   const [currentPairBets, setCurrentPairBets] = useState<PairBet[]>([])
   const [pendingCell, setPendingCell] = useState<number | null>(null)
   const [selectedChip, setSelectedChip] = useState(5_000)
@@ -1237,14 +1240,16 @@ export default function FishPrawnCrabGame() {
   const totalBet =
     currentBets.reduce((sum, b) => sum + b.amount, 0) +
     currentRangeBets.reduce((sum, b) => sum + b.amount, 0) +
-    currentPairBets.reduce((sum, b) => sum + b.amount, 0)
+    currentPairBets.reduce((sum, b) => sum + b.amount, 0) +
+    currentSumBets.reduce((sum, b) => sum + b.amount, 0)
   const getBetAmount = (cell: number) => currentBets.find(b => b.cell === cell)?.amount ?? 0
   const getRangeBetAmount = (range: RangeKey) => currentRangeBets.find(b => b.range === range)?.amount ?? 0
+  const getSumBetAmount = (sum: number) => currentSumBets.find(b => b.sum === sum)?.amount ?? 0
   // Pair amount for a specific cell (not symbol) so only the tapped cell lights up,
   // even when the same symbol appears twice on the board.
   const getPairBetAmount = (cellIdx: number) =>
     currentPairBets.filter(p => p.cellA === cellIdx || p.cellB === cellIdx).reduce((s, p) => s + p.amount, 0)
-  const hasAnyBet = currentBets.length > 0 || currentRangeBets.length > 0 || currentPairBets.length > 0
+  const hasAnyBet = currentBets.length > 0 || currentRangeBets.length > 0 || currentPairBets.length > 0 || currentSumBets.length > 0
   const diceSum = diceResults.reduce((s, sym) => s + SYMBOL_VALUES[sym], 0)
   const bettingLocked = isRolling ||
     (mode === 'random' && !isRoundOpen) ||
@@ -1317,6 +1322,25 @@ export default function FishPrawnCrabGame() {
     })
     setBalance(prev => prev - selectedChip)
   }, [bettingLocked, balance, selectedChip, ensureBgMusic, soundEnabled])
+
+  const placeSumBet = useCallback((sum: number) => {
+    ensureBgMusic()
+    if (bettingLocked || balance < selectedChip) return
+    // Enforce max 3 unique numbers per round.
+    const isNew = !currentSumBets.find(b => b.sum === sum)
+    if (isNew && currentSumBets.length >= 3) return
+    soundEnabled && playChipPlace()
+    setCurrentSumBets(prev => {
+      const idx = prev.findIndex(b => b.sum === sum)
+      if (idx >= 0) {
+        const next = [...prev]
+        next[idx] = { ...next[idx], amount: next[idx].amount + selectedChip }
+        return next
+      }
+      return [...prev, { sum, amount: selectedChip }]
+    })
+    setBalance(prev => prev - selectedChip)
+  }, [bettingLocked, balance, selectedChip, currentSumBets, ensureBgMusic, soundEnabled])
 
   const placePairBet = useCallback((cA: number, cB: number) => {
     if (balance < selectedChip) return
@@ -1529,6 +1553,7 @@ export default function FishPrawnCrabGame() {
     setCurrentBets([])
     setCurrentRangeBets([])
     setCurrentPairBets([])
+    setCurrentSumBets([])
     setIsRolling(false)
     setIsRoundOpen(false)
     setBetCountdown(15)
@@ -1700,11 +1725,13 @@ export default function FishPrawnCrabGame() {
       symbol: currentBets,
       range: currentRangeBets,
       pair: currentPairBets,
+      sum: currentSumBets,
     }
     const betTotal =
       snapshot.symbol.reduce((s, b) => s + b.amount, 0) +
       snapshot.range.reduce((s, b) => s + b.amount, 0) +
-      snapshot.pair.reduce((s, b) => s + b.amount, 0)
+      snapshot.pair.reduce((s, b) => s + b.amount, 0) +
+      snapshot.sum.reduce((s, b) => s + b.amount, 0)
 
     // Defensive: don't even hit the server if the staged total exceeds the
     // wallet balance the store knows about. This avoids a confusing
@@ -1740,6 +1767,7 @@ export default function FishPrawnCrabGame() {
           cellB: b.cellB,
           amount: b.amount,
         })),
+        sum: snapshot.sum.map(b => ({ sum: b.sum, amount: b.amount })),
       },
     }
     playRoundFetcher.submit(payload, {
@@ -1752,13 +1780,14 @@ export default function FishPrawnCrabGame() {
     setCurrentBets([])
     setCurrentRangeBets([])
     setCurrentPairBets([])
+    setCurrentSumBets([])
     setPendingCell(null)
     setLastBetTotal(betTotal)
     soundEnabled && playClick()
     toast.success(t('live.betsPlacedTitle'), {
       description: t('live.betsPlacedDesc', { amount: betTotal.toLocaleString() }),
     })
-  }, [mode, livePhase, authUser, hasAnyBet, currentBets, currentRangeBets, currentPairBets, user.activeWallet, playRoundFetcher, soundEnabled, t])
+  }, [mode, livePhase, authUser, hasAnyBet, currentBets, currentRangeBets, currentPairBets, currentSumBets, user.activeWallet, playRoundFetcher, soundEnabled, t])
 
   // RANDOM mode: apply the result once animation is done.
   // Fast path  → pendingDiceRef has pre-computed dice (zero server wait).
@@ -1856,6 +1885,7 @@ export default function FishPrawnCrabGame() {
     setCurrentBets([])
     setCurrentRangeBets([])
     setCurrentPairBets([])
+    setCurrentSumBets([])
     setPendingCell(null)
   }, [revalidator])
 
@@ -1868,6 +1898,7 @@ export default function FishPrawnCrabGame() {
       setCurrentBets([])
       setCurrentRangeBets([])
       setCurrentPairBets([])
+      setCurrentSumBets([])
       setCancelledBetIds(new Set())
     } else {
       setBetSheetOpen(false)
@@ -2072,7 +2103,7 @@ export default function FishPrawnCrabGame() {
                   align="right"
                   onSelect={key => {
                     const next = key as 'demo' | 'real' | 'promo'
-                    setCurrentBets([]); setCurrentRangeBets([]); setCurrentPairBets([]); setPendingCell(null)
+                    setCurrentBets([]); setCurrentRangeBets([]); setCurrentPairBets([]); setCurrentSumBets([]); setPendingCell(null)
                     switchWallet(next); setBalance(user.balances[next])
                     setOverlayWalletOpen(false)
                   }}
@@ -2121,6 +2152,9 @@ export default function FishPrawnCrabGame() {
                             <RangeIcon size={11} style={{ color: rangeColor }} className="shrink-0" />
                             <span style={{ color: rangeColor }}>{b.range === 'LOW' ? t('game.low') : b.range === 'HIGH' ? t('game.high') : t('game.middle')}</span>
                           </>
+                        )}
+                        {b.kind === 'SUM' && b.exactSum != null && (
+                          <span className="font-bold" style={{ color: '#fbbf24' }}>ເລກ {b.exactSum}</span>
                         )}
                         <span className="ml-0.5 font-bold" style={{ color: '#fde68a' }}>{b.amount.toLocaleString()}₭</span>
                       </div>
@@ -2239,6 +2273,12 @@ export default function FishPrawnCrabGame() {
                   {b.amount.toLocaleString()}
                 </div>
               ))}
+              {currentSumBets.map((b) => (
+                <div key={`fss-${b.sum}`} className="flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold"
+                  style={{ background: 'rgba(0,0,0,0.7)', color: '#fde68a', border: '1px solid #d97706' }}>
+                  ເລກ {b.sum} : {b.amount.toLocaleString()}
+                </div>
+              ))}
             </div>
           )}
 
@@ -2318,14 +2358,14 @@ export default function FishPrawnCrabGame() {
                                   : hasSingle
                                     ? 'rgba(220,38,38,0.12)'
                                     : hasPairOnly
-                                      ? 'rgba(37,99,235,0.12)'
+                                      ? 'rgba(250,204,21,0.12)'
                                       : '#fff',
                           border: `2px solid ${isPending ? '#a78bfa'
                             : canPair ? '#60a5fa'
                               : isWinner ? '#facc15'
                                 : hasBoth ? '#a855f7'
                                   : hasSingle ? '#dc2626'
-                                    : hasPairOnly ? '#3b82f6'
+                                    : hasPairOnly ? '#facc15'
                                       : '#e2e8f0'
                             }`,
                           boxShadow: isPending
@@ -2337,7 +2377,7 @@ export default function FishPrawnCrabGame() {
                                 : hasSingle
                                   ? '0 0 10px rgba(220,38,38,0.35)'
                                   : hasPairOnly
-                                    ? '0 0 10px rgba(59,130,246,0.35)'
+                                    ? '0 0 10px rgba(250,204,21,0.35)'
                                     : '0 1px 3px rgba(0,0,0,0.15)',
                         }}>
                         <img src={`/symbols/${symbol}.png`} alt={symbol} className="h-10 w-10 object-contain" />
@@ -2402,32 +2442,68 @@ export default function FishPrawnCrabGame() {
                   : t('game.pairHint')}
               </p>
 
-              {/* Range bets */}
-              <div className="grid grid-cols-3 gap-2 pb-2">
-                {RANGE_CONFIG.map(r => {
-                  const bet = currentRangeBets.filter(b => b.range === r.key).reduce((s, b) => s + b.amount, 0)
-                  const isWinner = !isRolling && diceResults.length > 0 && (() => {
-                    const sum = diceResults.reduce((s, sym) => s + SYMBOL_VALUES[sym], 0)
-                    return sum >= r.min && sum <= r.max
-                  })()
-                  return (
-                    <button key={r.key} onClick={() => placeRangeBet(r.key)}
-                      disabled={bettingLocked || balance < selectedChip}
-                      className="relative flex flex-col items-center justify-center rounded-xl py-3 text-sm font-bold disabled:opacity-50"
-                      style={{ background: isWinner ? 'rgba(250,204,21,0.25)' : r.bg, border: `1px solid ${isWinner ? '#facc15' : r.border}`, color: r.color }}>
-                      <div className="font-semibold">{r.key === 'low' ? t('game.low') : r.key === 'middle' ? t('game.middle') : t('game.high')}</div>
-                      <div className="text-[10px] opacity-75">({r.range})</div>
-                      <div className="text-[10px] opacity-75">{t('game.pays', { x: rangeMultiplier(r.key, loaderData.payoutConfig) - 1 })}</div>
-                      {bet > 0 && (
-                        <div className="absolute top-1 right-1 rounded-full px-1.5 py-0.5 text-[8px] font-bold"
-                          style={{ background: '#dc2626', color: '#fff' }}>
-                          {formatAmount(bet)}
-                        </div>
-                      )}
-                    </button>
-                  )
-                })}
-              </div>
+              {/* Range/Sum bets — numbers 3-18 for LIVE, LOW/MID/HIGH for RANDOM */}
+              {mode === 'live' ? (
+                <div className="pb-2">
+                  <div className="mb-1 flex items-center justify-between text-[9px]" style={{ color: '#c4b5fd' }}>
+                    <span>ສູງສຸດ 3 ເລກ · ×3 ກຳໄລ</span>
+                    <span>{currentSumBets.length}/3</span>
+                  </div>
+                  <div className="grid grid-cols-4 gap-1">
+                    {Array.from({ length: 16 }, (_, i) => i + 3).map(n => {
+                      const bet = getSumBetAmount(n)
+                      const isWinner = !isRolling && diceResults.length > 0 && diceSum === n
+                      const isSelected = currentSumBets.some(b => b.sum === n)
+                      const maxReached = currentSumBets.length >= 3 && !isSelected
+                      return (
+                        <button key={n} onClick={() => placeSumBet(n)}
+                          disabled={bettingLocked || balance < selectedChip || maxReached}
+                          className="relative flex flex-col items-center justify-center rounded-lg py-2 font-bold disabled:opacity-40"
+                          style={{
+                            background: isWinner ? 'rgba(250,204,21,0.3)' : isSelected ? 'rgba(124,58,237,0.5)' : 'rgba(30,0,64,0.6)',
+                            border: `1px solid ${isWinner ? '#facc15' : isSelected ? '#a78bfa' : '#4c1d95'}`,
+                            color: isWinner ? '#facc15' : '#e9d5ff',
+                          }}>
+                          <div className="text-xs">{n}</div>
+                          <div className="text-[8px] opacity-70">×3</div>
+                          {bet > 0 && (
+                            <div className="absolute -top-1 -right-1 rounded-full px-1 text-[7px] font-bold"
+                              style={{ background: '#dc2626', color: '#fff' }}>
+                              {formatAmount(bet)}
+                            </div>
+                          )}
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
+              ) : (
+                <div className="grid grid-cols-3 gap-2 pb-2">
+                  {RANGE_CONFIG.map(r => {
+                    const bet = currentRangeBets.filter(b => b.range === r.key).reduce((s, b) => s + b.amount, 0)
+                    const isWinner = !isRolling && diceResults.length > 0 && (() => {
+                      const sum = diceResults.reduce((s, sym) => s + SYMBOL_VALUES[sym], 0)
+                      return sum >= r.min && sum <= r.max
+                    })()
+                    return (
+                      <button key={r.key} onClick={() => placeRangeBet(r.key)}
+                        disabled={bettingLocked || balance < selectedChip}
+                        className="relative flex flex-col items-center justify-center rounded-xl py-3 text-sm font-bold disabled:opacity-50"
+                        style={{ background: isWinner ? 'rgba(250,204,21,0.25)' : r.bg, border: `1px solid ${isWinner ? '#facc15' : r.border}`, color: r.color }}>
+                        <div className="font-semibold">{r.key === 'low' ? t('game.low') : r.key === 'middle' ? t('game.middle') : t('game.high')}</div>
+                        <div className="text-[10px] opacity-75">({r.range})</div>
+                        <div className="text-[10px] opacity-75">{t('game.pays', { x: rangeMultiplier(r.key, loaderData.payoutConfig) - 1 })}</div>
+                        {bet > 0 && (
+                          <div className="absolute top-1 right-1 rounded-full px-1.5 py-0.5 text-[8px] font-bold"
+                            style={{ background: '#dc2626', color: '#fff' }}>
+                            {formatAmount(bet)}
+                          </div>
+                        )}
+                      </button>
+                    )
+                  })}
+                </div>
+              )}
             </div>
 
             {/* Chip selector + actions */}
@@ -2701,6 +2777,7 @@ export default function FishPrawnCrabGame() {
                     setCurrentBets([])
                     setCurrentRangeBets([])
                     setCurrentPairBets([])
+                    setCurrentSumBets([])
                     setPendingCell(null)
                     switchWallet(next)
                     setBalance(user.balances[next])
@@ -2721,6 +2798,7 @@ export default function FishPrawnCrabGame() {
                 setCurrentBets([])
                 setCurrentRangeBets([])
                 setCurrentPairBets([])
+                setCurrentSumBets([])
                 setPendingCell(null)
                 if (authUser) {
                   // Authoritative reset — writes to the DB so the new balance
@@ -2861,6 +2939,9 @@ export default function FishPrawnCrabGame() {
                                   <RangeIcon size={12} style={{ color: rangeColor }} className="shrink-0" />
                                   <span style={{ color: rangeColor }}>{b.range === 'LOW' ? t('game.low') : b.range === 'HIGH' ? t('game.high') : t('game.middle')}</span>
                                 </>}
+                              {b.kind === 'SUM' && b.exactSum != null && <>
+                                  <span className="shrink-0 font-bold" style={{ color: '#fbbf24' }}>ເລກ {b.exactSum}</span>
+                                </>}
                               </span>
                               <span className="shrink-0 font-bold ml-2" style={{ color: '#fde68a' }}>{b.amount.toLocaleString()}₭</span>
                               {livePhase === 'betting' && (
@@ -2982,8 +3063,8 @@ export default function FishPrawnCrabGame() {
                     borderColor = '#dc2626'; borderWidth = 3  // red = single
                     glow = '0 0 14px rgba(220,38,38,0.5)'
                   } else if (hasPair) {
-                    borderColor = '#3b82f6'; borderWidth = 3  // blue = pair
-                    glow = '0 0 14px rgba(59,130,246,0.5)'
+                    borderColor = '#facc15'; borderWidth = 3  // yellow = pair
+                    glow = '0 0 14px rgba(250,204,21,0.5)'
                   }
 
                   return (
@@ -3002,7 +3083,7 @@ export default function FishPrawnCrabGame() {
                             : hasPair && hasSingle
                               ? 'rgba(216,180,254,0.3)'
                               : hasPair
-                                ? 'rgba(147,197,253,0.3)'
+                                ? 'rgba(250,204,21,0.15)'
                                 : hasSingle
                                   ? 'rgba(252,165,165,0.3)'
                                   : '#ffffff',
@@ -3130,49 +3211,82 @@ export default function FishPrawnCrabGame() {
                 </div>
               </div>
 
-              {/* Range betting: LOW / MIDDLE / HIGH (based on dice sum) */}
-              <div className="mx-auto mt-3 grid grid-cols-3 gap-2" style={{ maxWidth: 560 }}>
-                {RANGE_CONFIG.map(r => {
-                  const bet = getRangeBetAmount(r.key)
-                  const isWinner = winnerHighlight && !isRolling && diceResults.length > 0 && diceSum >= r.min && diceSum <= r.max
-                  return (
-                    <button
-                      key={r.key}
-                      onClick={() => placeRangeBet(r.key)}
-                      disabled={bettingLocked || balance < selectedChip}
-                      className="relative flex flex-col items-center justify-center rounded-md py-2 sm:py-3 transition-all disabled:opacity-50"
-                      style={{
-                        background: isWinner ? 'rgba(250,204,21,0.35)' : r.bg,
-                        border: `1px solid ${isWinner ? '#facc15' : r.border}`,
-                        boxShadow: isWinner ? '0 0 20px rgba(250,204,21,0.55)' : '0 2px 8px rgba(0,0,0,0.3)',
-                        color: r.color,
-                        cursor: bettingLocked || balance < selectedChip ? 'not-allowed' : 'pointer',
-                      }}
-                    >
-                      <div className="text-sm font-semibold ">
-                        {r.key === 'low' ? t('game.low') : r.key === 'middle' ? t('game.middle') : t('game.high')}{' '}
-                        <span className="text-xs opacity-90">({r.range})</span>
-                      </div>
-                      {/* UI shows profit-multiplier (total - 1) for ranges so
-                          users read "x1" / "x5" / "x1" instead of the raw 2/6/2.
-                          Pairs and symbols still use total multipliers. */}
-                      <div className="text-[10px] opacity-75">{t('game.pays', { x: rangeMultiplier(r.key, loaderData.payoutConfig) - 1 })}</div>
-                      {bet > 0 && (
-                        <div
-                          className="absolute top-1.5 right-1.5 flex h-7 min-w-[36px] items-center justify-center rounded-full px-2 font-bold shadow-lg text-[10px] whitespace-nowrap"
+              {/* Range/Sum betting — numbers 3-18 for LIVE, LOW/MID/HIGH for RANDOM */}
+              {mode === 'live' ? (
+                <div className="mx-auto mt-3" style={{ maxWidth: 560 }}>
+                  <div className="mb-1 flex items-center justify-between text-[10px]" style={{ color: '#c4b5fd' }}>
+                    <span>ເລືອກໄດ້ສູງສຸດ 3 ເລກ · ຈ່າຍ ×3 (ກຳໄລ)</span>
+                    <span>{currentSumBets.length}/3</span>
+                  </div>
+                  <div className="grid grid-cols-4 gap-1.5">
+                    {Array.from({ length: 16 }, (_, i) => i + 3).map(n => {
+                      const bet = getSumBetAmount(n)
+                      const isWinner = winnerHighlight && !isRolling && diceResults.length > 0 && diceSum === n
+                      const isSelected = currentSumBets.some(b => b.sum === n)
+                      const maxReached = currentSumBets.length >= 3 && !isSelected
+                      return (
+                        <button
+                          key={n}
+                          onClick={() => placeSumBet(n)}
+                          disabled={bettingLocked || balance < selectedChip || maxReached}
+                          className="relative flex flex-col items-center justify-center rounded-md py-2 transition-all disabled:opacity-40"
                           style={{
-                            background: 'linear-gradient(135deg, #dc2626, #991b1b)',
-                            color: '#fff',
-                            border: '1px solid #fca5a5',
+                            background: isWinner ? 'rgba(250,204,21,0.35)' : isSelected ? 'rgba(124,58,237,0.5)' : 'rgba(30,0,64,0.7)',
+                            border: `1px solid ${isWinner ? '#facc15' : isSelected ? '#a78bfa' : '#4c1d95'}`,
+                            boxShadow: isWinner ? '0 0 16px rgba(250,204,21,0.55)' : isSelected ? '0 0 10px rgba(167,139,250,0.4)' : 'none',
+                            color: isWinner ? '#facc15' : '#e9d5ff',
                           }}
                         >
-                          {bet.toLocaleString()}
+                          <div className="text-sm font-bold">{n}</div>
+                          <div className="text-[9px] opacity-70">×3</div>
+                          {bet > 0 && (
+                            <div className="absolute -top-1.5 -right-1.5 flex h-5 min-w-[28px] items-center justify-center rounded-full px-1 font-bold text-[8px] whitespace-nowrap"
+                              style={{ background: 'linear-gradient(135deg,#dc2626,#991b1b)', color: '#fff', border: '1px solid #fca5a5' }}>
+                              {bet.toLocaleString()}
+                            </div>
+                          )}
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
+              ) : (
+                <div className="mx-auto mt-3 grid grid-cols-3 gap-2" style={{ maxWidth: 560 }}>
+                  {RANGE_CONFIG.map(r => {
+                    const bet = getRangeBetAmount(r.key)
+                    const isWinner = winnerHighlight && !isRolling && diceResults.length > 0 && diceSum >= r.min && diceSum <= r.max
+                    return (
+                      <button
+                        key={r.key}
+                        onClick={() => placeRangeBet(r.key)}
+                        disabled={bettingLocked || balance < selectedChip}
+                        className="relative flex flex-col items-center justify-center rounded-md py-2 sm:py-3 transition-all disabled:opacity-50"
+                        style={{
+                          background: isWinner ? 'rgba(250,204,21,0.35)' : r.bg,
+                          border: `1px solid ${isWinner ? '#facc15' : r.border}`,
+                          boxShadow: isWinner ? '0 0 20px rgba(250,204,21,0.55)' : '0 2px 8px rgba(0,0,0,0.3)',
+                          color: r.color,
+                          cursor: bettingLocked || balance < selectedChip ? 'not-allowed' : 'pointer',
+                        }}
+                      >
+                        <div className="text-sm font-semibold ">
+                          {r.key === 'low' ? t('game.low') : r.key === 'middle' ? t('game.middle') : t('game.high')}{' '}
+                          <span className="text-xs opacity-90">({r.range})</span>
                         </div>
-                      )}
-                    </button>
-                  )
-                })}
-              </div>
+                        <div className="text-[10px] opacity-75">{t('game.pays', { x: rangeMultiplier(r.key, loaderData.payoutConfig) - 1 })}</div>
+                        {bet > 0 && (
+                          <div
+                            className="absolute top-1.5 right-1.5 flex h-7 min-w-[36px] items-center justify-center rounded-full px-2 font-bold shadow-lg text-[10px] whitespace-nowrap"
+                            style={{ background: 'linear-gradient(135deg, #dc2626, #991b1b)', color: '#fff', border: '1px solid #fca5a5' }}
+                          >
+                            {bet.toLocaleString()}
+                          </div>
+                        )}
+                      </button>
+                    )
+                  })}
+                </div>
+              )}
             </>)}
           </div>
 
@@ -3636,6 +3750,7 @@ export default function FishPrawnCrabGame() {
                     symbolBets={split.symbolBets}
                     rangeBets={split.rangeBets}
                     pairBets={split.pairBets}
+                    sumBets={split.sumBets}
                   />
                 )
               })()}
@@ -3723,7 +3838,7 @@ function translatedRangeLabel(range: string, t: Translate): string {
 // Text-only formatter used in spots that can't render JSX (e.g. tooltips,
 // the awaiting-result MyBetsList). Pass `t` so range labels translate.
 function describeBetGeneric(
-  b: { kind: string; symbol: string | null; range: string | null; pairA: string | null; pairB: string | null },
+  b: { kind: string; symbol: string | null; range: string | null; pairA: string | null; pairB: string | null; exactSum?: number | null },
   t: Translate,
 ): string {
   if (b.kind === 'SYMBOL' && b.symbol) {
@@ -3737,6 +3852,9 @@ function describeBetGeneric(
   }
   if (b.kind === 'RANGE' && b.range) {
     return translatedRangeLabel(b.range, t)
+  }
+  if (b.kind === 'SUM' && b.exactSum != null) {
+    return `ເລກ ${b.exactSum}`
   }
   return b.kind
 }
@@ -3787,6 +3905,15 @@ function describeBetIcon(b: MyLiveBet, t: Translate) {
       <span className="flex items-center gap-2 truncate">
         <Icon size={16} style={{ color }} className="shrink-0" />
         <span className="truncate">{translatedRangeLabel(b.range, t)}</span>
+      </span>
+    )
+  }
+  if (b.kind === 'SUM' && b.exactSum != null) {
+    return (
+      <span className="flex items-center gap-2 truncate">
+        <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full font-bold text-xs"
+          style={{ background: '#7c3aed', color: '#fde68a' }}>{b.exactSum}</span>
+        <span className="truncate">ເລກ {b.exactSum}</span>
       </span>
     )
   }
@@ -3843,17 +3970,19 @@ type BetBreakdownProps = {
   symbolBets: BreakdownBet[]
   rangeBets: BreakdownBet[]
   pairBets: BreakdownBet[]
+  sumBets?: BreakdownBet[]
 }
 
-function BetBreakdown({ symbolBets, rangeBets, pairBets }: BetBreakdownProps) {
+function BetBreakdown({ symbolBets, rangeBets, pairBets, sumBets = [] }: BetBreakdownProps) {
   const t = useT()
   const sections: { title: string; bets: BreakdownBet[] }[] = [
     { title: t('result.singleBets'), bets: symbolBets },
     { title: t('result.rangeBets'), bets: rangeBets },
     { title: t('result.pairBets'), bets: pairBets },
+    { title: 'ເດີມພັນຕົວເລກ', bets: sumBets },
   ].filter(s => s.bets.length > 0)
 
-  const allBets = [...symbolBets, ...rangeBets, ...pairBets]
+  const allBets = [...symbolBets, ...rangeBets, ...pairBets, ...sumBets]
   const totalStake = allBets.reduce((s, b) => s + b.amount, 0)
   // Profit on winning bets only — matches the +/- amount shown per row.
   const totalWon = allBets.filter(b => b.won).reduce((s, b) => s + (b.payout - b.amount), 0)
@@ -3956,25 +4085,22 @@ function pairToBreakdown(
 
 // Settlement-payload shape (LIVE modal) → BreakdownBet[] sections.
 function settledToBreakdown(
-  bets: { kind: 'SYMBOL' | 'RANGE' | 'PAIR'; amount: number; symbol: string | null; range: string | null; pairA: string | null; pairB: string | null; payout: number; result: 'WIN' | 'LOSS' }[],
+  bets: { kind: 'SYMBOL' | 'RANGE' | 'PAIR' | 'SUM'; amount: number; symbol: string | null; range: string | null; pairA: string | null; pairB: string | null; exactSum?: number | null; payout: number; result: 'WIN' | 'LOSS' }[],
   t: Translate,
-): { symbolBets: BreakdownBet[]; rangeBets: BreakdownBet[]; pairBets: BreakdownBet[] } {
-  const out = { symbolBets: [] as BreakdownBet[], rangeBets: [] as BreakdownBet[], pairBets: [] as BreakdownBet[] }
+): { symbolBets: BreakdownBet[]; rangeBets: BreakdownBet[]; pairBets: BreakdownBet[]; sumBets: BreakdownBet[] } {
+  const out = { symbolBets: [] as BreakdownBet[], rangeBets: [] as BreakdownBet[], pairBets: [] as BreakdownBet[], sumBets: [] as BreakdownBet[] }
   for (const b of bets) {
     let label: React.ReactNode
     if (b.kind === 'SYMBOL' && b.symbol) label = symbolIcon(b.symbol)
     else if (b.kind === 'PAIR' && b.pairA && b.pairB) label = pairIcons(b.pairA, b.pairB)
     else if (b.kind === 'RANGE' && b.range) label = translatedRangeLabel(b.range, t)
+    else if (b.kind === 'SUM' && b.exactSum != null) label = `ເລກ ${b.exactSum}`
     else label = b.kind
-    const entry: BreakdownBet = {
-      label,
-      amount: b.amount,
-      payout: b.payout,
-      won: b.result === 'WIN',
-    }
+    const entry: BreakdownBet = { label, amount: b.amount, payout: b.payout, won: b.result === 'WIN' }
     if (b.kind === 'SYMBOL') out.symbolBets.push(entry)
     else if (b.kind === 'RANGE') out.rangeBets.push(entry)
     else if (b.kind === 'PAIR') out.pairBets.push(entry)
+    else if (b.kind === 'SUM') out.sumBets.push(entry)
   }
   return out
 }

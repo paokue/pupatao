@@ -19,6 +19,7 @@ export const SYMBOLS_BY_VALUE: DiceSymbol[] = ['PRAWN', 'FISH', 'CRAB', 'ROOSTER
 export interface SymbolBetIn { symbol: DiceSymbol; cell: number; amount: number }
 export interface RangeBetIn  { range: RangeKey; amount: number }
 export interface PairBetIn   { symbolA: DiceSymbol; symbolB: DiceSymbol; cellA: number; cellB: number; amount: number }
+export interface SumBetIn    { sum: number; amount: number }  // exact dice-sum (3–18), live mode only
 
 export function payoutForSymbol(b: SymbolBetIn, dice: DiceSymbol[], cfg: PayoutConfig): number {
   const matches = dice.filter(d => d === b.symbol).length
@@ -36,6 +37,9 @@ export function payoutForRange(b: RangeBetIn, sum: number, cfg: PayoutConfig): n
 export function payoutForPair(b: PairBetIn, dice: DiceSymbol[], cfg: PayoutConfig): number {
   return dice.includes(b.symbolA) && dice.includes(b.symbolB) ? b.amount * cfg.pair : 0
 }
+export function payoutForSum(b: SumBetIn, diceSum: number, cfg: PayoutConfig): number {
+  return diceSum === b.sum ? b.amount * cfg.sumNumber : 0
+}
 
 export type WalletType = 'DEMO' | 'REAL' | 'PROMO'
 
@@ -45,13 +49,28 @@ export function pickAdversarialDice(
   pairBets: PairBetIn[],
   cfg: PayoutConfig,
   wallet: WalletType = 'REAL',
+  netProfit = 0,
 ): [DiceSymbol, DiceSymbol, DiceSymbol] {
-  // Win probability: DEMO=95%, REAL/PROMO=5%.
-  // For REAL/PROMO: PAIR bets and MIDDLE range bets are permanently locked to
-  // zero payout — those bet types never win regardless of win/loss outcome.
-  const winChance = wallet === 'DEMO' ? 0.95 : 0.05
+  // Tier selection (REAL/PROMO only; netProfit = wins − losses since last reset):
+  //   DEMO                       → 70% win (max payout), 30% loss
+  //   REAL/PROMO profit < 200 000 → 60% win (min payout), 40% loss
+  //                                 PAIR/MIDDLE locked only when that bet > 50 000
+  //   REAL/PROMO profit ≥ 200 000 → 10% win (min payout), 90% loss
+  //                                 PAIR/MIDDLE always locked
+  let winChance: number
+  let pickMax: boolean
+  let lockAll: boolean      // lock every PAIR + every MIDDLE bet
+  let lockBig: boolean      // lock PAIR/MIDDLE only if that specific bet > 50 000
+
+  if (wallet === 'DEMO') {
+    winChance = 0.70; pickMax = true;  lockAll = false; lockBig = false
+  } else if (netProfit < 200_000) {
+    winChance = 0.60; pickMax = false; lockAll = false; lockBig = true
+  } else {
+    winChance = 0.10; pickMax = false; lockAll = true;  lockBig = false
+  }
+
   const isWinRound = Math.random() < winChance
-  const lockPairMiddle = wallet !== 'DEMO'
 
   type Entry = { dice: [DiceSymbol, DiceSymbol, DiceSymbol]; payout: number }
   const eligible: Entry[] = []
@@ -65,12 +84,24 @@ export function pickAdversarialDice(
           SYMBOLS_BY_VALUE[c - 1],
         ]
         const sum = a + b + c
-        if (lockPairMiddle) {
-          const pairPayout   = pairBets.reduce((s, pb) => s + payoutForPair(pb, dice, cfg), 0)
-          const middlePayout = rangeBets.filter(rb => rb.range === 'MIDDLE')
-                                         .reduce((s, rb) => s + payoutForRange(rb, sum, cfg), 0)
-          if (pairPayout > 0 || middlePayout > 0) continue
+
+        if (lockAll || lockBig) {
+          let skip = false
+          for (const pb of pairBets) {
+            if (lockAll || pb.amount > 50_000) {
+              if (dice.includes(pb.symbolA) && dice.includes(pb.symbolB)) { skip = true; break }
+            }
+          }
+          if (!skip) {
+            for (const rb of rangeBets) {
+              if (rb.range === 'MIDDLE' && (lockAll || rb.amount > 50_000)) {
+                if (sum >= 9 && sum <= 10) { skip = true; break }
+              }
+            }
+          }
+          if (skip) continue
         }
+
         let payout = 0
         for (const sb of symbolBets) payout += payoutForSymbol(sb, dice, cfg)
         for (const rb of rangeBets)  payout += payoutForRange(rb, sum, cfg)
@@ -86,13 +117,11 @@ export function pickAdversarialDice(
   if (isWinRound) {
     const winners = eligible.filter(e => e.payout > 0)
     if (winners.length > 0) {
-      if (wallet === 'DEMO') {
-        // Demo: pick maximum payout so the player clearly feels the win.
+      if (pickMax) {
         const maxWin = Math.max(...winners.map(e => e.payout))
         const best = winners.filter(e => e.payout === maxWin)
         return best[Math.floor(Math.random() * best.length)].dice
       } else {
-        // Real: pick minimum winning payout to limit house damage.
         const minWin = Math.min(...winners.map(e => e.payout))
         const best = winners.filter(e => e.payout === minWin)
         return best[Math.floor(Math.random() * best.length)].dice
