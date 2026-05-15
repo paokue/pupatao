@@ -79,6 +79,7 @@ export async function loader({ request }: Route.LoaderArgs) {
       range: b.range,
       pairA: b.pairA,
       pairB: b.pairB,
+      exactSum: b.exactSum,
       createdAt: b.createdAt.toISOString(),
       user: {
         tel: b.user.tel,
@@ -293,7 +294,7 @@ export default function AdminPlayHistory() {
                   <td className="px-3 py-2 text-xs" style={{ color: '#a5b4fc' }}>
                     {b.round ? (
                       <div className="flex flex-col gap-0.5">
-                        <span>{b.round.mode} · {b.round.status}</span>
+                        <span>{b.round.mode.charAt(0) + b.round.mode.slice(1).toLowerCase()} · {b.round.diceSum != null ? b.round.diceSum : b.round.status}</span>
                         {b.round.dice.length > 0 && (
                           <div className="flex items-center gap-0.5">
                             {b.round.dice.map((d, i) => (
@@ -387,6 +388,13 @@ function BetDescription({ b }: { b: Bet }) {
       </span>
     )
   }
+  if (b.kind === 'SUM' && b.exactSum != null) {
+    return (
+      <span className="flex items-center gap-1 text-xs" style={{ color: '#e9d5ff' }}>
+        <span style={{ color: '#fbbf24' }}>ເລກ {b.exactSum}</span>
+      </span>
+    )
+  }
   return <span className="text-xs">{b.kind}</span>
 }
 
@@ -412,7 +420,7 @@ function BetCard({ b, rowNum }: { b: Bet; rowNum: number }) {
         <BetDescription b={b} />
         {b.round && (
           <span className="flex items-center gap-1">
-            <span>{b.round.mode} · {b.round.status}</span>
+            <span>{b.round.mode} · {b.round.diceSum != null ? b.round.diceSum : b.round.status}</span>
             {b.round.dice.map((d, i) => <SymbolImg key={i} symbol={d} size={14} />)}
           </span>
         )}

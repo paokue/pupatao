@@ -42,6 +42,7 @@ type RoundRecord = {
     pairA: SymbolKey | null
     pairB: SymbolKey | null
     range: RangeKey | null
+    exactSum: number | null
   }>
 }
 
@@ -122,6 +123,7 @@ export async function loader({ request }: Route.LoaderArgs) {
         pairA: b.pairA ? (b.pairA.toLowerCase() as SymbolKey) : null,
         pairB: b.pairB ? (b.pairB.toLowerCase() as SymbolKey) : null,
         range: b.range,
+        exactSum: b.exactSum ?? null,
       })
     }
     for (const rec of grouped.values()) {
@@ -528,6 +530,7 @@ function BetTile({
       (bet.kind === 'SYMBOL' && !!bet.symbol && dice.includes(bet.symbol))
       || (bet.kind === 'PAIR' && !!bet.pairA && !!bet.pairB && dice.includes(bet.pairA) && dice.includes(bet.pairB))
       || (bet.kind === 'RANGE' && !!bet.range && diceSum >= RANGE_BOUNDS[bet.range].min && diceSum <= RANGE_BOUNDS[bet.range].max)
+      || (bet.kind === 'SUM' && bet.exactSum != null && diceSum === bet.exactSum)
     ))
   const payout = bet.payout ?? 0
   const profit = payout - bet.amount
@@ -585,6 +588,19 @@ function BetTile({
         style={{ background: bg, color: '#fff', border: `1.5px solid ${border}`, boxShadow: won ? '0 0 8px rgba(74,222,128,0.4)' : undefined }}
       >
         <span>{label} ({range.min}-{range.max})</span>
+        <span style={{ color: '#fde68a' }}>· {bet.amount.toLocaleString()}</span>
+        <PayoutBadge won={won} profit={profit} compact />
+      </div>
+    )
+  }
+
+  if (bet.kind === 'SUM' && bet.exactSum != null) {
+    return (
+      <div
+        className="flex items-center gap-1.5 rounded-lg px-2 py-1 text-[11px] font-bold"
+        style={{ background: 'linear-gradient(135deg, #78350f, #451a03)', color: '#fff', border: `1.5px solid ${won ? '#4ade80' : '#92400e'}`, boxShadow: won ? '0 0 8px rgba(74,222,128,0.4)' : undefined }}
+      >
+        <span>ເລກ {bet.exactSum}</span>
         <span style={{ color: '#fde68a' }}>· {bet.amount.toLocaleString()}</span>
         <PayoutBadge won={won} profit={profit} compact />
       </div>

@@ -1019,6 +1019,9 @@ function LiveBetDescription({ bet }: { bet: LiveBet }) {
       </span>
     )
   }
+  if (bet.kind === 'SUM' && bet.exactSum != null) {
+    return <span className="text-[10px] font-bold" style={{ color: '#fbbf24' }}>ເລກ {bet.exactSum}</span>
+  }
   return <span className="text-[10px]">{bet.kind}</span>
 }
 
