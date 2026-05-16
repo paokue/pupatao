@@ -146,7 +146,8 @@ export function pickAdversarialDice(
   return best[Math.floor(Math.random() * best.length)].dice
 }
 
-// Enumerate all 216 combos and return one with the absolute lowest total payout.
+// Enumerate all 216 combos, collect every combo that yields the minimum payout
+// (ideally 0), then return a RANDOM one so the dice look natural to the player.
 // Exported for direct use in api.pick-dice when the user is ADMIN_LOCKED.
 export function pickZeroPayoutDice(
   symbolBets: SymbolBetIn[],
@@ -154,8 +155,8 @@ export function pickZeroPayoutDice(
   pairBets: PairBetIn[],
   cfg: PayoutConfig,
 ): [DiceSymbol, DiceSymbol, DiceSymbol] {
-  let best: [DiceSymbol, DiceSymbol, DiceSymbol] = [SYMBOLS_BY_VALUE[0], SYMBOLS_BY_VALUE[0], SYMBOLS_BY_VALUE[0]]
-  let bestPayout = Infinity
+  type Entry = { dice: [DiceSymbol, DiceSymbol, DiceSymbol]; payout: number }
+  const all: Entry[] = []
 
   for (let a = 1; a <= 6; a++) {
     for (let b = 1; b <= 6; b++) {
@@ -170,16 +171,15 @@ export function pickZeroPayoutDice(
         for (const sb of symbolBets) payout += payoutForSymbol(sb, dice, cfg)
         for (const rb of rangeBets)  payout += payoutForRange(rb, sum, cfg)
         for (const pb of pairBets)   payout += payoutForPair(pb, dice, cfg)
-        if (payout < bestPayout) {
-          bestPayout = payout
-          best = dice
-          if (payout === 0) break  // can't do better than 0
-        }
+        all.push({ dice, payout })
       }
-      if (bestPayout === 0) break
     }
-    if (bestPayout === 0) break
   }
 
-  return best
+  // Find the minimum payout across all combos (ideally 0).
+  const minPayout = Math.min(...all.map(e => e.payout))
+  const losers = all.filter(e => e.payout === minPayout)
+
+  // Pick randomly from the losers so the dice look natural and varied.
+  return losers[Math.floor(Math.random() * losers.length)].dice
 }
