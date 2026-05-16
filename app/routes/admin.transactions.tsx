@@ -231,6 +231,22 @@ export async function action({ request }: Route.ActionArgs) {
         },
       })
 
+      // ── Phase reset: REAL wallet + balance was < 2 000 before this deposit
+      // → reset game tier to NORMAL so user gets a fresh start.
+      // Never resets ADMIN_LOCKED users (admin must manually unlock).
+      if (tx.type === 'DEPOSIT' && wallet.type === 'REAL' && wallet.balance < 2_000) {
+        const userPhase = await db.user.findUnique({
+          where: { id: tx.userId },
+          select: { selfPlayPhase: true },
+        })
+        if (userPhase && userPhase.selfPlayPhase !== 'ADMIN_LOCKED') {
+          await db.user.update({
+            where: { id: tx.userId },
+            data: { selfPlayPhase: 'NORMAL', selfPlayPhaseBalance: null },
+          })
+        }
+      }
+
       const bonus = { promo: 0, promoNewBalance: 0, referrer: { userId: '', amount: 0, newRealBalance: 0 } }
       if (tx.type === 'DEPOSIT') {
         const user = await db.user.findUnique({

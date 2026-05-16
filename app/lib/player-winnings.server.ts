@@ -1,9 +1,9 @@
 // Returns the user's net profit and last qualifying deposit amount for tier
 // selection in self-play mode.
 //
-// Reset trigger: the most recent DEPOSIT with amount ≥ 50,000 ₭ resets the
-// profit counter. Deposits below 50,000 ₭ are ignored so top-ups of pocket
-// change don't wipe the phase tracking.
+// Reset trigger: the most recent DEPOSIT approved when the REAL wallet balance
+// was < 2,000 ₭ (user had nearly nothing left). Any deposit amount qualifies —
+// this is the "fresh start" event that resets both the phase and the profit counter.
 import { prisma } from './prisma.server'
 
 export interface PlayerGameState {
@@ -14,7 +14,7 @@ export interface PlayerGameState {
 export async function getPlayerGameState(userId: string): Promise<PlayerGameState> {
   // Step 1 — find the most recent deposit ≥ 50 000 ₭ (the reset anchor).
   const resetDeposit = await prisma.transaction.findFirst({
-    where: { userId, type: 'DEPOSIT', amount: { gte: 50_000 }, status: 'COMPLETED' },
+    where: { userId, type: 'DEPOSIT', balanceBefore: { lt: 2_000 }, status: 'COMPLETED' },
     orderBy: { createdAt: 'desc' },
     select: { createdAt: true, amount: true },
   })

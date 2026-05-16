@@ -3614,79 +3614,56 @@ export default function FishPrawnCrabGame() {
             style={{ background: 'rgba(15,0,32,0.82)' }}
             onClick={() => setResultModal(null)}
           >
-            <div
-              onClick={e => e.stopPropagation()}
-              className="w-full max-w-sm rounded-md p-6 bg-white"
-            >
-              {/* Title */}
-              <div className="text-center text-xs font-bold  text-gray-500">
-                {t('result.titleRandom')}
-              </div>
-
-              {/* Result */}
               <div
-                className="mt-2 text-center text-2xl font-bold "
-                style={{ color: accent }}
+                onClick={e => e.stopPropagation()}
+                className="w-full max-w-sm rounded-md bg-white p-6 overflow-y-auto"
+                style={{ maxHeight: '95vh' }}
               >
-                {isWin ? t('result.youWin') : isEven ? t('result.breakEven') : t('result.youLost')}
+                <div className="text-center text-xs font-bold text-gray-500">
+                  {t('result.titleRandom')}
+                </div>
+                <div className="mt-2 text-center text-2xl font-bold" style={{ color: accent }}>
+                  {isWin ? t('result.youWin') : isEven ? t('result.breakEven') : t('result.youLost')}
+                </div>
+                <div className="mt-3 flex items-center justify-center gap-2">
+                  {resultModal.dice.map((s, i) => (
+                    <img key={i} src={`/symbols/${s}.png`} alt={s}
+                      className="h-12 w-12 rounded object-contain"
+                      style={{ border: '1px solid #c4b5fd', background: '#f5f5f5' }} />
+                  ))}
+                  <span className="ml-2 rounded-full px-3 py-1 text-xs font-bold" style={{ background: '#f3f4f6', color: '#1e0040' }}>
+                    {t('result.sum')} {resultModal.diceSum}
+                  </span>
+                </div>
+                <div className="mt-4 text-center text-4xl font-bold" style={{ color: accent }}>
+                  {isEven ? '0' : (isWin ? '+' : '−')}
+                  {!isEven && <CountUpNumber from={0} to={Math.abs(net)} duration={1400} sound />}
+                </div>
+                <BetBreakdown
+                  symbolBets={symbolToBreakdown(resultModal.symbolResults)}
+                  rangeBets={rangeToBreakdown(resultModal.rangeResults, t)}
+                  pairBets={pairToBreakdown(resultModal.pairResults)}
+                />
+                <div className="mt-4 border-t border-gray-200 pt-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold">{t('result.totalBalance')}</span>
+                    <span className="text-xl font-bold">
+                      <CountUpNumber
+                        from={Math.max(0, resultModal.newBalance - net)}
+                        to={resultModal.newBalance}
+                        duration={1600}
+                      />
+                    </span>
+                  </div>
+                  <button
+                    onClick={() => setResultModal(null)}
+                    className="mt-4 w-full rounded-xl py-3 text-sm font-bold transition-opacity hover:opacity-90 border"
+                    autoFocus
+                  >
+                    {t('result.continue')}
+                  </button>
+                </div>
               </div>
-
-              {/* Dice + sum */}
-              <div className="mt-3 flex items-center justify-center gap-2">
-                {resultModal.dice.map((s, i) => (
-                  <img
-                    key={i}
-                    src={`/symbols/${s}.png`}
-                    alt={s}
-                    className="h-12 w-12 rounded object-contain"
-                    style={{ border: '1px solid #c4b5fd', background: '#f5f5f5' }}
-                  />
-                ))}
-                <span className="ml-2 rounded-full px-3 py-1 text-xs font-bold " style={{ background: '#f3f4f6', color: '#1e0040' }}>
-                  {t('result.sum')} {resultModal.diceSum}
-                </span>
-              </div>
-
-              {/* +amount or -amount — count-up animation */}
-              <div
-                className="mt-4 text-center text-4xl font-bold"
-                style={{ color: accent }}
-              >
-                {isEven ? '0' : (isWin ? '+' : '−')}
-                {!isEven && <CountUpNumber from={0} to={Math.abs(net)} duration={1400} sound />}
-              </div>
-
-              <BetBreakdown
-                symbolBets={symbolToBreakdown(resultModal.symbolResults)}
-                rangeBets={rangeToBreakdown(resultModal.rangeResults, t)}
-                pairBets={pairToBreakdown(resultModal.pairResults)}
-              />
-
-              <div className='w-full border-1 border-primary mt-4'></div>
-
-              {/* Total balance */}
-              <div className="flex items-center justify-between pt-2">
-                <span className="text-xs font-bold ">
-                  {t('result.totalBalance')}
-                </span>
-                <span className="text-xl font-bold">
-                  <CountUpNumber
-                    from={Math.max(0, resultModal.newBalance - net)}
-                    to={resultModal.newBalance}
-                    duration={1600}
-                  />
-                </span>
-              </div>
-
-              {/* Continue */}
-              <button
-                onClick={() => setResultModal(null)}
-                className="mt-5 w-full rounded-xl py-3 text-sm font-bold  transition-opacity hover:opacity-90 border"
-                autoFocus
-              >
-                {t('result.continue')}
-              </button>
-            </div>
           </div>
         )
       })()}
@@ -3706,64 +3683,53 @@ export default function FishPrawnCrabGame() {
             style={{ background: 'rgba(15,0,32,0.82)' }}
             onClick={() => setLiveSettleModal(null)}
           >
-            <div
-              onClick={e => e.stopPropagation()}
-              className="w-full max-w-sm overflow-y-auto rounded-md bg-white p-6"
-              style={{ maxHeight: '90vh' }}
-            >
-              <div className="text-center text-xs font-bold  text-gray-500">
-                {t('result.titleLive')}
-              </div>
               <div
-                className="mt-2 text-center text-2xl font-bold "
-                style={{ color: accent }}
+                onClick={e => e.stopPropagation()}
+                className="w-full max-w-sm rounded-md bg-white p-6 overflow-y-auto"
+                style={{ maxHeight: '95vh' }}
               >
-                {isWin ? t('result.youWin') : isEven ? t('result.breakEven') : t('result.youLost')}
+                <div className="text-center text-xs font-bold text-gray-500">{t('result.titleLive')}</div>
+                <div className="mt-2 text-center text-2xl font-bold" style={{ color: accent }}>
+                  {isWin ? t('result.youWin') : isEven ? t('result.breakEven') : t('result.youLost')}
+                </div>
+                <div className="mt-3 flex items-center justify-center gap-2">
+                  {m.dice.map((s, i) => (
+                    <img key={i} src={`/symbols/${s.toLowerCase()}.png`} alt={s}
+                      className="h-12 w-12 rounded object-contain"
+                      style={{ border: '1px solid #c4b5fd', background: '#f5f5f5' }} />
+                  ))}
+                  <span className="ml-2 rounded-full px-3 py-1 text-xs font-bold" style={{ background: '#f3f4f6', color: '#1e0040' }}>
+                    {t('result.sum')} {m.diceSum}
+                  </span>
+                </div>
+                <div className="mt-4 text-center text-4xl font-bold" style={{ color: accent }}>
+                  {amountText}
+                </div>
+                {m.bets.length > 0 && (() => {
+                  const split = settledToBreakdown(m.bets, t)
+                  return (
+                    <BetBreakdown
+                      symbolBets={split.symbolBets}
+                      rangeBets={split.rangeBets}
+                      pairBets={split.pairBets}
+                      sumBets={split.sumBets}
+                    />
+                  )
+                })()}
+                <div className="mt-4 border-t border-gray-200 pt-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold">{t('result.totalBalance')}</span>
+                    <span className="text-xl font-bold">{m.newBalance.toLocaleString()}</span>
+                  </div>
+                  <button
+                    onClick={() => setLiveSettleModal(null)}
+                    className="mt-4 w-full rounded-xl py-3 text-sm font-bold transition-opacity hover:opacity-90 border"
+                    autoFocus
+                  >
+                    {t('result.continue')}
+                  </button>
+                </div>
               </div>
-              <div className="mt-3 flex items-center justify-center gap-2">
-                {m.dice.map((s, i) => (
-                  <img
-                    key={i}
-                    src={`/symbols/${s.toLowerCase()}.png`}
-                    alt={s}
-                    className="h-12 w-12 rounded object-contain"
-                    style={{ border: '1px solid #c4b5fd', background: '#f5f5f5' }}
-                  />
-                ))}
-                <span className="ml-2 rounded-full px-3 py-1 text-xs font-bold " style={{ background: '#f3f4f6', color: '#1e0040' }}>
-                  {t('result.sum')} {m.diceSum}
-                </span>
-              </div>
-              <div
-                className="mt-4 text-center text-4xl font-bold"
-                style={{ color: accent }}
-              >
-                {amountText}
-              </div>
-              {m.bets.length > 0 && (() => {
-                const split = settledToBreakdown(m.bets, t)
-                return (
-                  <BetBreakdown
-                    symbolBets={split.symbolBets}
-                    rangeBets={split.rangeBets}
-                    pairBets={split.pairBets}
-                    sumBets={split.sumBets}
-                  />
-                )
-              })()}
-              <div className='w-full border-1 border-primary mt-4'></div>
-              <div className="flex items-center justify-between pt-2">
-                <span className="text-xs font-bold ">{t('result.totalBalance')}</span>
-                <span className="text-xl font-bold">{m.newBalance.toLocaleString()}</span>
-              </div>
-              <button
-                onClick={() => setLiveSettleModal(null)}
-                className="mt-5 w-full rounded-xl py-3 text-sm font-bold  transition-opacity hover:opacity-90 border"
-                autoFocus
-              >
-                {t('result.continue')}
-              </button>
-            </div>
           </div>
         )
       })()}

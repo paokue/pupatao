@@ -17,6 +17,7 @@ __v0_jsx-dev-runtime.ts
 .DS_Store
 
 .gitignore
+/CLAUDE.md
 
 # React Router
 .react-router/
