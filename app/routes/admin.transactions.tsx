@@ -207,7 +207,7 @@ export async function action({ request }: Route.ActionArgs) {
 
       const delta = tx.type === 'DEPOSIT' ? tx.amount : -tx.amount
       const newBalance = wallet.balance + delta
-      if (newBalance < 0) throw new Error('Insufficient balance to approve withdraw.')
+      if (newBalance < 0) throw new Error(`Insufficient balance: user has ${wallet.balance.toLocaleString()} ₭ but withdraw is ${tx.amount.toLocaleString()} ₭.`)
 
       await db.wallet.update({
         where: { id: wallet.id },

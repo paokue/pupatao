@@ -211,15 +211,25 @@ export async function action({ request }: Route.ActionArgs) {
     }
 
     try {
-      const wallet = await prisma.wallet.findUnique({
-        where: { userId_type: { userId: user.id, type: 'REAL' } },
-      })
+      const [wallet, dupDeposit] = await Promise.all([
+        prisma.wallet.findUnique({
+          where: { userId_type: { userId: user.id, type: 'REAL' } },
+        }),
+        prisma.transaction.findFirst({
+          where: { userId: user.id, type: 'DEPOSIT', amount, status: 'PENDING' },
+          select: { id: true },
+        }),
+      ])
       if (!wallet) return { op, error: 'Real wallet not found.' }
 
-      // PENDING — admin verifies the slip, then credits the balance.
-      // idempotencyKey must be unique; MongoDB's unique index is non-sparse,
-      // so omitting it would collide on the second null. We generate a fresh
-      // UUID per request — same key the future "retry" deduper would consult.
+      // Block duplicate pending deposit of the same amount
+      if (dupDeposit) {
+        return {
+          op,
+          error: `ລາຍການຝາກເງິນ ${amount.toLocaleString()} ₭ ຂອງທ່ານກຳລັງລໍຖ້າການກວດສອບຢູ່ແລ້ວ. ກະລຸນາລໍຖ້າໃຫ້ທີມງານກວດສອບ ກ່ອນຈຶ່ງຝາກໃໝ່.`,
+        }
+      }
+
       const created = await prisma.transaction.create({
         data: {
           userId: user.id,
@@ -271,16 +281,28 @@ export async function action({ request }: Route.ActionArgs) {
     }
 
     try {
-      const [wallet, bank] = await Promise.all([
+      const [wallet, bank, pendingWithdrawAgg] = await Promise.all([
         prisma.wallet.findUnique({
           where: { userId_type: { userId: user.id, type: 'REAL' } },
         }),
         prisma.bank.findUnique({ where: { userId: user.id } }),
+        prisma.transaction.aggregate({
+          where: { userId: user.id, type: 'WITHDRAW', status: 'PENDING' },
+          _sum: { amount: true },
+        }),
       ])
       if (!wallet) return { op, error: 'Real wallet not found.' }
       if (!bank) return { op, error: 'Add your bank QR code before withdrawing.' }
-      if (amount > wallet.balance) {
-        return { op, error: 'Withdraw exceeds your available balance.' }
+
+      // Effective balance = current balance minus all pending (unprocessed) withdrawals
+      const pendingTotal = pendingWithdrawAgg._sum.amount ?? 0
+      const effectiveBalance = wallet.balance - pendingTotal
+
+      if (amount > effectiveBalance) {
+        return {
+          op,
+          error: `ຍອດເງິນບໍ່ພຽງພໍ. ຍອດທີ່ສາມາດຖອນໄດ້ຂອງທ່ານຄື ${effectiveBalance.toLocaleString()} ₭${pendingTotal > 0 ? ` (ລາຍການຖອນທີ່ລໍຖ້າ ${pendingTotal.toLocaleString()} ₭ ຖືກຫັກແລ້ວ)` : ''}.`,
+        }
       }
 
       // PENDING — admin debits the balance only on approval. We snapshot the

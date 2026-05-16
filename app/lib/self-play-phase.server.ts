@@ -45,13 +45,24 @@ export async function resolveAndAdvancePhase(
 
   if (phase === 'NORMAL') {
     if (lastDepositAmount > 0) {
-      const isSmallDeposit = lastDepositAmount < 200_000
-      // Small deposit: trigger at 100 % profit (doubled the money).
-      // Large deposit: trigger at 200 000 ₭ absolute profit.
-      const threshold = isSmallDeposit ? lastDepositAmount : 200_000
+      // Phase A trigger threshold — based on deposit size:
+      //   ≥ 200 000 ₭  → trigger when netProfit ≥ 200 000 (absolute)
+      //   100 000–199 999 → trigger when netProfit ≥ 100 % of deposit (1×)
+      //    50 000– 99 999 → trigger when netProfit ≥ 200 % of deposit (2×)
+      //         < 50 000  → trigger when netProfit ≥ 300 % of deposit (3×)
+      let threshold: number
+      if (lastDepositAmount >= 200_000) {
+        threshold = 200_000
+      } else if (lastDepositAmount >= 100_000) {
+        threshold = lastDepositAmount          // 100 % profit
+      } else if (lastDepositAmount >= 50_000) {
+        threshold = lastDepositAmount * 2      // 200 % profit
+      } else {
+        threshold = lastDepositAmount * 3      // 300 % profit
+      }
       if (netProfit >= threshold) {
         newPhase = 'PHASE_A'
-        newEntryBalance = currentBalance // snapshot balance at phase entry
+        newEntryBalance = currentBalance
       }
     }
   } else if (phase === 'PHASE_A') {
