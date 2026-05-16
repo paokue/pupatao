@@ -32,37 +32,33 @@ export async function loader({ request }: Route.LoaderArgs) {
     }
     : {}
 
-  const [total, users] = await Promise.all([
-    prisma.user.count({ where }),
-    prisma.user.findMany({
-      where,
-      orderBy: { createdAt: 'desc' },
-      skip: (page - 1) * pageSize,
-      take: pageSize,
-      include: { wallets: true },
+  // Load all users + all deposit/withdraw totals, sort by total deposit desc
+  // (highest depositor on top), then paginate in memory.
+  const [allUsers, allTxGroups] = await Promise.all([
+    prisma.user.findMany({ where, include: { wallets: true } }),
+    prisma.transaction.groupBy({
+      by: ['userId', 'type'],
+      where: { status: 'COMPLETED', type: { in: ['DEPOSIT', 'WITHDRAW'] } },
+      _sum: { amount: true },
     }),
   ])
 
-  const userIds = users.map(u => u.id)
-  const txGroups = userIds.length > 0
-    ? await prisma.transaction.groupBy({
-      by: ['userId', 'type'],
-      where: {
-        userId: { in: userIds },
-        status: 'COMPLETED',
-        type: { in: ['DEPOSIT', 'WITHDRAW'] },
-      },
-      _sum: { amount: true },
-    })
-    : []
-
   const totals = new Map<string, { deposit: number; withdraw: number }>()
-  for (const g of txGroups) {
+  for (const g of allTxGroups) {
     const cur = totals.get(g.userId) ?? { deposit: 0, withdraw: 0 }
     if (g.type === 'DEPOSIT') cur.deposit = g._sum.amount ?? 0
     else if (g.type === 'WITHDRAW') cur.withdraw = g._sum.amount ?? 0
     totals.set(g.userId, cur)
   }
+
+  const sorted = [...allUsers].sort((a, b) => {
+    const da = totals.get(a.id)?.deposit ?? 0
+    const db = totals.get(b.id)?.deposit ?? 0
+    return db - da
+  })
+
+  const total = sorted.length
+  const users = sorted.slice((page - 1) * pageSize, page * pageSize)
 
   return {
     q,
