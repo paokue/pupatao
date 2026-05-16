@@ -10,7 +10,7 @@ import { ADMIN_CHANNEL, type TxCreatedPayload, type TxResolvedPayload } from '~/
 import { usePusherEvent } from '~/hooks/use-pusher'
 import { ConfirmDialog } from '~/components/ConfirmDialog'
 
-const PAGE_SIZE = 25
+const PAGE_SIZES = [10, 30, 50, 100, 200, 500] as const
 type Tab = 'deposit' | 'withdraw' | 'transfer'
 type StatusFilter = 'PENDING' | 'COMPLETED' | 'CANCELLED' | 'ALL'
 
@@ -33,6 +33,8 @@ export async function loader({ request }: Route.LoaderArgs) {
   const tab: Tab = isTab(tabRaw) ? tabRaw : 'deposit'
   const status: StatusFilter = isStatus(statusRaw) ? statusRaw : 'ALL'
   const page = Math.max(1, parseInt(url.searchParams.get('page') ?? '1', 10) || 1)
+  const pageSizeRaw = parseInt(url.searchParams.get('pageSize') ?? '30', 10)
+  const pageSize = (PAGE_SIZES as readonly number[]).includes(pageSizeRaw) ? pageSizeRaw : 30
   const q = url.searchParams.get('q')?.trim() ?? ''
 
   // Phone-number filter on the user (sender) — and on the target user too for
@@ -66,15 +68,15 @@ export async function loader({ request }: Route.LoaderArgs) {
       const [count, pendingRows, otherRows] = await Promise.all([
         prisma.transaction.count({ where: baseWhere }),
         prisma.transaction.findMany({ where: { ...baseWhere, status: 'PENDING' }, orderBy: { createdAt: 'desc' }, include: cfInclude }),
-        prisma.transaction.findMany({ where: { ...baseWhere, status: { not: 'PENDING' } }, orderBy: { createdAt: 'desc' }, skip: (page - 1) * PAGE_SIZE, take: PAGE_SIZE, include: cfInclude }),
+        prisma.transaction.findMany({ where: { ...baseWhere, status: { not: 'PENDING' } }, orderBy: { createdAt: 'desc' }, skip: (page - 1) * pageSize, take: pageSize, include: cfInclude }),
       ])
       total = count
-      rows = [...pendingRows, ...otherRows].slice(0, PAGE_SIZE)
+      rows = [...pendingRows, ...otherRows].slice(0, pageSize)
     } else {
       const where = { ...baseWhere, status }
       const [count, items] = await Promise.all([
         prisma.transaction.count({ where }),
-        prisma.transaction.findMany({ where, orderBy: { createdAt: 'desc' }, skip: (page - 1) * PAGE_SIZE, take: PAGE_SIZE, include: cfInclude }),
+        prisma.transaction.findMany({ where, orderBy: { createdAt: 'desc' }, skip: (page - 1) * pageSize, take: pageSize, include: cfInclude }),
       ])
       total = count
       rows = items
@@ -86,7 +88,7 @@ export async function loader({ request }: Route.LoaderArgs) {
       q,
       page,
       total,
-      pageSize: PAGE_SIZE,
+      pageSize,
       pendingDepositCount,
       pendingWithdrawCount,
       pendingTransferCount,
@@ -118,15 +120,15 @@ export async function loader({ request }: Route.LoaderArgs) {
     const [count, pendingRows, otherRows] = await Promise.all([
       prisma.transaction.count({ where: baseWhere }),
       prisma.transaction.findMany({ where: { ...baseWhere, status: 'PENDING' }, orderBy: { createdAt: 'desc' }, include: { user: { select: USER_SELECT } } }),
-      prisma.transaction.findMany({ where: { ...baseWhere, status: { not: 'PENDING' } }, orderBy: { createdAt: 'desc' }, skip: (page - 1) * PAGE_SIZE, take: PAGE_SIZE, include: { user: { select: USER_SELECT } } }),
+      prisma.transaction.findMany({ where: { ...baseWhere, status: { not: 'PENDING' } }, orderBy: { createdAt: 'desc' }, skip: (page - 1) * pageSize, take: pageSize, include: { user: { select: USER_SELECT } } }),
     ])
     total = count
-    rows = [...pendingRows, ...otherRows].slice(0, PAGE_SIZE)
+    rows = [...pendingRows, ...otherRows].slice(0, pageSize)
   } else {
     const where = { ...baseWhere, status }
     const [count, items] = await Promise.all([
       prisma.transaction.count({ where }),
-      prisma.transaction.findMany({ where, orderBy: { createdAt: 'desc' }, skip: (page - 1) * PAGE_SIZE, take: PAGE_SIZE, include: { user: { select: USER_SELECT } } }),
+      prisma.transaction.findMany({ where, orderBy: { createdAt: 'desc' }, skip: (page - 1) * pageSize, take: pageSize, include: { user: { select: USER_SELECT } } }),
     ])
     total = count
     rows = items
@@ -140,7 +142,7 @@ export async function loader({ request }: Route.LoaderArgs) {
     q,
     page,
     total,
-    pageSize: PAGE_SIZE,
+    pageSize,
     pendingDepositCount,
     pendingWithdrawCount,
     pendingTransferCount,
@@ -368,6 +370,13 @@ export default function AdminTransactions() {
     return `?${next.toString()}`
   }
 
+  function pageSizeHref(s: number) {
+    const next = new URLSearchParams(params)
+    next.set('pageSize', String(s))
+    next.set('page', '1')
+    return `?${next.toString()}`
+  }
+
   return (
     <div className="flex flex-col gap-4">
       <div className="flex items-center justify-between">
@@ -424,10 +433,19 @@ export default function AdminTransactions() {
 
         {/* RIGHT: phone-number filter — preserves active tab/status, resets
             to page 1 on submit so we don't land out-of-range. */}
-        <Form method="get" className="flex items-center gap-2 md:w-96 md:shrink-0">
+        <Form method="get" className="flex items-center gap-2 md:w-auto md:shrink-0">
           <input type="hidden" name="tab" value={data.tab} />
           <input type="hidden" name="status" value={data.status} />
           <input type="hidden" name="page" value="1" />
+          <select
+            name="pageSize"
+            defaultValue={data.pageSize}
+            onChange={e => { e.currentTarget.form?.requestSubmit() }}
+            className="rounded-lg px-2 py-2 text-xs font-bold outline-none"
+            style={{ background: '#0f172a', color: '#a5b4fc', border: '1.5px solid #4338ca' }}
+          >
+            {PAGE_SIZES.map(s => <option key={s} value={s}>{s} / page</option>)}
+          </select>
           <div className="relative flex-1">
             <Search size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2" style={{ color: '#818cf8' }} />
             <input
@@ -506,7 +524,7 @@ export default function AdminTransactions() {
             )}
           </div>
           <span className="text-xs tabular-nums" style={{ color: '#a5b4fc' }}>
-            Showing {(data.page - 1) * data.pageSize + 1}–{Math.min(data.page * data.pageSize, data.total).toLocaleString()} of {data.total.toLocaleString()} transactions · Page {data.page}/{totalPages}
+            Showing {Math.min((data.page - 1) * data.pageSize + 1, data.total)}–{Math.min(data.page * data.pageSize, data.total).toLocaleString()} of {data.total.toLocaleString()} transactions · Page {data.page}/{totalPages}
           </span>
         </div>
       )}

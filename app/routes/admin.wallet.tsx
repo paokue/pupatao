@@ -6,7 +6,7 @@ import type { Route } from './+types/admin.wallet'
 import { requireAdmin } from '~/lib/admin-auth.server'
 import { prisma } from '~/lib/prisma.server'
 
-const PAGE_SIZE = 20
+const PAGE_SIZES = [10, 30, 50, 100, 200, 500] as const
 
 // ─── LOADER ──────────────────────────────────────────────────────────
 // Returns the paginated user list with their three wallet balances and
@@ -19,6 +19,8 @@ export async function loader({ request }: Route.LoaderArgs) {
   const url = new URL(request.url)
   const q = url.searchParams.get('q')?.trim() ?? ''
   const page = Math.max(1, parseInt(url.searchParams.get('page') ?? '1', 10) || 1)
+  const pageSizeRaw = parseInt(url.searchParams.get('pageSize') ?? '30', 10)
+  const pageSize = (PAGE_SIZES as readonly number[]).includes(pageSizeRaw) ? pageSizeRaw : 30
 
   const where = q
     ? {
@@ -35,8 +37,8 @@ export async function loader({ request }: Route.LoaderArgs) {
     prisma.user.findMany({
       where,
       orderBy: { createdAt: 'desc' },
-      skip: (page - 1) * PAGE_SIZE,
-      take: PAGE_SIZE,
+      skip: (page - 1) * pageSize,
+      take: pageSize,
       include: { wallets: true },
     }),
   ])
@@ -66,7 +68,7 @@ export async function loader({ request }: Route.LoaderArgs) {
     q,
     page,
     total,
-    pageSize: PAGE_SIZE,
+    pageSize,
     users: users.map(u => {
       const t = totals.get(u.id) ?? { deposit: 0, withdraw: 0 }
       return {
@@ -148,6 +150,13 @@ export default function AdminWallet() {
     submit(next, { method: 'get' })
   }
 
+  function setPageSize(s: number) {
+    const next = new URLSearchParams(params)
+    next.set('pageSize', String(s))
+    next.set('page', '1')
+    submit(next, { method: 'get' })
+  }
+
   return (
     <div className="flex flex-col gap-4">
       <div className="flex items-center justify-between">
@@ -155,28 +164,36 @@ export default function AdminWallet() {
         <span className="text-xs" style={{ color: '#a5b4fc' }}>{data.total.toLocaleString()} customers</span>
       </div>
 
-      <Form method="get" className="flex items-center gap-2">
-        {/* Always reset to page 1 on a new search so we don't land on a
-            page that's out of range for the filtered result set. */}
-        <input type="hidden" name="page" value="1" />
-        <div className="relative flex-1">
-          <Search size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2" style={{ color: '#818cf8' }} />
-          <input
-            name="q"
-            defaultValue={data.q}
-            placeholder="Search by phone or first name…"
-            className="w-full rounded-lg py-2 pl-9 pr-3 text-sm outline-none"
-            style={{ background: '#0f172a', color: '#fde68a', border: '1.5px solid #4338ca' }}
-          />
-        </div>
-        <button
-          type="submit"
-          className="rounded-lg px-3 py-2 text-xs font-bold "
-          style={{ background: '#4338ca', color: '#fff', border: '1.5px solid #818cf8' }}
+      <div className="flex items-center gap-2">
+        <select
+          value={data.pageSize}
+          onChange={e => setPageSize(Number(e.target.value))}
+          className="rounded-lg px-2 py-2 text-xs font-bold outline-none"
+          style={{ background: '#0f172a', color: '#a5b4fc', border: '1.5px solid #4338ca' }}
         >
-          {loading ? <Loader size={14} className="animate-spin" /> : 'SEARCH'}
-        </button>
-      </Form>
+          {PAGE_SIZES.map(s => <option key={s} value={s}>{s} / page</option>)}
+        </select>
+        <Form method="get" className="flex flex-1 items-center gap-2">
+          <input type="hidden" name="page" value="1" />
+          <div className="relative flex-1">
+            <Search size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2" style={{ color: '#818cf8' }} />
+            <input
+              name="q"
+              defaultValue={data.q}
+              placeholder="Search by phone or first name…"
+              className="w-full rounded-lg py-2 pl-9 pr-3 text-sm outline-none"
+              style={{ background: '#0f172a', color: '#fde68a', border: '1.5px solid #4338ca' }}
+            />
+          </div>
+          <button
+            type="submit"
+            className="rounded-lg px-3 py-2 text-xs font-bold"
+            style={{ background: '#4338ca', color: '#fff', border: '1.5px solid #818cf8' }}
+          >
+            {loading ? <Loader size={14} className="animate-spin" /> : 'SEARCH'}
+          </button>
+        </Form>
+      </div>
 
       {/* Mobile cards */}
       <div className="flex flex-col gap-2 md:hidden">
@@ -239,27 +256,21 @@ export default function AdminWallet() {
       {totalPages > 1 && (
         <div className="flex flex-col items-center gap-1.5">
           <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => gotoPage(data.page - 1)}
+            <button type="button" onClick={() => gotoPage(data.page - 1)}
               disabled={data.page <= 1 || loading}
               className="rounded-md px-3 py-1.5 text-xs font-bold disabled:opacity-30"
-              style={{ background: '#1e1b4b', color: '#a5b4fc', border: '1px solid #4338ca' }}
-            >
+              style={{ background: '#1e1b4b', color: '#a5b4fc', border: '1px solid #4338ca' }}>
               ← Prev
             </button>
-            <button
-              type="button"
-              onClick={() => gotoPage(data.page + 1)}
+            <button type="button" onClick={() => gotoPage(data.page + 1)}
               disabled={data.page >= totalPages || loading}
               className="rounded-md px-3 py-1.5 text-xs font-bold disabled:opacity-30"
-              style={{ background: '#1e1b4b', color: '#a5b4fc', border: '1px solid #4338ca' }}
-            >
+              style={{ background: '#1e1b4b', color: '#a5b4fc', border: '1px solid #4338ca' }}>
               Next →
             </button>
           </div>
           <span className="text-xs tabular-nums" style={{ color: '#a5b4fc' }}>
-            Showing {(data.page - 1) * data.pageSize + 1}–{Math.min(data.page * data.pageSize, data.total).toLocaleString()} of {data.total.toLocaleString()} customers · Page {data.page}/{totalPages}
+            Showing {Math.min((data.page - 1) * data.pageSize + 1, data.total)}–{Math.min(data.page * data.pageSize, data.total).toLocaleString()} of {data.total.toLocaleString()} customers · Page {data.page}/{totalPages}
           </span>
         </div>
       )}

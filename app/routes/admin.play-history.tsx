@@ -7,7 +7,7 @@ import { prisma } from '~/lib/prisma.server'
 import { ADMIN_CHANNEL, type BetPlacedPayload, type RoundResolvedPayload } from '~/lib/pusher-channels'
 import { usePusherEvent } from '~/hooks/use-pusher'
 
-const PAGE_SIZE = 30
+const PAGE_SIZES = [10, 30, 50, 100, 200, 500] as const
 const WALLET_TABS: ReadonlyArray<Extract<WalletType, 'REAL' | 'DEMO'>> = ['REAL', 'DEMO']
 const BET_TYPES: { key: 'ALL' | 'SYMBOL' | 'PAIR' | 'LOW' | 'MIDDLE' | 'HIGH'; label: string }[] = [
   { key: 'ALL', label: 'All' },
@@ -22,6 +22,8 @@ export async function loader({ request }: Route.LoaderArgs) {
   await requireAdmin(request)
   const url = new URL(request.url)
   const page = Math.max(1, parseInt(url.searchParams.get('page') ?? '1', 10) || 1)
+  const pageSizeRaw = parseInt(url.searchParams.get('pageSize') ?? '30', 10)
+  const pageSize = (PAGE_SIZES as readonly number[]).includes(pageSizeRaw) ? pageSizeRaw : 30
   const walletParam = url.searchParams.get('wallet')
   const walletType: 'REAL' | 'DEMO' = walletParam === 'DEMO' ? 'DEMO' : 'REAL'
   const q = url.searchParams.get('q')?.trim() ?? ''
@@ -52,8 +54,8 @@ export async function loader({ request }: Route.LoaderArgs) {
     prisma.bet.findMany({
       where,
       orderBy: { createdAt: 'desc' },
-      skip: (page - 1) * PAGE_SIZE,
-      take: PAGE_SIZE,
+      skip: (page - 1) * pageSize,
+      take: pageSize,
       include: {
         user: { select: { tel: true, firstName: true, lastName: true } },
         round: { select: { mode: true, status: true, dice1: true, dice2: true, dice3: true, diceSum: true } },
@@ -64,7 +66,7 @@ export async function loader({ request }: Route.LoaderArgs) {
   return {
     page,
     total,
-    pageSize: PAGE_SIZE,
+    pageSize,
     walletType,
     q,
     result,
@@ -119,6 +121,13 @@ export default function AdminPlayHistory() {
   function pageHref(p: number) {
     const next = new URLSearchParams(params)
     next.set('page', String(p))
+    return `?${next.toString()}`
+  }
+
+  function pageSizeHref(s: number) {
+    const next = new URLSearchParams(params)
+    next.set('pageSize', String(s))
+    next.set('page', '1')
     return `?${next.toString()}`
   }
 
@@ -210,12 +219,21 @@ export default function AdminPlayHistory() {
           </div>
         </div>
 
-        {/* RIGHT ½: phone search */}
+        {/* RIGHT ½: per-page + phone search */}
         <Form method="get" className="flex items-center gap-2 md:w-1/2">
           <input type="hidden" name="wallet" value={data.walletType} />
           <input type="hidden" name="result" value={data.result} />
           <input type="hidden" name="betType" value={data.betType} />
           <input type="hidden" name="page" value="1" />
+          <select
+            name="pageSize"
+            defaultValue={data.pageSize}
+            onChange={e => { e.currentTarget.form?.requestSubmit() }}
+            className="rounded-lg px-2 py-2 text-xs font-bold outline-none shrink-0"
+            style={{ background: '#0f172a', color: '#a5b4fc', border: '1.5px solid #4338ca' }}
+          >
+            {PAGE_SIZES.map(s => <option key={s} value={s}>{s} / page</option>)}
+          </select>
           <div className="relative flex-1">
             <Search size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2" style={{ color: '#818cf8' }} />
             <input
@@ -328,7 +346,7 @@ export default function AdminPlayHistory() {
             )}
           </div>
           <span className="text-xs tabular-nums" style={{ color: '#a5b4fc' }}>
-            Showing {(data.page - 1) * data.pageSize + 1}–{Math.min(data.page * data.pageSize, data.total).toLocaleString()} of {data.total.toLocaleString()} bets · Page {data.page}/{totalPages}
+            Showing {Math.min((data.page - 1) * data.pageSize + 1, data.total)}–{Math.min(data.page * data.pageSize, data.total).toLocaleString()} of {data.total.toLocaleString()} bets · Page {data.page}/{totalPages}
           </span>
         </div>
       )}
