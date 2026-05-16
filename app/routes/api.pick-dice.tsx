@@ -1,8 +1,8 @@
 // Phase-1 of the two-phase RANDOM round flow.
-// Picks adversarial dice and signs the result so Phase-2 (/api/save-round) can
-// trust it. For REAL/PROMO wallets a single aggregate query fetches the user's
-// cumulative winnings to select the correct house-edge tier; DEMO skips the DB.
-import type { DiceSymbol, RangeKey } from '@prisma/client'
+// For REAL/PROMO: resolves the user's self-play phase (advancing it if needed),
+// then picks adversarial dice and signs the result so Phase-2 (/api/save-round)
+// can trust it. DEMO skips all DB work.
+import type { DiceSymbol, RangeKey, SelfPlayPhase } from '@prisma/client'
 import {
   VALID_SYMBOLS, VALID_RANGES,
   type SymbolBetIn, type RangeBetIn, type PairBetIn,
@@ -56,12 +56,15 @@ export async function action({ request }: { request: Request }) {
   const parsed = parseBets(raw)
   if ('error' in parsed) return Response.json(parsed, { status: 400 })
 
-  // For REAL/PROMO wallets fetch net profit since the last fresh-start deposit
-  // to select the correct tier. DEMO skips the DB entirely.
-  let netProfit = 0
+  const cfg = getPayoutConfig()
+  let phase: SelfPlayPhase = 'NORMAL'
+
   if (parsed.wallet !== 'DEMO') {
     const { getCurrentUser } = await import('~/lib/auth.server')
-    const { getPlayerProfitSinceReset } = await import('~/lib/player-winnings.server')
+    const { prisma } = await import('~/lib/prisma.server')
+    const { getPlayerGameState } = await import('~/lib/player-winnings.server')
+    const { resolveAndAdvancePhase } = await import('~/lib/self-play-phase.server')
+
     let user: Awaited<ReturnType<typeof getCurrentUser>>
     try {
       user = await getCurrentUser(request)
@@ -69,16 +72,56 @@ export async function action({ request }: { request: Request }) {
       return Response.json({ error: 'Session error.' }, { status: 503 })
     }
     if (!user) return Response.json({ error: 'Signed out.' }, { status: 401 })
+
     try {
-      netProfit = await getPlayerProfitSinceReset(user.id)
+      // Fetch user record first — if admin-locked, bail out immediately with
+      // a guaranteed-loss result without running any other logic.
+      const userRecord = await prisma.user.findUnique({
+        where: { id: user.id },
+        select: { selfPlayPhase: true, selfPlayPhaseBalance: true },
+      })
+
+      if (userRecord?.selfPlayPhase === 'ADMIN_LOCKED') {
+        // Hard guarantee: admin-locked users always receive 0-payout dice.
+        const { pickZeroPayoutDice } = await import('~/lib/game-logic.server')
+        const dice = pickZeroPayoutDice(parsed.symbolBets, parsed.rangeBets, parsed.pairBets, cfg)
+        const token = signRoundToken({
+          dice, wallet: parsed.wallet,
+          symbolBets: parsed.symbolBets, rangeBets: parsed.rangeBets, pairBets: parsed.pairBets,
+          exp: Date.now() + 120_000,
+        })
+        return Response.json({ ok: true, dice, token })
+      }
+
+      // Not locked — resolve phase via game-state + phase ladder.
+      const [gameState, wallet] = await Promise.all([
+        getPlayerGameState(user.id),
+        prisma.wallet.findUnique({
+          where: { userId_type: { userId: user.id, type: parsed.wallet } },
+          select: { balance: true },
+        }),
+      ])
+
+      if (userRecord) {
+        const resolved = await resolveAndAdvancePhase(
+          user.id,
+          { phase: userRecord.selfPlayPhase, phaseEntryBalance: userRecord.selfPlayPhaseBalance },
+          wallet?.balance ?? 0,
+          gameState.netProfit,
+          gameState.lastDepositAmount,
+        )
+        phase = resolved.phase
+      }
     } catch {
-      // On DB failure, default to the strictest tier (≥200k) to protect the house.
-      netProfit = 200_000
+      // On DB failure default to the most cautious tier (PHASE_A = 10% win).
+      phase = 'PHASE_A'
     }
   }
 
-  const cfg  = getPayoutConfig()
-  const dice = pickAdversarialDice(parsed.symbolBets, parsed.rangeBets, parsed.pairBets, cfg, parsed.wallet as WalletType, netProfit)
+  const dice = pickAdversarialDice(
+    parsed.symbolBets, parsed.rangeBets, parsed.pairBets,
+    cfg, parsed.wallet as WalletType, phase,
+  )
 
   const token = signRoundToken({
     dice,
@@ -86,7 +129,7 @@ export async function action({ request }: { request: Request }) {
     symbolBets: parsed.symbolBets,
     rangeBets:  parsed.rangeBets,
     pairBets:   parsed.pairBets,
-    exp: Date.now() + 120_000, // token valid for 2 minutes
+    exp: Date.now() + 120_000,
   })
 
   return Response.json({ ok: true, dice, token })

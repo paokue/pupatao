@@ -51,6 +51,17 @@ enum AccountStatus {
   BANNED
 }
 
+// Tracks which self-play adversarial tier a user is in.
+// Transitions: NORMAL → PHASE_A → PHASE_B → PHASE_C (natural loss spiral)
+//              Any phase → ADMIN_LOCKED (admin override; never auto-resets)
+enum SelfPlayPhase {
+  NORMAL       // 50 % win / 50 % lose (base tier)
+  PHASE_A      // 10 % win / 90 % lose — triggered when profit doubles deposit
+  PHASE_B      // 30 % win / 70 % lose — triggered when balance ≤ 10 % of phase-entry balance
+  PHASE_C      //  5 % win / 95 % lose — triggered when balance recovers to 50 % of phase-entry balance
+  ADMIN_LOCKED //  0 % win (always lose) — manual admin override; never auto-resets
+}
+
 model User {
   id           String        @id @default(auto()) @map("_id") @db.ObjectId
   tel          String        @unique // required — login identifier (e.g. "+8562078856194")
@@ -63,6 +74,10 @@ model User {
   status       AccountStatus @default(ACTIVE)
   createdAt    DateTime      @default(now())
   updatedAt    DateTime      @updatedAt
+
+  // Self-play adversarial phase tracking
+  selfPlayPhase        SelfPlayPhase @default(NORMAL)
+  selfPlayPhaseBalance Int?          // wallet balance (₭) when Phase A was entered; reference for 10 %/50 % thresholds
 
   // Referral — every user gets a short unique code at registration. New
   // sign-ups arriving from /register?ref=CODE attach `referredById`.

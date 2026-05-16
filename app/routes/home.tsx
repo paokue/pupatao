@@ -1612,7 +1612,9 @@ export default function FishPrawnCrabGame() {
     setMessage(t('game.rolling'))
     soundEnabled && startRollSound()
 
-    // Fire pick-dice with the finalised bets (or use pre-computed if ready).
+    // Always call pick-dice fresh at roll time so the server can apply the
+    // latest phase (e.g. admin lock applied between precompute and roll).
+    // The 8-second animation gives pick-dice plenty of time to respond.
     if (authUser) {
       const wallet = user.activeWallet === 'real' ? 'REAL' : user.activeWallet === 'promo' ? 'PROMO' : 'DEMO'
       const betsPayload = {
@@ -1623,14 +1625,9 @@ export default function FishPrawnCrabGame() {
           pair: currentPairBets.map(b => ({ symbolA: b.a.toUpperCase(), symbolB: b.b.toUpperCase(), cellA: b.cellA, cellB: b.cellB, amount: b.amount })),
         },
       }
-      const betsKey = JSON.stringify(betsPayload)
-      if (precomputedRound?.betsKey === betsKey) {
-        pendingDiceRef.current = precomputedRound
-        setPrecomputedRound(null)
-      } else {
-        pendingDiceRef.current = null
-        playRoundFetcher.submit(betsPayload, { method: 'post', action: '/api/pick-dice', encType: 'application/json' })
-      }
+      pendingDiceRef.current = null
+      setPrecomputedRound(null)
+      playRoundFetcher.submit(betsPayload, { method: 'post', action: '/api/pick-dice', encType: 'application/json' })
     }
 
     const rollInterval = setInterval(() => {

@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Form, useLoaderData, useNavigation, useRevalidator, useSearchParams, useSubmit } from 'react-router'
-import { Loader, Search, ShieldOff, ShieldCheck as ShieldCheckIcon } from 'lucide-react'
+import { Loader, Lock, LockOpen, Search, ShieldOff, ShieldCheck as ShieldCheckIcon } from 'lucide-react'
 import type { Route } from './+types/admin.customers'
 import { requireAdmin } from '~/lib/admin-auth.server'
 import { prisma } from '~/lib/prisma.server'
@@ -56,6 +56,7 @@ export async function loader({ request }: Route.LoaderArgs) {
       createdAt: u.createdAt.toISOString(),
       real: u.wallets.find(w => w.type === 'REAL')?.balance ?? 0,
       demo: u.wallets.find(w => w.type === 'DEMO')?.balance ?? 0,
+      selfPlayPhase: u.selfPlayPhase,
     })),
   }
 }
@@ -79,6 +80,28 @@ export async function action({ request }: Route.ActionArgs) {
         action: op === 'suspend' ? 'user.suspend' : 'user.activate',
         target: `user:${userId}`,
       },
+    })
+    return { ok: true }
+  }
+
+  if (op === 'lockGame') {
+    await prisma.user.update({
+      where: { id: userId },
+      data: { selfPlayPhase: 'ADMIN_LOCKED' },
+    })
+    await prisma.auditLog.create({
+      data: { actorId: admin.id, action: 'user.game_lock', target: `user:${userId}` },
+    })
+    return { ok: true }
+  }
+
+  if (op === 'unlockGame') {
+    await prisma.user.update({
+      where: { id: userId },
+      data: { selfPlayPhase: 'NORMAL', selfPlayPhaseBalance: null },
+    })
+    await prisma.auditLog.create({
+      data: { actorId: admin.id, action: 'user.game_unlock', target: `user:${userId}` },
     })
     return { ok: true }
   }
@@ -179,6 +202,7 @@ export default function AdminCustomers() {
               <th className="px-3 py-2 text-right">REAL</th>
               <th className="px-3 py-2 text-right">DEMO</th>
               <th className="px-3 py-2">STATUS</th>
+              <th className="px-3 py-2">GAME TIER</th>
               <th className="px-3 py-2"></th>
             </tr>
           </thead>
@@ -198,6 +222,12 @@ export default function AdminCustomers() {
                 <td className="px-3 py-2 text-right" style={{ color: '#fde68a' }}>{u.real.toLocaleString()}</td>
                 <td className="px-3 py-2 text-right" style={{ color: '#a5b4fc' }}>{u.demo.toLocaleString()}</td>
                 <td className="px-3 py-2"><StatusPill status={u.status} /></td>
+                <td className="px-3 py-2">
+                  <div className="flex items-center gap-1.5">
+                    <PhaseBadge phase={u.selfPlayPhase} />
+                    <GameLockButton u={u} disabled={loading} onRevalidate={revalidator.revalidate} />
+                  </div>
+                </td>
                 <td className="px-3 py-2 text-right">
                   <ActionButton u={u} onClick={() => setPending(u)} disabled={loading} />
                 </td>
@@ -279,7 +309,11 @@ function CustomerCard({ u, onAction, rowNum }: { u: CustomerRow; onAction: (u: C
           <div className="font-semibold" style={{ color: '#a5b4fc' }}>{u.demo.toLocaleString()}</div>
         </div>
       </div>
-      <div className="mt-2 flex justify-end">
+      <div className="mt-2 flex items-center justify-between">
+        <div className="flex items-center gap-1.5">
+          <PhaseBadge phase={u.selfPlayPhase} />
+          <GameLockButton u={u} onRevalidate={() => window.location.reload()} />
+        </div>
         <ActionButton u={u} onClick={() => onAction(u)} />
       </div>
     </div>
@@ -302,6 +336,57 @@ function ActionButton({ u, onClick, disabled }: { u: CustomerRow; onClick: () =>
     >
       {isActive ? <ShieldOff size={10} /> : <ShieldCheckIcon size={10} />}
       {isActive ? 'SUSPEND' : 'ACTIVATE'}
+    </button>
+  )
+}
+
+type SelfPlayPhase = CustomerRow['selfPlayPhase']
+
+const PHASE_LABELS: Record<SelfPlayPhase, { label: string; bg: string; color: string }> = {
+  NORMAL:       { label: 'Normal',   bg: 'rgba(22,163,74,0.15)',   color: '#4ade80' },
+  PHASE_A:      { label: 'Phase A',  bg: 'rgba(234,88,12,0.2)',    color: '#fb923c' },
+  PHASE_B:      { label: 'Phase B',  bg: 'rgba(202,138,4,0.2)',    color: '#facc15' },
+  PHASE_C:      { label: 'Phase C',  bg: 'rgba(220,38,38,0.2)',    color: '#f87171' },
+  ADMIN_LOCKED: { label: '🔒 Locked', bg: 'rgba(127,29,29,0.35)',  color: '#fca5a5' },
+}
+
+function PhaseBadge({ phase }: { phase: SelfPlayPhase }) {
+  const p = PHASE_LABELS[phase]
+  return (
+    <span className="rounded-full px-2 py-0.5 text-[9px] font-bold whitespace-nowrap"
+      style={{ background: p.bg, color: p.color, border: `1px solid ${p.color}40` }}>
+      {p.label}
+    </span>
+  )
+}
+
+function GameLockButton({ u, disabled, onRevalidate }: { u: CustomerRow; disabled?: boolean; onRevalidate: () => void }) {
+  const isLocked = u.selfPlayPhase === 'ADMIN_LOCKED'
+  const submitHook = useSubmit()
+
+  function toggle() {
+    const fd = new FormData()
+    fd.set('op', isLocked ? 'unlockGame' : 'lockGame')
+    fd.set('userId', u.id)
+    submitHook(fd, { method: 'post' })
+    setTimeout(onRevalidate, 500)
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={toggle}
+      disabled={disabled}
+      title={isLocked ? 'Unlock game (allow wins)' : 'Lock game (force losses)'}
+      className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[10px] font-bold disabled:opacity-50"
+      style={{
+        background: isLocked ? 'rgba(22,163,74,0.15)' : 'rgba(127,29,29,0.3)',
+        color: isLocked ? '#4ade80' : '#fca5a5',
+        border: `1px solid ${isLocked ? '#4ade8040' : '#fca5a540'}`,
+      }}
+    >
+      {isLocked ? <LockOpen size={10} /> : <Lock size={10} />}
+      {isLocked ? 'Unlock' : 'Lock'}
     </button>
   )
 }

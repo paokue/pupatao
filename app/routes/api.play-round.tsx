@@ -131,18 +131,33 @@ export async function action({ request }: Route.ActionArgs) {
       return await handleLiveBets({ user, wallet, walletKey, totalStake, symbolBets, rangeBets, pairBets, sumBets })
     }
 
-    let netProfit = 0
+    let phase: import('@prisma/client').SelfPlayPhase = 'NORMAL'
     if (walletKey !== 'DEMO') {
       try {
-        const { getPlayerProfitSinceReset } = await import('~/lib/player-winnings.server')
-        netProfit = await getPlayerProfitSinceReset(user.id)
+        const { prisma } = await import('~/lib/prisma.server')
+        const { getPlayerGameState } = await import('~/lib/player-winnings.server')
+        const { resolveAndAdvancePhase } = await import('~/lib/self-play-phase.server')
+        const [userRecord, gameState] = await Promise.all([
+          prisma.user.findUnique({ where: { id: user.id }, select: { selfPlayPhase: true, selfPlayPhaseBalance: true } }),
+          getPlayerGameState(user.id),
+        ])
+        if (userRecord) {
+          const resolved = await resolveAndAdvancePhase(
+            user.id,
+            { phase: userRecord.selfPlayPhase, phaseEntryBalance: userRecord.selfPlayPhaseBalance },
+            wallet.balance,
+            gameState.netProfit,
+            gameState.lastDepositAmount,
+          )
+          phase = resolved.phase
+        }
       } catch {
-        netProfit = 200_000
+        phase = 'PHASE_A'
       }
     }
 
     return await handleRandomRound({
-      user, wallet, walletKey, totalStake, netProfit,
+      user, wallet, walletKey, totalStake, phase,
       symbolBets, rangeBets, pairBets,
     })
   } catch (err) {
@@ -164,14 +179,14 @@ async function handleRandomRound(args: {
   wallet: { id: string; balance: number }
   walletKey: WalletKey
   totalStake: number
-  netProfit: number
+  phase: import('@prisma/client').SelfPlayPhase
   symbolBets: SymbolBetIn[]
   rangeBets: RangeBetIn[]
   pairBets: PairBetIn[]
 }) {
-  const { user, wallet, walletKey, totalStake, netProfit, symbolBets, rangeBets, pairBets } = args
+  const { user, wallet, walletKey, totalStake, phase, symbolBets, rangeBets, pairBets } = args
   const cfg = getPayoutConfig()
-  const dice = pickAdversarialDice(symbolBets, rangeBets, pairBets, cfg, walletKey as 'DEMO' | 'REAL' | 'PROMO', netProfit)
+  const dice = pickAdversarialDice(symbolBets, rangeBets, pairBets, cfg, walletKey as 'DEMO' | 'REAL' | 'PROMO', phase)
   const diceSum = SYMBOL_VALUES[dice[0]] + SYMBOL_VALUES[dice[1]] + SYMBOL_VALUES[dice[2]]
   const symbolPayouts = symbolBets.map(b => payoutForSymbol(b, dice, cfg))
   const rangePayouts = rangeBets.map(b => payoutForRange(b, diceSum, cfg))
