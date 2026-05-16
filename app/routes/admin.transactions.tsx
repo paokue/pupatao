@@ -231,23 +231,12 @@ export async function action({ request }: Route.ActionArgs) {
         },
       })
 
-      // ── Phase reset: REAL wallet + balance was < 2 000 before this deposit
-      // → reset game tier to NORMAL so user gets a fresh start.
-      // Never resets ADMIN_LOCKED users (admin must manually unlock).
-      if (tx.type === 'DEPOSIT' && wallet.type === 'REAL' && wallet.balance < 2_000) {
-        const userPhase = await db.user.findUnique({
-          where: { id: tx.userId },
-          select: { selfPlayPhase: true },
-        })
-        if (userPhase && userPhase.selfPlayPhase !== 'ADMIN_LOCKED') {
-          await db.user.update({
-            where: { id: tx.userId },
-            data: { selfPlayPhase: 'NORMAL', selfPlayPhaseBalance: null },
-          })
-        }
-      }
-
       const bonus = { promo: 0, promoNewBalance: 0, referrer: { userId: '', amount: 0, newRealBalance: 0 } }
+      // Capture pre-deposit balance so the phase reset (run after this
+      // transaction) knows whether the wallet was nearly empty.
+      const walletBalanceBefore = wallet.balance
+      const walletType = wallet.type
+
       if (tx.type === 'DEPOSIT') {
         const user = await db.user.findUnique({
           where: { id: tx.userId },
@@ -298,10 +287,30 @@ export async function action({ request }: Route.ActionArgs) {
           }
         }
       }
-      return { updated: u, bonus }
-    })
+      return { updated: u, bonus, walletBalanceBefore, walletType }
+    }, { timeout: 15_000 })
 
-    const { updated, bonus } = result
+    const { updated, bonus, walletBalanceBefore, walletType } = result
+
+    // Phase reset runs OUTSIDE the transaction to avoid timeout.
+    // If REAL wallet had < 2 000 ₭ before this deposit, reset game tier to NORMAL.
+    if (tx.type === 'DEPOSIT' && walletType === 'REAL' && walletBalanceBefore < 2_000) {
+      try {
+        const userPhase = await prisma.user.findUnique({
+          where: { id: tx.userId },
+          select: { selfPlayPhase: true },
+        })
+        if (userPhase && userPhase.selfPlayPhase !== 'ADMIN_LOCKED') {
+          await prisma.user.update({
+            where: { id: tx.userId },
+            data: { selfPlayPhase: 'NORMAL', selfPlayPhaseBalance: null },
+          })
+        }
+      } catch (e) {
+        console.error('[deposit.approve] phase reset failed', e)
+      }
+    }
+
     notifyUser(tx.userId, 'transaction:updated', {
       id: updated.id, status: 'COMPLETED',
       type: updated.type as 'DEPOSIT' | 'WITHDRAW',

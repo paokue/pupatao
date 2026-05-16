@@ -28,18 +28,38 @@ export async function loader({ request }: Route.LoaderArgs) {
     }
     : {}
 
-  const [total, users] = await Promise.all([
-    prisma.user.count({ where }),
+  // Load all matching users, then sort by latest deposit/withdraw date.
+  // Pagination is applied after sorting since MongoDB/Prisma can't ORDER BY
+  // a related table's field natively.
+  const [allUsers, latestTxs] = await Promise.all([
     prisma.user.findMany({
       where,
-      orderBy: { createdAt: 'desc' },
-      skip: (page - 1) * pageSize,
-      take: pageSize,
-      include: {
-        wallets: true,
+      include: { wallets: true },
+    }),
+    prisma.transaction.groupBy({
+      by: ['userId'],
+      where: {
+        type: { in: ['DEPOSIT', 'WITHDRAW'] },
+        status: 'COMPLETED',
       },
+      _max: { createdAt: true },
     }),
   ])
+
+  const latestMap = new Map(latestTxs.map(t => [t.userId, t._max.createdAt as Date | null]))
+
+  // Users with a deposit/withdraw come first (sorted by most recent), then the rest
+  const sorted = [...allUsers].sort((a, b) => {
+    const da = latestMap.get(a.id)
+    const db = latestMap.get(b.id)
+    if (!da && !db) return 0
+    if (!da) return 1
+    if (!db) return -1
+    return db.getTime() - da.getTime()
+  })
+
+  const total = sorted.length
+  const users = sorted.slice((page - 1) * pageSize, page * pageSize)
 
   return {
     q,
@@ -57,6 +77,7 @@ export async function loader({ request }: Route.LoaderArgs) {
       real: u.wallets.find(w => w.type === 'REAL')?.balance ?? 0,
       demo: u.wallets.find(w => w.type === 'DEMO')?.balance ?? 0,
       selfPlayPhase: u.selfPlayPhase,
+      lastActivity: latestMap.get(u.id)?.toISOString() ?? null,
     })),
   }
 }
