@@ -247,7 +247,7 @@ export async function action({ request }: Route.ActionArgs) {
           await db.user.update({ where: { id: tx.userId }, data: { firstTopupApprovedAt: new Date() } })
           const promoBonus = tx.amount >= 1_000_000 ? 100_000
             : tx.amount >= 500_000 ? 50_000
-              : tx.amount >= 100_000 ? 10_000 : 0
+              : tx.amount >= 100_000 ? 20_000 : 0
           if (promoBonus > 0) {
             const promoWallet = await db.wallet.findUnique({
               where: { userId_type: { userId: tx.userId, type: 'PROMO' } },
