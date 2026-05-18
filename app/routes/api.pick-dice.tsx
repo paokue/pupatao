@@ -93,6 +93,21 @@ export async function action({ request }: { request: Request }) {
         return Response.json({ ok: true, dice, token })
       }
 
+      // Sleep mode: global operator flag that forces all REAL/PROMO rolls to 0
+      // payout. Checked after individual lock so the two don't conflict.
+      const { getSleepMode } = await import('~/lib/system-settings.server')
+      const isSleepMode = await getSleepMode()
+      if (isSleepMode) {
+        const { pickZeroPayoutDice } = await import('~/lib/game-logic.server')
+        const dice = pickZeroPayoutDice(parsed.symbolBets, parsed.rangeBets, parsed.pairBets, cfg)
+        const token = signRoundToken({
+          dice, wallet: parsed.wallet,
+          symbolBets: parsed.symbolBets, rangeBets: parsed.rangeBets, pairBets: parsed.pairBets,
+          exp: Date.now() + 120_000,
+        })
+        return Response.json({ ok: true, dice, token })
+      }
+
       // Not locked — resolve phase via game-state + phase ladder.
       const [gameState, wallet] = await Promise.all([
         getPlayerGameState(user.id),

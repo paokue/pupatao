@@ -54,22 +54,15 @@ export async function action({ request }: { request: Request }) {
   const cfg = getPayoutConfig()
   const diceSum = SYMBOL_VALUES[dice[0]] + SYMBOL_VALUES[dice[1]] + SYMBOL_VALUES[dice[2]]
 
-  // Final safety net: if the player is admin-locked, force all payouts to 0
-  // regardless of what dice the token contains.
-  let forceZeroPayout = false
-  if (walletKey !== 'DEMO') {
-    try {
-      const userRow = await prisma.user.findUnique({
-        where: { id: user.id },
-        select: { selfPlayPhase: true },
-      })
-      if (userRow?.selfPlayPhase === 'ADMIN_LOCKED') forceZeroPayout = true
-    } catch { /* ignore — fall through to normal payout */ }
-  }
-
-  const symbolPayouts = forceZeroPayout ? symbolBets.map(() => 0) : symbolBets.map(b => payoutForSymbol(b, dice, cfg))
-  const rangePayouts  = forceZeroPayout ? rangeBets.map(() => 0)  : rangeBets.map(b => payoutForRange(b, diceSum, cfg))
-  const pairPayouts   = forceZeroPayout ? pairBets.map(() => 0)   : pairBets.map(b => payoutForPair(b, dice, cfg))
+  // Compute payouts directly from the token dice.
+  // pick-dice already called pickZeroPayoutDice when ADMIN_LOCKED or sleep mode
+  // is active, so the token dice are already minimum-payout. We must NOT
+  // force 0 here — when bets cover all ranges no 0-payout dice exists, and
+  // re-picking in save-round would produce different dice from what the player
+  // saw, creating a visible mismatch. Trust the HMAC-verified token dice.
+  const symbolPayouts = symbolBets.map(b => payoutForSymbol(b, dice, cfg))
+  const rangePayouts  = rangeBets.map(b => payoutForRange(b, diceSum, cfg))
+  const pairPayouts   = pairBets.map(b => payoutForPair(b, dice, cfg))
   const totalStake =
     symbolBets.reduce((s, b) => s + b.amount, 0) +
     rangeBets.reduce((s, b) => s + b.amount, 0) +

@@ -1,8 +1,10 @@
-import { Link, useLoaderData } from 'react-router'
-import { Banknote, Dices, Radio, Users } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { Form, Link, useFetcher, useLoaderData, useNavigation } from 'react-router'
+import { Banknote, Dices, Moon, Radio, Users } from 'lucide-react'
 import type { Route } from './+types/admin._index'
 import { requireAdmin } from '~/lib/admin-auth.server'
 import { prisma } from '~/lib/prisma.server'
+import { getSleepMode, setSleepMode } from '~/lib/system-settings.server'
 
 export async function loader({ request }: Route.LoaderArgs) {
   await requireAdmin(request)
@@ -17,6 +19,7 @@ export async function loader({ request }: Route.LoaderArgs) {
     depositSumPending,
     bets24h,
     liveRounds,
+    sleepMode,
   ] = await Promise.all([
     prisma.user.count(),
     prisma.user.count({ where: { status: 'ACTIVE' } }),
@@ -28,6 +31,7 @@ export async function loader({ request }: Route.LoaderArgs) {
     }),
     prisma.bet.count({ where: { createdAt: { gte: since24h } } }),
     prisma.gameRound.count({ where: { mode: 'LIVE', status: { in: ['BETTING', 'LOCKED', 'AWAITING_RESULT'] } } }),
+    getSleepMode(),
   ])
 
   return {
@@ -38,53 +42,108 @@ export async function loader({ request }: Route.LoaderArgs) {
     depositSumPending: depositSumPending._sum.amount ?? 0,
     bets24h,
     liveRounds,
+    sleepMode,
   }
+}
+
+export async function action({ request }: Route.ActionArgs) {
+  const admin = await requireAdmin(request)
+  const fd = await request.formData()
+  const op = String(fd.get('op') ?? '')
+
+  if (op === 'toggleSleepMode') {
+    const current = await getSleepMode()
+    await setSleepMode(!current, admin.id)
+    return { ok: true, sleepMode: !current }
+  }
+
+  return { error: 'Unknown op' }
 }
 
 export default function AdminDashboard() {
   const d = useLoaderData<typeof loader>()
+  const navigation = useNavigation()
+  const loading = navigation.state !== 'idle'
+  const [showConfirm, setShowConfirm] = useState(false)
+  const sleepFetcher = useFetcher<{ ok?: boolean; sleepMode?: boolean }>()
+
+  // Close the confirm modal once the fetcher response lands
+  useEffect(() => {
+    if (sleepFetcher.state === 'idle' && sleepFetcher.data?.ok) {
+      setShowConfirm(false)
+    }
+  }, [sleepFetcher.state, sleepFetcher.data])
+
   return (
     <div className="flex flex-col gap-4">
       <h1 className="text-xl font-bold" style={{ color: '#fde68a' }}>Dashboard</h1>
 
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <StatCard
-          label="Customers"
-          value={`${d.activeCustomers}/${d.customers}`}
-          hint="active / total"
-          to="/admin/customers"
-          Icon={Users}
-        />
-        <StatCard
-          label="Pending deposits"
-          value={d.pendingDeposits.toString()}
+        <StatCard label="Customers" value={`${d.activeCustomers}/${d.customers}`}
+          hint="active / total" to="/admin/customers" Icon={Users} />
+        <StatCard label="Pending deposits" value={d.pendingDeposits.toString()}
           hint={`${d.depositSumPending.toLocaleString()} ₭ awaiting`}
-          to="/admin/transactions"
-          Icon={Banknote}
-          accent={d.pendingDeposits > 0 ? '#facc15' : undefined}
-        />
-        <StatCard
-          label="Pending withdraws"
-          value={d.pendingWithdraws.toString()}
-          hint="awaiting review"
-          to="/admin/transactions?tab=withdraw"
-          Icon={Banknote}
-        />
-        <StatCard
-          label="Bets (24h)"
-          value={d.bets24h.toLocaleString()}
-          hint="all modes"
-          to="/admin/play-history"
-          Icon={Dices}
-        />
-        <StatCard
-          label="Live rounds"
-          value={d.liveRounds.toString()}
-          hint="open or awaiting result"
-          to="/admin/live"
-          Icon={Radio}
-          accent={d.liveRounds > 0 ? '#4ade80' : undefined}
-        />
+          to="/admin/transactions" Icon={Banknote}
+          accent={d.pendingDeposits > 0 ? '#facc15' : undefined} />
+        <StatCard label="Pending withdraws" value={d.pendingWithdraws.toString()}
+          hint="awaiting review" to="/admin/transactions?tab=withdraw" Icon={Banknote} />
+        <StatCard label="Bets (24h)" value={d.bets24h.toLocaleString()}
+          hint="all modes" to="/admin/play-history" Icon={Dices} />
+        <StatCard label="Live rounds" value={d.liveRounds.toString()}
+          hint="open or awaiting result" to="/admin/live" Icon={Radio}
+          accent={d.liveRounds > 0 ? '#4ade80' : undefined} />
+      </div>
+
+      {/* ── Sleep Mode ── */}
+      <div
+        className="rounded-xl p-4"
+        style={{
+          background: d.sleepMode ? 'rgba(220,38,38,0.12)' : 'rgba(15,23,42,1)',
+          border: `1px solid ${d.sleepMode ? '#ef4444' : '#1e1b4b'}`,
+        }}
+      >
+        <div className="flex items-center justify-between gap-4">
+          <div className="flex items-start gap-3">
+            <Moon size={20} style={{ color: d.sleepMode ? '#f87171' : '#818cf8', marginTop: 2, flexShrink: 0 }} />
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="text-sm font-bold" style={{ color: d.sleepMode ? '#f87171' : '#fde68a' }}>
+                  Sleep Mode
+                </span>
+                <span
+                  className="rounded-full px-2 py-0.5 text-[10px] font-bold"
+                  style={{
+                    background: d.sleepMode ? 'rgba(220,38,38,0.3)' : 'rgba(22,163,74,0.2)',
+                    color: d.sleepMode ? '#fca5a5' : '#4ade80',
+                    border: `1px solid ${d.sleepMode ? '#ef4444' : '#16a34a'}`,
+                  }}
+                >
+                  {d.sleepMode ? 'ON — All users losing' : 'OFF — Normal play'}
+                </span>
+              </div>
+              <p className="mt-1 text-xs" style={{ color: '#818cf8' }}>
+                {d.sleepMode
+                  ? 'All REAL/PROMO self-play rolls are forced to 0 payout. DEMO and LIVE mode unaffected.'
+                  : 'When enabled, every REAL/PROMO self-play roll returns 0 payout — individual phases are preserved.'}
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => setShowConfirm(true)}
+            disabled={loading}
+            className="shrink-0 rounded-xl px-4 py-2 text-xs font-bold transition-opacity disabled:opacity-50"
+            style={{
+              background: d.sleepMode
+                ? 'linear-gradient(135deg,#16a34a,#14532d)'
+                : 'linear-gradient(135deg,#dc2626,#7f1d1d)',
+              color: '#fff',
+              border: `2px solid ${d.sleepMode ? '#4ade80' : '#fca5a5'}`,
+            }}
+          >
+            {d.sleepMode ? '☀️ Disable Sleep Mode' : '🌙 Enable Sleep Mode'}
+          </button>
+        </div>
       </div>
 
       <div
@@ -94,32 +153,88 @@ export default function AdminDashboard() {
         Use the sidebar to manage customers, review deposit slips and withdrawals,
         inspect play history, and host LIVE rounds.
       </div>
+
+      {/* ── Confirmation modal ── */}
+      {showConfirm && (
+        <div
+          className="fixed inset-0 z-[200] flex items-center justify-center p-6"
+          style={{ background: 'rgba(0,0,0,0.8)' }}
+          onClick={() => setShowConfirm(false)}
+        >
+          <div
+            className="w-full max-w-sm rounded-2xl p-6"
+            style={{ background: '#1e0040', border: `2px solid ${d.sleepMode ? '#16a34a' : '#dc2626'}` }}
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="mb-1 flex items-center gap-2">
+              <Moon size={20} style={{ color: d.sleepMode ? '#4ade80' : '#f87171' }} />
+              <h2 className="text-base font-bold" style={{ color: d.sleepMode ? '#4ade80' : '#f87171' }}>
+                {d.sleepMode ? 'Disable Sleep Mode?' : 'Enable Sleep Mode?'}
+              </h2>
+            </div>
+
+            <p className="mt-3 text-sm" style={{ color: '#e9d5ff' }}>
+              {d.sleepMode ? (
+                <>
+                  Normal play will resume. Each user will return to their <strong>individual phase</strong> (Normal / Phase A / B / C) — no resets.
+                </>
+              ) : (
+                <>
+                  <strong className="text-red-400">ALL REAL/PROMO self-play rolls</strong> will be forced to <strong>0 payout</strong> immediately. DEMO wallets and LIVE mode are unaffected. Individual user phases are preserved.
+                </>
+              )}
+            </p>
+
+            <div className="mt-2 rounded-lg px-3 py-2 text-xs" style={{ background: 'rgba(255,255,255,0.06)', color: '#a78bfa' }}>
+              Takes effect on the very next roll — no page refresh needed.
+            </div>
+
+            <div className="mt-5 flex gap-3">
+              <button
+                type="button"
+                onClick={() => setShowConfirm(false)}
+                className="flex-1 rounded-xl py-2.5 text-sm font-bold"
+                style={{ background: '#2d1b4e', color: '#a78bfa', border: '1px solid #4c1d95' }}
+              >
+                Cancel
+              </button>
+              <sleepFetcher.Form method="post" className="flex-1">
+                <input type="hidden" name="op" value="toggleSleepMode" />
+                <button
+                  type="submit"
+                  disabled={sleepFetcher.state !== 'idle'}
+                  className="w-full rounded-xl py-2.5 text-sm font-bold disabled:opacity-50"
+                  style={{
+                    background: d.sleepMode
+                      ? 'linear-gradient(135deg,#16a34a,#14532d)'
+                      : 'linear-gradient(135deg,#dc2626,#7f1d1d)',
+                    color: '#fff',
+                    border: `1px solid ${d.sleepMode ? '#4ade80' : '#fca5a5'}`,
+                  }}
+                >
+                  {sleepFetcher.state !== 'idle' ? 'Saving…' : d.sleepMode ? 'Yes, Disable' : 'Yes, Enable'}
+                </button>
+              </sleepFetcher.Form>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
 
 function StatCard({
-  label,
-  value,
-  hint,
-  to,
-  Icon,
-  accent,
+  label, value, hint, to, Icon, accent,
 }: {
-  label: string
-  value: string
-  hint: string
-  to: string
-  Icon: typeof Users
-  accent?: string
+  label: string; value: string; hint: string; to: string
+  Icon: typeof Users; accent?: string
 }) {
   return (
-    <Link
-      to={to}
+    <Link to={to}
       className="block rounded-xl p-4 transition-opacity hover:opacity-90"
       style={{ background: 'linear-gradient(135deg, #1e1b4b, #0f172a)', border: `1px solid ${accent ?? '#4338ca'}` }}
     >
-      <div className="mb-2 flex items-center gap-2 text-[10px] font-bold " style={{ color: '#a5b4fc' }}>
+      <div className="mb-2 flex items-center gap-2 text-[10px] font-bold" style={{ color: '#a5b4fc' }}>
         <Icon size={12} />
         {label.toUpperCase()}
       </div>

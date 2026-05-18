@@ -87,6 +87,19 @@ export interface RoundStreamUpdatedPayload {
   streamUrl: string | null
 }
 
+// Fires when the admin clicks "End Live" — stream URL has been cleared and
+// customers should switch from the stream view to the schedule/idle screen.
+export interface LiveEndedPayload {
+  // intentionally empty — revalidation handles the rest
+}
+
+// Fires when the admin sets or clears the next live schedule. ISO UTC strings;
+// null means the schedule was removed.
+export interface LiveScheduledPayload {
+  start: string | null
+  end:   string | null
+}
+
 // Fires per-bettor after the admin settles a round. Carries the customer's
 // personal stake/payout/net + new balance so their result modal can render
 // without an extra fetch.

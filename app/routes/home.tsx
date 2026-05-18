@@ -15,6 +15,8 @@ import { usePresenceMembers, usePusherEvent } from '~/hooks/use-pusher'
 import {
   PRESENCE_LIVE,
   userChannel,
+  type LiveEndedPayload,
+  type LiveScheduledPayload,
   type RoundDicePayload,
   type RoundResolvedPayload,
   type RoundSettledPayload,
@@ -104,7 +106,7 @@ function cfIframeSrc(rawUrl: string, controls: boolean, muted: boolean = true): 
   if (!m) return rawUrl
   const mutedParam = muted ? 'muted=true' : 'muted=false'
   const controlsParam = controls ? '' : '&controls=false'
-  return `${m[1]}/iframe?autoplay=true&${mutedParam}${controlsParam}`
+  return `${m[1]}/iframe?autoplay=true&${mutedParam}&playsinline=true${controlsParam}`
 }
 
 // FB JS SDK is loaded lazily the first time a Facebook stream is embedded.
@@ -416,7 +418,7 @@ function LiveStreamBox({
     <div
       ref={boxRef}
       className="relative overflow-hidden rounded-lg"
-      style={{ ...boxStyle, background: bgColor }}
+      style={{ ...boxStyle, background: bgColor, WebkitTransform: 'translate3d(0,0,0)', transform: 'translate3d(0,0,0)' }}
     >
       {!rawUrl ? (
         <div className="flex h-full w-full items-center justify-center text-xs" style={{ color: '#a78bfa' }}>
@@ -431,7 +433,7 @@ function LiveStreamBox({
           src={cfIframeSrc(rawUrl, false, isMuted)}
           className="h-full w-full"
           style={{ border: 'none', display: 'block' }}
-          allow="accelerometer; gyroscope; autoplay; encrypted-media; picture-in-picture"
+          allow="accelerometer; gyroscope; autoplay *; encrypted-media *; fullscreen *; picture-in-picture *"
           allowFullScreen
           title="Live stream"
         />
@@ -499,7 +501,7 @@ function LiveStreamBox({
           key={iframeKey}
           src={nonFbEmbedSrc}
           className="h-full w-full"
-          allow="autoplay; encrypted-media; picture-in-picture"
+          allow="autoplay *; encrypted-media *; fullscreen *; picture-in-picture *"
           allowFullScreen
           title="Live stream"
           style={{
@@ -562,6 +564,115 @@ function LiveStreamBox({
 }
 
 
+// Schedule/countdown card shown to customers when there's no active live stream.
+function LiveScheduleCard({
+  schedule,
+  compact = false,
+}: {
+  schedule: { start: string | null; end: string | null }
+  compact?: boolean
+}) {
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(id)
+  }, [])
+
+  function fmtDate(iso: string) {
+    return new Date(iso).toLocaleDateString('en-GB', {
+      timeZone: 'Asia/Bangkok',
+      day: '2-digit', month: '2-digit', year: 'numeric',
+    })
+  }
+  function fmtTime(iso: string) {
+    return new Date(iso).toLocaleTimeString('en-GB', {
+      timeZone: 'Asia/Bangkok',
+      hour: '2-digit', minute: '2-digit', hour12: false,
+    })
+  }
+
+  if (!schedule.start) {
+    return (
+      <div className="flex flex-col items-center gap-2 text-center px-4">
+        <span style={{ fontSize: compact ? 32 : 48 }}>📺</span>
+        <p className="text-xs font-semibold" style={{ color: '#a78bfa' }}>ບໍ່ມີການຖ່າຍທອດສົດຕອນນີ້</p>
+        <p className="text-[10px]" style={{ color: '#6d28d9' }}>No live stream scheduled</p>
+      </div>
+    )
+  }
+
+  const startMs = new Date(schedule.start).getTime()
+  const endMs = schedule.end ? new Date(schedule.end).getTime() : null
+  const diffMs = startMs - now
+
+  // Past the end time — show "stream ended" message
+  if (endMs !== null && now > endMs) {
+    return (
+      <div className="flex flex-col items-center gap-2 text-center px-4">
+        <span style={{ fontSize: compact ? 32 : 48 }}>📺</span>
+        <p className="text-xs font-semibold" style={{ color: '#a78bfa' }}>ການຖ່າຍທອດສົດສິ້ນສຸດແລ້ວ</p>
+      </div>
+    )
+  }
+
+  // In the broadcast window — we're live but stream not available (between rounds)
+  if (diffMs <= 0) {
+    return (
+      <div className="flex flex-col items-center gap-2 text-center px-4">
+        <span className="animate-pulse" style={{ fontSize: compact ? 28 : 40 }}>🔴</span>
+        <p className="text-xs font-bold" style={{ color: '#f87171' }}>ການຖ່າຍທອດສົດຈວນຈະເລີ່ມ</p>
+        <p className="text-[10px]" style={{ color: '#a78bfa' }}>
+          {fmtTime(schedule.start)}{schedule.end ? ` – ${fmtTime(schedule.end)}` : ''} (GMT+7)
+        </p>
+      </div>
+    )
+  }
+
+  // Countdown to start
+  const totalSec = Math.floor(diffMs / 1000)
+  const days  = Math.floor(totalSec / 86400)
+  const hours = Math.floor((totalSec % 86400) / 3600)
+  const mins  = Math.floor((totalSec % 3600) / 60)
+  const secs  = totalSec % 60
+
+  const units = [
+    { label: 'ມື້', value: days },
+    { label: 'ຊົ່ວໂມງ', value: hours },
+    { label: 'ນາທີ', value: mins },
+    { label: 'ວິນາທີ', value: secs },
+  ]
+
+  return (
+    <div className="flex flex-col items-center gap-3 text-center px-4">
+      <div style={{ fontSize: compact ? 28 : 40 }}>📅</div>
+      <div>
+        <p className="text-xs font-bold" style={{ color: '#fde68a' }}>ການຖ່າຍທອດສົດຄັ້ງຕໍ່ໄປ</p>
+        <p className="mt-0.5 text-[10px]" style={{ color: '#a78bfa' }}>
+          {fmtDate(schedule.start)} · {fmtTime(schedule.start)}{schedule.end ? ` – ${fmtTime(schedule.end)}` : ''} <span style={{ color: '#6d28d9' }}>(GMT+7)</span>
+        </p>
+      </div>
+      <div className={`grid grid-cols-4 ${compact ? 'gap-1.5' : 'gap-3'}`}>
+        {units.map(({ label, value }) => (
+          <div key={label} className="flex flex-col items-center">
+            <span
+              className="rounded-lg px-2 py-1 font-bold"
+              style={{
+                background: 'rgba(76,29,149,0.5)',
+                color: '#fde68a',
+                fontSize: compact ? '1rem' : '1.5rem',
+                minWidth: compact ? 32 : 48,
+              }}
+            >
+              {String(value).padStart(2, '0')}
+            </span>
+            <span className="mt-0.5" style={{ color: '#818cf8', fontSize: '0.55rem' }}>{label}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 type LivePhase = 'idle' | 'betting' | 'awaiting_result'
 
 // Colors for pair connector lines, hashed from cell indices so same pair always gets the same color.
@@ -591,7 +702,12 @@ function symName(sym: string, t: ReturnType<typeof useT>): string {
 }
 
 const MIN_CHIP = 1_000    // Minimum allowed chip amount (₭)
-const MAX_CHIP = 100_000  // Maximum allowed chip amount (₭)
+const MAX_CHIP = 100_000          // Maximum allowed chip amount (₭)
+const MAX_BET_SYMBOL = 1_000_000  // Max total bet per symbol cell (×2 payout → 2,000,000)
+const MAX_BET_PAIR   = 200_000    // Max total bet per pair combo (×6 payout → 1,200,000)
+const MAX_BET_MIDDLE = 200_000    // Max total bet on MIDDLE range (×6 payout → 1,200,000)
+const MAX_BET_RANGE  = 1_000_000  // Max total bet on LOW / HIGH range (×2 payout → 2,000,000)
+const MAX_BET_SUM    = 200_000    // Max total bet per number 3-18 (×4 payout → 800,000)
 
 const CHIP_CONFIG = [
   { value: 5000, label: '5,000', colors: 'from-gray-600 to-gray-800', border: '#9CA3AF' },
@@ -871,21 +987,18 @@ export async function loader({ request }: Route.LoaderArgs) {
   const { getPayoutConfig } = await import('~/lib/payouts.server')
   const payoutConfig = getPayoutConfig()
 
-  // The currently in-flight LIVE round (if any), plus the most recent stream
-  // URL from any past round. The fallback URL keeps the customer's video panel
-  // populated between rounds — once the host has streamed once, the iframe
-  // stays visible (just disabled for betting) until the next round starts.
-  const [liveRoundRaw, lastStreamRound] = await Promise.all([
+  // The currently in-flight LIVE round (if any), plus the admin-controlled
+  // stream URL and next schedule from SystemSetting. The stream URL is set
+  // when admin starts a round and cleared when admin clicks "End Live".
+  const { getLiveStreamUrl, getLiveSchedule } = await import('~/lib/system-settings.server')
+  const [liveRoundRaw, liveStreamUrl, schedule] = await Promise.all([
     prisma.gameRound.findFirst({
       where: { mode: 'LIVE', status: { in: ['BETTING', 'LOCKED', 'AWAITING_RESULT'] } },
       orderBy: { createdAt: 'desc' },
       select: { id: true, status: true, streamUrl: true, bettingClosesAt: true, dice1: true, dice2: true, dice3: true },
     }),
-    prisma.gameRound.findFirst({
-      where: { mode: 'LIVE', streamUrl: { not: null } },
-      orderBy: { createdAt: 'desc' },
-      select: { streamUrl: true },
-    }),
+    getLiveStreamUrl(),
+    getLiveSchedule(),
   ])
   const liveRound = liveRoundRaw
     ? {
@@ -900,14 +1013,14 @@ export async function loader({ request }: Route.LoaderArgs) {
       ] as (string | null)[],
     }
     : null
-  const lastStreamUrl = lastStreamRound?.streamUrl ?? null
 
   if (!user) {
     return {
       selfPlayHistory: [] as SymbolKey[][],
       liveHistory: [] as SymbolKey[][],
       liveRound,
-      lastStreamUrl,
+      liveStreamUrl,
+      schedule,
       myLiveBets: [] as MyLiveBet[],
       payoutConfig,
     }
@@ -958,7 +1071,8 @@ export async function loader({ request }: Route.LoaderArgs) {
     selfPlayHistory: selfPlay.map(toLower).filter((r): r is SymbolKey[] => r !== null),
     liveHistory: live.map(toLower).filter((r): r is SymbolKey[] => r !== null),
     liveRound,
-    lastStreamUrl,
+    liveStreamUrl,
+    schedule,
     myLiveBets,
     payoutConfig,
   }
@@ -1077,6 +1191,9 @@ export default function FishPrawnCrabGame() {
   const [overlayWalletOpen, setOverlayWalletOpen] = useState(false)
   const [overlayProfileOpen, setOverlayProfileOpen] = useState(false)
   const liveRound = loaderData.liveRound
+  // The URL shown to customers: active round's stream takes priority; otherwise
+  // use the admin-controlled SystemSetting (cleared by "End Live").
+  const activeStreamUrl = liveRound?.streamUrl ?? loaderData.liveStreamUrl ?? null
   const revalidator = useRevalidator()
 
   // Restore the user's last-selected play mode from localStorage on mount.
@@ -1160,6 +1277,15 @@ export default function FishPrawnCrabGame() {
     'round:streamUpdated',
     () => { revalidator.revalidate() },
   )
+
+  // Admin ended the live stream (End Live button) or updated the schedule →
+  // revalidate so liveStreamUrl + schedule come fresh from the server.
+  usePusherEvent<LiveEndedPayload>(presenceChannel, 'live:ended', () => {
+    revalidator.revalidate()
+  })
+  usePusherEvent<LiveScheduledPayload>(presenceChannel, 'live:scheduled', () => {
+    revalidator.revalidate()
+  })
 
   // Each die the admin picks (or changes) shows up here in real time.
   usePusherEvent<RoundDicePayload>(presenceChannel, 'round:dice', payload => {
@@ -1310,6 +1436,19 @@ export default function FishPrawnCrabGame() {
   const placeRangeBet = useCallback((range: RangeKey) => {
     ensureBgMusic()
     if (bettingLocked || balance < selectedChip) return
+    if (range === 'middle') {
+      const existing = currentRangeBets.find(b => b.range === 'middle')?.amount ?? 0
+      if (existing + selectedChip > MAX_BET_MIDDLE) {
+        toast.warning(`ວົງເດີມພັນກາງສູງສຸດ ${MAX_BET_MIDDLE.toLocaleString()} ₭`)
+        return
+      }
+    } else {
+      const existing = currentRangeBets.find(b => b.range === range)?.amount ?? 0
+      if (existing + selectedChip > MAX_BET_RANGE) {
+        toast.warning(`ວົງເດີມພັນສູງສຸດ ${MAX_BET_RANGE.toLocaleString()} ₭`)
+        return
+      }
+    }
     soundEnabled && playChipPlace()
     setCurrentRangeBets(prev => {
       const idx = prev.findIndex(b => b.range === range)
@@ -1321,14 +1460,18 @@ export default function FishPrawnCrabGame() {
       return [...prev, { range, amount: selectedChip }]
     })
     setBalance(prev => prev - selectedChip)
-  }, [bettingLocked, balance, selectedChip, ensureBgMusic, soundEnabled])
+  }, [bettingLocked, balance, selectedChip, ensureBgMusic, soundEnabled, currentRangeBets])
 
   const placeSumBet = useCallback((sum: number) => {
     ensureBgMusic()
     if (bettingLocked || balance < selectedChip) return
-    // Enforce max 3 unique numbers per round.
     const isNew = !currentSumBets.find(b => b.sum === sum)
     if (isNew && currentSumBets.length >= 3) return
+    const existing = currentSumBets.find(b => b.sum === sum)?.amount ?? 0
+    if (existing + selectedChip > MAX_BET_SUM) {
+      toast.warning(`ວົງເດີມພັນເລກສູງສຸດ ${MAX_BET_SUM.toLocaleString()} ₭`)
+      return
+    }
     soundEnabled && playChipPlace()
     setCurrentSumBets(prev => {
       const idx = prev.findIndex(b => b.sum === sum)
@@ -1347,6 +1490,11 @@ export default function FishPrawnCrabGame() {
     const [cellA, cellB] = cA < cB ? [cA, cB] : [cB, cA]
     const a = BOARD_LAYOUT[cellA]
     const b = BOARD_LAYOUT[cellB]
+    const existing = currentPairBets.find(p => p.cellA === cellA && p.cellB === cellB)?.amount ?? 0
+    if (existing + selectedChip > MAX_BET_PAIR) {
+      toast.warning(`ວົງເດີມພັນຄູ່ສູງສຸດ ${MAX_BET_PAIR.toLocaleString()} ₭`)
+      return
+    }
     ensureBgMusic()
     soundEnabled && playChipPlace()
     setCurrentPairBets(prev => {
@@ -1359,25 +1507,32 @@ export default function FishPrawnCrabGame() {
       return [...prev, { a, b, cellA, cellB, amount: selectedChip }]
     })
     setBalance(prev => prev - selectedChip)
-  }, [balance, selectedChip, ensureBgMusic, soundEnabled])
+  }, [balance, selectedChip, ensureBgMusic, soundEnabled, currentPairBets])
 
   const addSingleChips = useCallback((cell: number, chips: number) => {
     if (chips <= 0) return
     const total = selectedChip * chips
     const symbol = BOARD_LAYOUT[cell]
+    const existing = currentBets.find(b => b.cell === cell)?.amount ?? 0
+    if (existing >= MAX_BET_SYMBOL) {
+      toast.warning(`ວົງເດີມພັນສັດດ່ຽວສູງສຸດ ${MAX_BET_SYMBOL.toLocaleString()} ₭`)
+      return
+    }
+    const actualAdd = Math.min(total, MAX_BET_SYMBOL - existing)
+    if (actualAdd < total) toast.warning(`ວົງເດີມພັນສັດດ່ຽວສູງສຸດ ${MAX_BET_SYMBOL.toLocaleString()} ₭`)
     ensureBgMusic()
     soundEnabled && playChipPlace()
     setCurrentBets(prev => {
       const i = prev.findIndex(b => b.cell === cell)
       if (i >= 0) {
         const next = [...prev]
-        next[i] = { ...next[i], amount: next[i].amount + total }
+        next[i] = { ...next[i], amount: next[i].amount + actualAdd }
         return next
       }
-      return [...prev, { cell, symbol, amount: total }]
+      return [...prev, { cell, symbol, amount: actualAdd }]
     })
-    setBalance(prev => prev - total)
-  }, [selectedChip, ensureBgMusic, soundEnabled])
+    setBalance(prev => prev - actualAdd)
+  }, [selectedChip, ensureBgMusic, soundEnabled, currentBets])
 
   // Board tap flow:
   //  1st tap on X           → X becomes "pending" (no chip yet, pulsing highlight)
@@ -2021,13 +2176,21 @@ export default function FishPrawnCrabGame() {
       {/* ── LIVE FULL-SCREEN OVERLAY (mobile only) ──────────────────────── */}
       {mode === 'live' && (
         <div className="fixed inset-0 z-[100] bg-black md:hidden">
-          {/* Full-screen video */}
-          <div className="absolute inset-0">
-            <LiveStreamBox
-              rawUrl={liveRound?.streamUrl ?? loaderData.lastStreamUrl ?? null}
-              waitingText={t('live.waitingHostStream')}
-              fullScreen
-            />
+          {/* Full-screen video — transform forces a new compositing layer on
+              iOS Safari, preventing the blank/black iframe rendering bug that
+              occurs when an iframe sits inside a position:fixed parent. */}
+          <div className="absolute inset-0" style={{ WebkitTransform: 'translate3d(0,0,0)', transform: 'translate3d(0,0,0)' }}>
+            {activeStreamUrl ? (
+              <LiveStreamBox
+                rawUrl={activeStreamUrl}
+                waitingText={t('live.waitingHostStream')}
+                fullScreen
+              />
+            ) : (
+              <div className="flex h-full items-center justify-center" style={{ background: '#0a0014' }}>
+                <LiveScheduleCard schedule={loaderData.schedule} />
+              </div>
+            )}
           </div>
 
           {/* Top gradient for text readability */}
@@ -2446,7 +2609,7 @@ export default function FishPrawnCrabGame() {
                     <span>ສູງສຸດ 3 ເລກ · ×3 ກຳໄລ</span>
                     <span>{currentSumBets.length}/3</span>
                   </div>
-                  <div className="grid grid-cols-4 gap-1">
+                  <div className="grid grid-cols-6 gap-1">
                     {Array.from({ length: 16 }, (_, i) => i + 3).map(n => {
                       const bet = getSumBetAmount(n)
                       const isWinner = !isRolling && diceResults.length > 0 && diceSum === n
@@ -2455,16 +2618,16 @@ export default function FishPrawnCrabGame() {
                       return (
                         <button key={n} onClick={() => placeSumBet(n)}
                           disabled={bettingLocked || balance < selectedChip || maxReached}
-                          className="relative flex flex-col items-center justify-center rounded-lg py-2 font-bold disabled:opacity-40"
+                          className="relative flex flex-col items-center justify-center rounded py-1 font-bold disabled:opacity-40"
                           style={{
                             background: isWinner ? 'rgba(250,204,21,0.3)' : isSelected ? 'rgba(124,58,237,0.5)' : 'rgba(30,0,64,0.6)',
                             border: `1px solid ${isWinner ? '#facc15' : isSelected ? '#a78bfa' : '#4c1d95'}`,
                             color: isWinner ? '#facc15' : '#e9d5ff',
                           }}>
-                          <div className="text-xs">{n}</div>
-                          <div className="text-[8px] opacity-70">×3</div>
+                          <div className="text-[10px]">{n}</div>
+                          <div className="text-[7px] opacity-70">×3</div>
                           {bet > 0 && (
-                            <div className="absolute -top-1 -right-1 rounded-full px-1 text-[7px] font-bold"
+                            <div className="absolute -top-1 -right-1 rounded-full px-0.5 text-[6px] font-bold"
                               style={{ background: '#dc2626', color: '#fff' }}>
                               {formatAmount(bet)}
                             </div>
@@ -2877,29 +3040,35 @@ export default function FishPrawnCrabGame() {
                 <div className="w-1/2 flex items-start justify-center pt-4 px-3"
                   style={{ borderRight: '1px solid #3730a3' }}>
                   <div className="relative" style={{ width: 240 }}>
-                    <LiveStreamBox
-                      rawUrl={liveRound?.streamUrl ?? loaderData.lastStreamUrl ?? null}
-                      waitingText={t('live.waitingHostStream')}
-                      bgColor="#4c1d95"
-                      autoStart
-                    >
-                      <div className="absolute top-2 left-2 flex items-center gap-1 rounded-full px-2 py-0.5 text-[9px] font-bold"
-                        style={{ background: 'rgba(220,38,38,0.9)', color: '#fff' }}>
-                        <span className="h-1.5 w-1.5 rounded-full bg-white animate-pulse" />
-                        LIVE
+                    {activeStreamUrl ? (
+                      <LiveStreamBox
+                        rawUrl={activeStreamUrl}
+                        waitingText={t('live.waitingHostStream')}
+                        bgColor="#4c1d95"
+                        autoStart
+                      >
+                        <div className="absolute top-2 left-2 flex items-center gap-1 rounded-full px-2 py-0.5 text-[9px] font-bold"
+                          style={{ background: 'rgba(220,38,38,0.9)', color: '#fff' }}>
+                          <span className="h-1.5 w-1.5 rounded-full bg-white animate-pulse" />
+                          LIVE
+                        </div>
+                        <div className="absolute top-2 right-2 rounded-md px-2 py-0.5 text-[9px] font-bold"
+                          style={{
+                            background: livePhase === 'betting'
+                              ? (liveTimer <= 10 ? 'rgba(220,38,38,0.9)' : 'rgba(22,163,74,0.9)')
+                              : livePhase === 'awaiting_result' ? 'rgba(234,88,12,0.9)' : 'rgba(76,29,149,0.9)',
+                            color: '#fff',
+                          }}>
+                          {livePhase === 'betting'
+                            ? t('live.statusBetting', { n: String(liveTimer) })
+                            : livePhase === 'awaiting_result' ? t('live.statusWaitingResult') : t('live.statusNotStarted')}
+                        </div>
+                      </LiveStreamBox>
+                    ) : (
+                      <div className="flex items-center justify-center rounded-lg px-2 py-4" style={{ background: '#0a0014', minHeight: 180 }}>
+                        <LiveScheduleCard schedule={loaderData.schedule} compact />
                       </div>
-                      <div className="absolute top-2 right-2 rounded-md px-2 py-0.5 text-[9px] font-bold"
-                        style={{
-                          background: livePhase === 'betting'
-                            ? (liveTimer <= 10 ? 'rgba(220,38,38,0.9)' : 'rgba(22,163,74,0.9)')
-                            : livePhase === 'awaiting_result' ? 'rgba(234,88,12,0.9)' : 'rgba(76,29,149,0.9)',
-                          color: '#fff',
-                        }}>
-                        {livePhase === 'betting'
-                          ? t('live.statusBetting', { n: String(liveTimer) })
-                          : livePhase === 'awaiting_result' ? t('live.statusWaitingResult') : t('live.statusNotStarted')}
-                      </div>
-                    </LiveStreamBox>
+                    )}
                   </div>
                 </div>
                 {/* Right 50%: dice (top-center) + placed bets list */}
@@ -3215,7 +3384,7 @@ export default function FishPrawnCrabGame() {
                     <span>ເລືອກໄດ້ສູງສຸດ 3 ເລກ · ຈ່າຍ ×3 (ກຳໄລ)</span>
                     <span>{currentSumBets.length}/3</span>
                   </div>
-                  <div className="grid grid-cols-4 gap-1.5">
+                  <div className="grid grid-cols-6 gap-1.5">
                     {Array.from({ length: 16 }, (_, i) => i + 3).map(n => {
                       const bet = getSumBetAmount(n)
                       const isWinner = winnerHighlight && !isRolling && diceResults.length > 0 && diceSum === n
@@ -3226,7 +3395,7 @@ export default function FishPrawnCrabGame() {
                           key={n}
                           onClick={() => placeSumBet(n)}
                           disabled={bettingLocked || balance < selectedChip || maxReached}
-                          className="relative flex flex-col items-center justify-center rounded-md py-2 transition-all disabled:opacity-40"
+                          className="relative flex flex-col items-center justify-center rounded py-1 transition-all disabled:opacity-40"
                           style={{
                             background: isWinner ? 'rgba(250,204,21,0.35)' : isSelected ? 'rgba(124,58,237,0.5)' : 'rgba(30,0,64,0.7)',
                             border: `1px solid ${isWinner ? '#facc15' : isSelected ? '#a78bfa' : '#4c1d95'}`,
@@ -3234,8 +3403,8 @@ export default function FishPrawnCrabGame() {
                             color: isWinner ? '#facc15' : '#e9d5ff',
                           }}
                         >
-                          <div className="text-sm font-bold">{n}</div>
-                          <div className="text-[9px] opacity-70">×3</div>
+                          <div className="text-xs font-bold">{n}</div>
+                          <div className="text-[8px] opacity-70">×3</div>
                           {bet > 0 && (
                             <div className="absolute -top-1.5 -right-1.5 flex h-5 min-w-[28px] items-center justify-center rounded-full px-1 font-bold text-[8px] whitespace-nowrap"
                               style={{ background: 'linear-gradient(135deg,#dc2626,#991b1b)', color: '#fff', border: '1px solid #fca5a5' }}>

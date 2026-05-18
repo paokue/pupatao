@@ -59,6 +59,34 @@ export async function loader({ request }: Route.LoaderArgs) {
 
   const total = sorted.length
   const users = sorted.slice((page - 1) * pageSize, page * pageSize)
+  const userIds = users.map(u => u.id)
+
+  // Fetch the latest DEPOSIT and WITHDRAW for each user on this page only.
+  // Orders desc so the first occurrence per user in JS is their latest.
+  const latestTxLimit = Math.max(pageSize * 6, 300)
+  const [latestDeposits, latestWithdraws] = await Promise.all([
+    prisma.transaction.findMany({
+      where: { userId: { in: userIds }, type: 'DEPOSIT', status: 'COMPLETED' },
+      orderBy: { createdAt: 'desc' },
+      select: { userId: true, amount: true },
+      take: latestTxLimit,
+    }),
+    prisma.transaction.findMany({
+      where: { userId: { in: userIds }, type: 'WITHDRAW', status: 'COMPLETED' },
+      orderBy: { createdAt: 'desc' },
+      select: { userId: true, amount: true },
+      take: latestTxLimit,
+    }),
+  ])
+
+  const latestDepositMap = new Map<string, number>()
+  const latestWithdrawMap = new Map<string, number>()
+  for (const t of latestDeposits) {
+    if (!latestDepositMap.has(t.userId)) latestDepositMap.set(t.userId, t.amount)
+  }
+  for (const t of latestWithdraws) {
+    if (!latestWithdrawMap.has(t.userId)) latestWithdrawMap.set(t.userId, t.amount)
+  }
 
   return {
     q,
@@ -79,6 +107,8 @@ export async function loader({ request }: Route.LoaderArgs) {
         promo: u.wallets.find(w => w.type === 'PROMO')?.balance ?? 0,
         totalDeposit: t.deposit,
         totalWithdraw: t.withdraw,
+        latestDeposit:  latestDepositMap.get(u.id)  ?? null,
+        latestWithdraw: latestWithdrawMap.get(u.id) ?? null,
       }
     }),
   }
@@ -234,8 +264,18 @@ export default function AdminWallet() {
                 <td className="px-3 py-2">
                   {[u.firstName, u.lastName].filter(Boolean).join(' ') || <span style={{ color: '#64748b' }}>—</span>}
                 </td>
-                <td className="px-3 py-2 text-right" style={{ color: '#4ade80' }} title={u.totalDeposit.toLocaleString()}>{formatAmount(u.totalDeposit)}</td>
-                <td className="px-3 py-2 text-right" style={{ color: '#f87171' }} title={u.totalWithdraw.toLocaleString()}>{formatAmount(u.totalWithdraw)}</td>
+                <td className="px-3 py-2 text-right" title={u.totalDeposit.toLocaleString()}>
+                  <div className="font-semibold" style={{ color: '#4ade80' }}>{formatAmount(u.totalDeposit)}</div>
+                  {u.latestDeposit != null && (
+                    <div className="text-[10px] tabular-nums" style={{ color: '#6ee7b7' }}>↓ {formatAmount(u.latestDeposit)}</div>
+                  )}
+                </td>
+                <td className="px-3 py-2 text-right" title={u.totalWithdraw.toLocaleString()}>
+                  <div className="font-semibold" style={{ color: '#f87171' }}>{formatAmount(u.totalWithdraw)}</div>
+                  {u.latestWithdraw != null && (
+                    <div className="text-[10px] tabular-nums" style={{ color: '#fca5a5' }}>↑ {formatAmount(u.latestWithdraw)}</div>
+                  )}
+                </td>
                 <td className="px-3 py-2 text-right font-bold" style={{ color: '#fde68a' }} title={u.real.toLocaleString()}>{formatAmount(u.real)}</td>
                 <td className="px-3 py-2 text-right" style={{ color: '#a5b4fc' }} title={u.demo.toLocaleString()}>{formatAmount(u.demo)}</td>
                 <td className="px-3 py-2 text-right" style={{ color: '#fcd34d' }} title={u.promo.toLocaleString()}>{formatAmount(u.promo)}</td>
@@ -604,8 +644,8 @@ function WalletCard({ u, onAction, rowNum }: { u: Row; onAction: (wallet: 'REAL'
         <StatusPill status={u.status} />
       </div>
       <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
-        <CardCell label="DEPOSIT"  value={u.totalDeposit}  color="#4ade80" />
-        <CardCell label="WITHDRAW" value={u.totalWithdraw} color="#f87171" />
+        <CardCell label="DEPOSIT"  value={u.totalDeposit}  color="#4ade80" latest={u.latestDeposit}  latestColor="#6ee7b7" latestPrefix="↓" />
+        <CardCell label="WITHDRAW" value={u.totalWithdraw} color="#f87171" latest={u.latestWithdraw} latestColor="#fca5a5" latestPrefix="↑" />
         <CardCell label="REAL"     value={u.real}          color="#fde68a" />
         <CardCell label="DEMO"     value={u.demo}          color="#a5b4fc" />
         <CardCell label="PROMO"    value={u.promo}         color="#fcd34d" />
@@ -617,11 +657,25 @@ function WalletCard({ u, onAction, rowNum }: { u: Row; onAction: (wallet: 'REAL'
   )
 }
 
-function CardCell({ label, value, color }: { label: string; value: number; color: string }) {
+function CardCell({
+  label, value, color, latest, latestColor, latestPrefix,
+}: {
+  label: string
+  value: number
+  color: string
+  latest?: number | null
+  latestColor?: string
+  latestPrefix?: string
+}) {
   return (
     <div className="rounded-md px-2 py-1.5" style={{ background: '#1e1b4b' }} title={value.toLocaleString()}>
       <div className="text-[9px] font-bold" style={{ color: '#a5b4fc' }}>{label}</div>
       <div className="font-semibold" style={{ color }}>{formatAmount(value)}</div>
+      {latest != null && (
+        <div className="text-[9px] tabular-nums" style={{ color: latestColor ?? color }}>
+          {latestPrefix} {formatAmount(latest)}
+        </div>
+      )}
     </div>
   )
 }

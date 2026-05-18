@@ -22,7 +22,7 @@ import { useT } from '~/lib/use-t'
 const HIDDEN = '••••••'
 const MIN_DEPOSIT = 5_000
 const MAX_DEPOSIT = 10_000_000
-const MIN_WITHDRAW = 10_000
+const MIN_WITHDRAW = 30_000
 const MAX_WITHDRAW = 10_000_000
 const MIN_TRANSFER = 10_000
 const MAX_TRANSFER = 10_000_000
@@ -34,7 +34,7 @@ const VISIBLE_INITIAL = 20
 const VISIBLE_STEP = 20
 
 const DEPOSIT_AMOUNTS = [5_000, 10_000, 50_000, 100_000, 500_000, 1_000_000]
-const WITHDRAW_AMOUNTS = [10_000, 50_000, 100_000, 200_000, 500_000, 1_000_000]
+const WITHDRAW_AMOUNTS = [30_000, 50_000, 100_000, 200_000, 500_000, 1_000_000]
 const TRANSFER_AMOUNTS = [20_000, 50_000, 100_000, 200_000, 500_000, 1_000_000]
 
 type Tab = 'deposit' | 'withdraw' | 'transfer'
@@ -93,6 +93,7 @@ export async function loader({ request }: Route.LoaderArgs) {
   const [
     depositAgg,
     withdrawAgg,
+    pendingWithdrawAgg,
     deposits,
     withdraws,
     transfers,
@@ -106,6 +107,10 @@ export async function loader({ request }: Route.LoaderArgs) {
     }),
     prisma.transaction.aggregate({
       where: { walletId: wallet.id, type: 'WITHDRAW', status: 'COMPLETED' },
+      _sum: { amount: true },
+    }),
+    prisma.transaction.aggregate({
+      where: { walletId: wallet.id, type: 'WITHDRAW', status: 'PENDING' },
       _sum: { amount: true },
     }),
     prisma.transaction.findMany({
@@ -159,6 +164,7 @@ export async function loader({ request }: Route.LoaderArgs) {
   return {
     me: { id: user.id, tel: user.tel },
     balance: wallet.balance,
+    pendingWithdrawTotal: pendingWithdrawAgg._sum.amount ?? 0,
     promoBalance,
     totalDeposit: depositAgg._sum.amount ?? 0,
     totalWithdraw: withdrawAgg._sum.amount ?? 0,
@@ -700,10 +706,11 @@ export default function WalletPage() {
 
   const [tab, setTab] = useState<Tab>('deposit')
   const [amount, setAmount] = useState('')
-  const [inlineError, setInlineError] = useState<string | null>(null)
   const [depositModalOpen, setDepositModalOpen] = useState(false)
+  const [depositKey, setDepositKey] = useState(0)
   const [pendingDepositAmount, setPendingDepositAmount] = useState(0)
   const [withdrawModalOpen, setWithdrawModalOpen] = useState(false)
+  const [withdrawKey, setWithdrawKey] = useState(0)
   const [pendingWithdrawAmount, setPendingWithdrawAmount] = useState(0)
   const [transferModalOpen, setTransferModalOpen] = useState(false)
   const [pendingTransferAmount, setPendingTransferAmount] = useState(0)
@@ -739,8 +746,7 @@ export default function WalletPage() {
   const isRevalidating = navigation.state === 'loading'
 
   function showError(msg: string) {
-    setInlineError(msg)
-    setTimeout(() => setInlineError(null), 3500)
+    toast.error(msg)
   }
 
   function openDeposit() {
@@ -749,6 +755,11 @@ export default function WalletPage() {
     if (!val) return showError(t('wallet.errEnterAmount'))
     if (val < MIN_DEPOSIT) return showError(t('wallet.errMin', { amount: MIN_DEPOSIT.toLocaleString() }))
     if (val > MAX_DEPOSIT) return showError(t('wallet.errMax', { amount: MAX_DEPOSIT.toLocaleString() }))
+    const hasDuplicate = loaderData.deposits.some(d => d.status === 'PENDING' && d.amount === val)
+    if (hasDuplicate) {
+      return showError(`ລາຍການຝາກເງິນ ${val.toLocaleString()} ₭ ຂອງທ່ານກຳລັງລໍຖ້າການກວດສອບຢູ່ແລ້ວ. ກະລຸນາລໍຖ້າໃຫ້ທີມງານກວດສອບ ກ່ອນຈຶ່ງຝາກໃໝ່.`)
+    }
+    setDepositKey(k => k + 1)
     setPendingDepositAmount(val)
     setDepositModalOpen(true)
   }
@@ -759,7 +770,15 @@ export default function WalletPage() {
     if (!val) return showError(t('wallet.errEnterAmount'))
     if (val < MIN_WITHDRAW) return showError(t('wallet.errMin', { amount: MIN_WITHDRAW.toLocaleString() }))
     if (val > MAX_WITHDRAW) return showError(t('wallet.errMax', { amount: MAX_WITHDRAW.toLocaleString() }))
-    if (val > loaderData.balance) return showError(t('wallet.errExceedsBalance'))
+    const pendingTotal = loaderData.pendingWithdrawTotal
+    const effectiveBalance = loaderData.balance - pendingTotal
+    if (val > effectiveBalance) {
+      const msg = pendingTotal > 0
+        ? `ຍອດເງິນບໍ່ພຽງພໍ. ຍອດທີ່ສາມາດຖອນໄດ້ ${effectiveBalance.toLocaleString()} ₭ (ລາຍການຖອນທີ່ລໍຖ້າ ${pendingTotal.toLocaleString()} ₭ ຖືກຫັກແລ້ວ)`
+        : t('wallet.errExceedsBalance')
+      return showError(msg)
+    }
+    setWithdrawKey(k => k + 1)
     setPendingWithdrawAmount(val)
     setWithdrawModalOpen(true)
   }
@@ -873,15 +892,6 @@ export default function WalletPage() {
           )}
         </div>
 
-        {inlineError && (
-          <div
-            className="rounded-xl px-4 py-3 text-sm font-semibold text-center"
-            style={{ background: 'rgba(220,38,38,0.2)', color: '#f87171', border: '1px solid #f87171' }}
-          >
-            {inlineError}
-          </div>
-        )}
-
         {/* ─── Tabs ────────────────────────────────────────────────────── */}
         <div className="flex rounded-xl overflow-hidden" style={{ border: '1px solid #6d28d9' }}>
           {(['deposit', 'withdraw', 'transfer'] as Tab[]).map(tabKey => (
@@ -923,6 +933,11 @@ export default function WalletPage() {
         {/* ─── Withdraw form ────────────────────────────────────────── */}
         {tab === 'withdraw' && (
           <div className="flex flex-col gap-4">
+            <div className="flex items-center gap-2 rounded-xl px-4 py-3 text-sm"
+              style={{ background: 'rgba(180,83,9,0.15)', border: '1px solid rgba(252,211,77,0.4)', color: '#fcd34d' }}>
+              <span className="text-base">⚠️</span>
+              <span>ຍອດຖອນຂັ້ນຕ່ຳ <strong>{MIN_WITHDRAW.toLocaleString()} ₭</strong> — ຍອດເງິນໃນກະເປົ໋າຕ້ອງມີຢ່າງໜ້ອຍ {MIN_WITHDRAW.toLocaleString()} ₭ ຈຶ່ງຈະສາມາດຖອນໄດ້.</span>
+            </div>
             <QuickAmounts amounts={WITHDRAW_AMOUNTS} value={amount} onSelect={setAmount} />
             <CustomAmountInput value={amount} onChange={setAmount} />
             <button
@@ -1027,12 +1042,14 @@ export default function WalletPage() {
       </div>
 
       <DepositModal
+        key={depositKey}
         open={depositModalOpen}
         onClose={() => setDepositModalOpen(false)}
         amount={pendingDepositAmount}
         onSuccess={onDepositSuccess}
       />
       <WithdrawModal
+        key={withdrawKey}
         open={withdrawModalOpen}
         onClose={() => setWithdrawModalOpen(false)}
         amount={pendingWithdrawAmount}

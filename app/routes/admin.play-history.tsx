@@ -1,5 +1,6 @@
-import { Form, Link, useLoaderData, useNavigation, useRevalidator, useSearchParams } from 'react-router'
-import { ArrowDown, ArrowUp, ArrowUpDown, Loader, Search } from 'lucide-react'
+import { useState } from 'react'
+import { Form, Link, useFetcher, useLoaderData, useNavigation, useRevalidator, useSearchParams, useSubmit } from 'react-router'
+import { ArrowDown, ArrowDownCircle, ArrowUp, ArrowUpCircle, ArrowUpDown, Eye, Lock, Loader, Search, Wallet, X } from 'lucide-react'
 import type { Route } from './+types/admin.play-history'
 import type { WalletType } from '@prisma/client'
 import { requireAdmin } from '~/lib/admin-auth.server'
@@ -18,6 +19,20 @@ const BET_TYPES: { key: 'ALL' | 'SYMBOL' | 'PAIR' | 'LOW' | 'MIDDLE' | 'HIGH'; l
   { key: 'HIGH', label: 'High' },
 ]
 
+const TYPE_LABEL: Record<string, string> = {
+  DEPOSIT: 'Deposit', WIN: 'Earnings (Win)', TRANSFER_IN: 'Transfer received',
+  PROMO_BONUS: 'Promo bonus', REFERRAL_BONUS: 'Referral bonus',
+  WITHDRAW: 'Withdraw', LOSS: 'Loss (lost bets)', TRANSFER_OUT: 'Transfer sent',
+  DEMO_RESET: 'Demo reset', ADJUSTMENT: 'Adjustment',
+}
+
+function formatAmount(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(n % 1_000_000 === 0 ? 0 : 1)}M`
+  if (n >= 1_000) return `${(n / 1_000).toFixed(n % 1_000 === 0 ? 0 : 1)}K`
+  return n.toString()
+}
+
+// ─── LOADER ──────────────────────────────────────────────────────────
 export async function loader({ request }: Route.LoaderArgs) {
   await requireAdmin(request)
   const url = new URL(request.url)
@@ -29,9 +44,11 @@ export async function loader({ request }: Route.LoaderArgs) {
   const q = url.searchParams.get('q')?.trim() ?? ''
   const resultParam = url.searchParams.get('result') ?? 'ALL'
   const betTypeParam = url.searchParams.get('betType') ?? 'ALL'
+  const modeParam = url.searchParams.get('mode') ?? 'ALL'
   const result: 'ALL' | 'WIN' | 'LOSS' = resultParam === 'WIN' ? 'WIN' : resultParam === 'LOSS' ? 'LOSS' : 'ALL'
   type BetTypeFilter = 'ALL' | 'SYMBOL' | 'PAIR' | 'LOW' | 'MIDDLE' | 'HIGH'
   const betType: BetTypeFilter = (['SYMBOL', 'PAIR', 'LOW', 'MIDDLE', 'HIGH'] as const).includes(betTypeParam as any) ? betTypeParam as BetTypeFilter : 'ALL'
+  const mode: 'ALL' | 'RANDOM' | 'LIVE' = modeParam === 'RANDOM' ? 'RANDOM' : modeParam === 'LIVE' ? 'LIVE' : 'ALL'
 
   const resultWhere = result !== 'ALL' ? { result } : {}
   const betTypeWhere =
@@ -41,15 +58,18 @@ export async function loader({ request }: Route.LoaderArgs) {
     : betType === 'MIDDLE' ? { kind: 'RANGE' as const, range: 'MIDDLE' as const }
     : betType === 'HIGH' ? { kind: 'RANGE' as const, range: 'HIGH' as const }
     : {}
+  const modeWhere = mode !== 'ALL' ? { round: { is: { mode: mode as 'RANDOM' | 'LIVE' } } } : {}
 
   const where = {
     wallet: { is: { type: walletType } },
     ...resultWhere,
     ...betTypeWhere,
+    ...modeWhere,
     ...(q ? { user: { is: { tel: { contains: q, mode: 'insensitive' as const } } } } : {}),
   }
 
-  const [total, bets] = await Promise.all([
+  const { getSleepMode } = await import('~/lib/system-settings.server')
+  const [total, bets, sleepMode] = await Promise.all([
     prisma.bet.count({ where }),
     prisma.bet.findMany({
       where,
@@ -57,20 +77,15 @@ export async function loader({ request }: Route.LoaderArgs) {
       skip: (page - 1) * pageSize,
       take: pageSize,
       include: {
-        user: { select: { tel: true, firstName: true, lastName: true } },
+        user: { select: { id: true, tel: true, selfPlayPhase: true } },
         round: { select: { mode: true, status: true, dice1: true, dice2: true, dice3: true, diceSum: true } },
       },
     }),
+    getSleepMode(),
   ])
 
   return {
-    page,
-    total,
-    pageSize,
-    walletType,
-    q,
-    result,
-    betType,
+    page, total, pageSize, walletType, q, result, betType, mode, sleepMode,
     bets: bets.map(b => ({
       id: b.id,
       kind: b.kind,
@@ -84,8 +99,9 @@ export async function loader({ request }: Route.LoaderArgs) {
       exactSum: b.exactSum,
       createdAt: b.createdAt.toISOString(),
       user: {
+        id: b.user.id,
         tel: b.user.tel,
-        name: [b.user.firstName, b.user.lastName].filter(Boolean).join(' ') || null,
+        selfPlayPhase: b.user.selfPlayPhase as string,
       },
       round: b.round
         ? {
@@ -99,17 +115,39 @@ export async function loader({ request }: Route.LoaderArgs) {
   }
 }
 
+// ─── ACTION ──────────────────────────────────────────────────────────
+export async function action({ request }: Route.ActionArgs) {
+  const admin = await requireAdmin(request)
+  const fd = await request.formData()
+  const op = String(fd.get('op') ?? '')
+  const userId = String(fd.get('userId') ?? '')
+  if (!userId) return { error: 'userId required' }
+
+  if (op === 'lockGame') {
+    await prisma.user.update({ where: { id: userId }, data: { selfPlayPhase: 'ADMIN_LOCKED' } })
+    await prisma.auditLog.create({ data: { actorId: admin.id, action: 'player.lock', target: `user:${userId}` } })
+    return { ok: true }
+  }
+  if (op === 'unlockGame') {
+    await prisma.user.update({ where: { id: userId }, data: { selfPlayPhase: 'NORMAL', selfPlayPhaseBalance: null } })
+    await prisma.auditLog.create({ data: { actorId: admin.id, action: 'player.unlock', target: `user:${userId}` } })
+    return { ok: true }
+  }
+  return { error: 'Unknown op' }
+}
+
 export default function AdminPlayHistory() {
   const data = useLoaderData<typeof loader>()
   const [params] = useSearchParams()
   const navigation = useNavigation()
   const revalidator = useRevalidator()
+  const submit = useSubmit()
   const loading = navigation.state !== 'idle'
   const totalPages = Math.max(1, Math.ceil(data.total / data.pageSize))
 
-  // Each new bet (and every round resolution) re-fetches the page-1 list. We
-  // skip revalidation when the admin is paginated past the first page, since
-  // appending fresh rows would shift the pagination cursor under their feet.
+  const [walletModal, setWalletModal] = useState<{ userId: string; tel: string } | null>(null)
+  const [lockModal, setLockModal] = useState<{ userId: string; tel: string; isLocked: boolean } | null>(null)
+
   const onFirstPage = data.page === 1
   usePusherEvent<BetPlacedPayload>(ADMIN_CHANNEL, 'bet:placed', () => {
     if (onFirstPage) revalidator.revalidate()
@@ -121,13 +159,6 @@ export default function AdminPlayHistory() {
   function pageHref(p: number) {
     const next = new URLSearchParams(params)
     next.set('page', String(p))
-    return `?${next.toString()}`
-  }
-
-  function pageSizeHref(s: number) {
-    const next = new URLSearchParams(params)
-    next.set('pageSize', String(s))
-    next.set('page', '1')
     return `?${next.toString()}`
   }
 
@@ -152,6 +183,31 @@ export default function AdminPlayHistory() {
     return `?${next.toString()}`
   }
 
+  function modeHref(m: 'ALL' | 'RANDOM' | 'LIVE') {
+    const next = new URLSearchParams(params)
+    next.set('mode', m)
+    next.delete('page')
+    return `?${next.toString()}`
+  }
+
+  function confirmLock(userId: string, tel: string, isLocked: boolean) {
+    setLockModal({ userId, tel, isLocked })
+  }
+
+  function executeLock(userId: string, isLocked: boolean) {
+    const fd = new FormData()
+    fd.set('op', isLocked ? 'unlockGame' : 'lockGame')
+    fd.set('userId', userId)
+    submit(fd, { method: 'post' })
+    setLockModal(null)
+  }
+
+  const filterStyle = (active: boolean, accent?: string) => ({
+    background: active ? '#1e1b4b' : 'transparent',
+    color: active ? (accent ?? '#fde68a') : '#818cf8',
+    border: `1px solid ${active ? '#4338ca' : '#1e1b4b'}`,
+  })
+
   return (
     <div className="flex flex-col gap-4">
       <div className="flex items-center justify-between">
@@ -159,20 +215,35 @@ export default function AdminPlayHistory() {
         <span className="text-xs" style={{ color: '#a5b4fc' }}>{data.total.toLocaleString()} bets</span>
       </div>
 
-      {/* ─── Wallet tabs — REAL vs DEMO ───────────────────────────────── */}
-      <div className="flex rounded-xl overflow-hidden" style={{ border: '1px solid #4338ca' }}>
+      {data.sleepMode && (
+        <div
+          className="flex items-center gap-3 rounded-xl px-4 py-3"
+          style={{ background: 'rgba(220,38,38,0.12)', border: '1px solid #ef4444' }}
+        >
+          <span className="text-base">🌙</span>
+          <div className="min-w-0">
+            <div className="text-xs font-bold" style={{ color: '#f87171' }}>SLEEP MODE IS ON</div>
+            <div className="text-[10px]" style={{ color: '#fca5a5' }}>
+              All REAL/PROMO self-play rolls are forced to 0 payout. Every new bet below should show LOSS with payout 0.
+            </div>
+          </div>
+          <a
+            href="/admin"
+            className="ml-auto shrink-0 rounded-lg px-3 py-1.5 text-[10px] font-bold"
+            style={{ background: 'rgba(220,38,38,0.2)', color: '#fca5a5', border: '1px solid #ef4444' }}
+          >
+            Manage →
+          </a>
+        </div>
+      )}
+
+      {/* ─── Wallet tabs ─────────────────────────────────────────────── */}
+      <div className="flex overflow-hidden rounded-xl" style={{ border: '1px solid #4338ca' }}>
         {WALLET_TABS.map(w => {
           const active = data.walletType === w
           return (
-            <Link
-              key={w}
-              to={walletHref(w)}
-              className="flex-1 py-2 text-center text-xs font-bold  transition-all"
-              style={{
-                background: active ? '#4338ca' : '#0f172a',
-                color: active ? '#fff' : '#a5b4fc',
-              }}
-            >
+            <Link key={w} to={walletHref(w)} className="flex-1 py-2 text-center text-xs font-bold transition-all"
+              style={{ background: active ? '#4338ca' : '#0f172a', color: active ? '#fff' : '#a5b4fc' }}>
               {w === 'REAL' ? 'REAL ACCOUNT' : 'DEMO ACCOUNT'}
             </Link>
           )
@@ -181,87 +252,62 @@ export default function AdminPlayHistory() {
 
       {/* ─── Filters + Search ─────────────────────────────────────────── */}
       <div className="flex flex-col gap-3 md:flex-row md:gap-4">
-        {/* LEFT ½: result + bet-type filters */}
         <div className="flex flex-col gap-2 md:w-1/2">
+          {/* Row 1: mode filter */}
+          <div className="flex gap-1.5">
+            {(['ALL', 'RANDOM', 'LIVE'] as const).map(m => (
+              <Link key={m} to={modeHref(m)} className="rounded-md px-3 py-1 text-xs font-bold"
+                style={filterStyle(data.mode === m, '#c4b5fd')}>
+                {m === 'ALL' ? 'All modes' : m === 'RANDOM' ? 'Random' : 'Live'}
+              </Link>
+            ))}
+          </div>
+          {/* Row 2: result filter */}
           <div className="flex gap-1.5">
             {(['ALL', 'WIN', 'LOSS'] as const).map(r => (
-              <Link
-                key={r}
-                to={resultHref(r)}
-                className="rounded-md px-3 py-1 text-xs font-bold"
-                style={{
-                  background: data.result === r ? '#1e1b4b' : 'transparent',
-                  color: data.result === r
-                    ? (r === 'WIN' ? '#4ade80' : r === 'LOSS' ? '#f87171' : '#fde68a')
-                    : '#818cf8',
-                  border: `1px solid ${data.result === r ? '#4338ca' : '#1e1b4b'}`,
-                }}
-              >
+              <Link key={r} to={resultHref(r)} className="rounded-md px-3 py-1 text-xs font-bold"
+                style={filterStyle(data.result === r, r === 'WIN' ? '#4ade80' : r === 'LOSS' ? '#f87171' : '#fde68a')}>
                 {r === 'ALL' ? 'All results' : r}
               </Link>
             ))}
           </div>
+          {/* Row 3: bet type filter */}
           <div className="flex flex-wrap gap-1.5">
             {BET_TYPES.map(bt => (
-              <Link
-                key={bt.key}
-                to={betTypeHref(bt.key)}
-                className="rounded-md px-3 py-1 text-xs font-bold"
-                style={{
-                  background: data.betType === bt.key ? '#1e1b4b' : 'transparent',
-                  color: data.betType === bt.key ? '#fde68a' : '#818cf8',
-                  border: `1px solid ${data.betType === bt.key ? '#4338ca' : '#1e1b4b'}`,
-                }}
-              >
+              <Link key={bt.key} to={betTypeHref(bt.key)} className="rounded-md px-3 py-1 text-xs font-bold"
+                style={filterStyle(data.betType === bt.key)}>
                 {bt.label}
               </Link>
             ))}
           </div>
         </div>
 
-        {/* RIGHT ½: per-page + phone search */}
         <Form method="get" className="flex items-center gap-2 md:w-1/2">
-          <input type="hidden" name="wallet" value={data.walletType} />
-          <input type="hidden" name="result" value={data.result} />
+          <input type="hidden" name="wallet"  value={data.walletType} />
+          <input type="hidden" name="result"  value={data.result} />
           <input type="hidden" name="betType" value={data.betType} />
-          <input type="hidden" name="page" value="1" />
-          <select
-            name="pageSize"
-            defaultValue={data.pageSize}
+          <input type="hidden" name="mode"    value={data.mode} />
+          <input type="hidden" name="page"    value="1" />
+          <select name="pageSize" defaultValue={data.pageSize}
             onChange={e => { e.currentTarget.form?.requestSubmit() }}
             className="rounded-lg px-2 py-2 text-xs font-bold outline-none shrink-0"
-            style={{ background: '#0f172a', color: '#a5b4fc', border: '1.5px solid #4338ca' }}
-          >
+            style={{ background: '#0f172a', color: '#a5b4fc', border: '1.5px solid #4338ca' }}>
             {PAGE_SIZES.map(s => <option key={s} value={s}>{s} / page</option>)}
           </select>
           <div className="relative flex-1">
             <Search size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2" style={{ color: '#818cf8' }} />
-            <input
-              name="q"
-              defaultValue={data.q}
-              placeholder="Filter by phone number…"
+            <input name="q" defaultValue={data.q} placeholder="Filter by phone number…"
               className="w-full rounded-lg py-2 pl-9 pr-3 text-sm outline-none"
-              style={{ background: '#0f172a', color: '#fde68a', border: '1.5px solid #4338ca' }}
-            />
+              style={{ background: '#0f172a', color: '#fde68a', border: '1.5px solid #4338ca' }} />
           </div>
-          <button
-            type="submit"
-            className="rounded-lg px-3 py-2 text-xs font-bold"
-            style={{ background: '#4338ca', color: '#fff', border: '1.5px solid #818cf8' }}
-          >
+          <button type="submit" className="rounded-lg px-3 py-2 text-xs font-bold"
+            style={{ background: '#4338ca', color: '#fff', border: '1.5px solid #818cf8' }}>
             {loading ? <Loader size={14} className="animate-spin" /> : 'SEARCH'}
           </button>
           {data.q && (
-            <Link
-              to={(() => {
-                const next = new URLSearchParams(params)
-                next.delete('q')
-                next.delete('page')
-                return `?${next.toString()}`
-              })()}
+            <Link to={(() => { const n = new URLSearchParams(params); n.delete('q'); n.delete('page'); return `?${n}` })()}
               className="rounded-lg px-3 py-2 text-xs font-bold"
-              style={{ background: '#1e1b4b', color: '#a5b4fc', border: '1.5px solid #4338ca' }}
-            >
+              style={{ background: '#1e1b4b', color: '#a5b4fc', border: '1.5px solid #4338ca' }}>
               CLEAR
             </Link>
           )}
@@ -269,10 +315,7 @@ export default function AdminPlayHistory() {
       </div>
 
       {data.bets.length === 0 && (
-        <div
-          className="rounded-xl p-8 text-center text-xs"
-          style={{ background: '#0f172a', color: '#818cf8', border: '1px solid #1e1b4b' }}
-        >
+        <div className="rounded-xl p-8 text-center text-xs" style={{ background: '#0f172a', color: '#818cf8', border: '1px solid #1e1b4b' }}>
           No bets recorded yet.
         </div>
       )}
@@ -281,7 +324,12 @@ export default function AdminPlayHistory() {
       {data.bets.length > 0 && (
         <div className="flex flex-col gap-2 md:hidden">
           {data.bets.map((b, i) => (
-            <BetCard key={b.id} b={b} rowNum={(data.page - 1) * data.pageSize + i + 1} />
+            <BetCard
+              key={b.id} b={b}
+              rowNum={(data.page - 1) * data.pageSize + i + 1}
+              onView={() => setWalletModal({ userId: b.user.id, tel: b.user.tel })}
+              onLock={() => confirmLock(b.user.id, b.user.tel, b.user.selfPlayPhase === 'ADMIN_LOCKED')}
+            />
           ))}
         </div>
       )}
@@ -291,7 +339,7 @@ export default function AdminPlayHistory() {
         <div className="hidden overflow-x-auto rounded-xl md:block" style={{ background: '#0f172a', border: '1px solid #1e1b4b' }}>
           <table className="w-full text-left text-sm">
             <thead style={{ color: '#a5b4fc' }}>
-              <tr className="text-[10px] font-bold " style={{ background: '#1e1b4b' }}>
+              <tr className="text-[10px] font-bold" style={{ background: '#1e1b4b' }}>
                 <th className="w-8 px-3 py-2 text-right" style={{ color: '#64748b' }}>#</th>
                 <th className="px-3 py-2">WHEN</th>
                 <th className="px-3 py-2">PLAYER</th>
@@ -300,36 +348,82 @@ export default function AdminPlayHistory() {
                 <th className="px-3 py-2 text-right">STAKE</th>
                 <th className="px-3 py-2 text-right">PAYOUT</th>
                 <th className="px-3 py-2">RESULT</th>
+                <th className="px-3 py-2">ACTION</th>
               </tr>
             </thead>
             <tbody>
-              {data.bets.map((b, i) => (
-                <tr key={b.id} style={{ borderTop: '1px solid #1e1b4b', color: '#e9d5ff' }}>
-                  <td className="px-3 py-2 text-right text-[10px] font-bold tabular-nums" style={{ color: '#64748b' }}>{(data.page - 1) * data.pageSize + i + 1}</td>
-                  <td className="whitespace-nowrap px-3 py-2 text-xs" style={{ color: '#818cf8' }}>{new Date(b.createdAt).toLocaleString()}</td>
-                  <td className="px-3 py-2 text-xs">{b.user.name ? `${b.user.name} · ` : ''}{b.user.tel}</td>
-                  <td className="px-3 py-2"><BetDescription b={b} /></td>
-                  <td className="px-3 py-2 text-xs" style={{ color: '#a5b4fc' }}>
-                    {b.round ? (
-                      <div className="flex flex-col gap-0.5">
-                        <span>{b.round.mode.charAt(0) + b.round.mode.slice(1).toLowerCase()} · {b.round.diceSum != null ? b.round.diceSum : b.round.status}</span>
-                        {b.round.dice.length > 0 && (
-                          <div className="flex items-center gap-0.5">
-                            {b.round.dice.map((d, i) => (
-                              <SymbolImg key={i} symbol={d} size={16} />
-                            ))}
-                          </div>
-                        )}
+              {data.bets.map((b, i) => {
+                const isLocked = b.user.selfPlayPhase === 'ADMIN_LOCKED'
+                return (
+                  <tr key={b.id} style={{ borderTop: '1px solid #1e1b4b', color: '#e9d5ff' }}>
+                    <td className="px-3 py-2 text-right text-[10px] font-bold tabular-nums" style={{ color: '#64748b' }}>
+                      {(data.page - 1) * data.pageSize + i + 1}
+                    </td>
+                    <td className="whitespace-nowrap px-3 py-2 text-xs" style={{ color: '#818cf8' }}>
+                      {new Date(b.createdAt).toLocaleString()}
+                    </td>
+                    <td className="px-3 py-2 text-xs">
+                      <a
+                        href={`/admin/customers?q=${encodeURIComponent(b.user.tel)}`}
+                        className="font-semibold hover:underline"
+                        style={{ color: isLocked ? '#fca5a5' : '#fde68a' }}
+                        title={isLocked ? 'LOCKED' : undefined}
+                      >
+                        {b.user.tel}
+                      </a>
+                      {isLocked && (
+                        <span className="ml-1 text-[9px]" style={{ color: '#f87171' }}>🔒</span>
+                      )}
+                    </td>
+                    <td className="px-3 py-2"><BetDescription b={b} /></td>
+                    <td className="px-3 py-2 text-xs" style={{ color: '#a5b4fc' }}>
+                      {b.round ? (
+                        <div className="flex flex-col gap-0.5">
+                          <span>{b.round.mode.charAt(0) + b.round.mode.slice(1).toLowerCase()} · {b.round.diceSum != null ? b.round.diceSum : b.round.status}</span>
+                          {b.round.dice.length > 0 && (
+                            <div className="flex items-center gap-0.5">
+                              {b.round.dice.map((d, di) => <SymbolImg key={di} symbol={d} size={16} />)}
+                            </div>
+                          )}
+                        </div>
+                      ) : '—'}
+                    </td>
+                    <td className="px-3 py-2 text-right" style={{ color: '#fde68a' }}>{b.amount.toLocaleString()}</td>
+                    <td className="px-3 py-2 text-right" style={{ color: b.payout && b.payout > 0 ? '#4ade80' : '#818cf8' }}>
+                      {b.payout != null ? b.payout.toLocaleString() : '—'}
+                    </td>
+                    <td className="px-3 py-2"><ResultPill result={b.result} /></td>
+                    <td className="px-3 py-2">
+                      <div className="flex items-center gap-1.5">
+                        {/* View wallet */}
+                        <button
+                          type="button"
+                          onClick={() => setWalletModal({ userId: b.user.id, tel: b.user.tel })}
+                          title="View wallet"
+                          className="flex h-7 w-7 items-center justify-center rounded-md transition-opacity hover:opacity-80"
+                          style={{ background: '#1e1b4b', color: '#a5b4fc', border: '1px solid #4338ca' }}
+                        >
+                          <Eye size={12} />
+                        </button>
+                        {/* Lock / Unlock */}
+                        <button
+                          type="button"
+                          onClick={() => confirmLock(b.user.id, b.user.tel, isLocked)}
+                          title={isLocked ? 'Unlock player' : 'Lock player'}
+                          className="flex h-7 w-7 items-center justify-center rounded-md transition-opacity hover:opacity-80"
+                          style={{
+                            background: isLocked ? 'rgba(22,163,74,0.2)' : 'rgba(220,38,38,0.15)',
+                            color: isLocked ? '#4ade80' : '#f87171',
+                            border: `1px solid ${isLocked ? '#16a34a' : '#dc2626'}`,
+                          }}
+                        >
+                          <Lock size={12} />
+                        </button>
                       </div>
-                    ) : '—'}
-                  </td>
-                  <td className="px-3 py-2 text-right" style={{ color: '#fde68a' }}>{b.amount.toLocaleString()}</td>
-                  <td className="px-3 py-2 text-right" style={{ color: b.payout && b.payout > 0 ? '#4ade80' : '#818cf8' }}>
-                    {b.payout != null ? b.payout.toLocaleString() : '—'}
-                  </td>
-                  <td className="px-3 py-2"><ResultPill result={b.result} /></td>
-                </tr>
-              ))}
+                    </td>
+                  </tr>
+                )
+              })}
             </tbody>
           </table>
         </div>
@@ -339,10 +433,12 @@ export default function AdminPlayHistory() {
         <div className="flex flex-col items-center gap-1.5">
           <div className="flex items-center gap-2">
             {data.page > 1 && (
-              <Link to={pageHref(data.page - 1)} className="rounded-md px-3 py-1.5 text-xs font-bold" style={{ background: '#1e1b4b', color: '#a5b4fc', border: '1px solid #4338ca' }}>← Prev</Link>
+              <Link to={pageHref(data.page - 1)} className="rounded-md px-3 py-1.5 text-xs font-bold"
+                style={{ background: '#1e1b4b', color: '#a5b4fc', border: '1px solid #4338ca' }}>← Prev</Link>
             )}
             {data.page < totalPages && (
-              <Link to={pageHref(data.page + 1)} className="rounded-md px-3 py-1.5 text-xs font-bold" style={{ background: '#1e1b4b', color: '#a5b4fc', border: '1px solid #4338ca' }}>Next →</Link>
+              <Link to={pageHref(data.page + 1)} className="rounded-md px-3 py-1.5 text-xs font-bold"
+                style={{ background: '#1e1b4b', color: '#a5b4fc', border: '1px solid #4338ca' }}>Next →</Link>
             )}
           </div>
           <span className="text-xs tabular-nums" style={{ color: '#a5b4fc' }}>
@@ -350,44 +446,56 @@ export default function AdminPlayHistory() {
           </span>
         </div>
       )}
+
+      {/* Modals */}
+      {walletModal && (
+        <PlayerWalletModal
+          userId={walletModal.userId}
+          tel={walletModal.tel}
+          onClose={() => setWalletModal(null)}
+        />
+      )}
+      {lockModal && (
+        <LockConfirmModal
+          tel={lockModal.tel}
+          isLocked={lockModal.isLocked}
+          onClose={() => setLockModal(null)}
+          onConfirm={() => executeLock(lockModal.userId, lockModal.isLocked)}
+        />
+      )}
     </div>
   )
 }
+
+// ─── Shared helpers ───────────────────────────────────────────────────
 
 type Bet = ReturnType<typeof useLoaderData<typeof loader>>['bets'][number]
 
 function SymbolImg({ symbol, size = 18 }: { symbol: string; size?: number }) {
   return (
-    <img
-      src={`/symbols/${symbol.toLowerCase()}.png`}
-      alt={symbol}
-      width={size}
-      height={size}
+    <img src={`/symbols/${symbol.toLowerCase()}.png`} alt={symbol}
+      width={size} height={size}
       className="inline-block rounded object-contain"
-      style={{ background: '#fff', padding: 1 }}
-    />
+      style={{ background: '#fff', padding: 1 }} />
   )
 }
 
+// Simplified: icon(s) + type only, no symbol names
 function BetDescription({ b }: { b: Bet }) {
   if (b.kind === 'SYMBOL' && b.symbol) {
     return (
-      <span className="flex items-center gap-1 text-xs" style={{ color: '#e9d5ff' }}>
+      <span className="flex items-center gap-1 text-xs">
         <SymbolImg symbol={b.symbol} />
-        <span style={{ color: '#a5b4fc' }}>Symbol</span>
-        <span>·</span>
-        <span>{b.symbol}</span>
+        <span style={{ color: '#a5b4fc' }}>Single</span>
       </span>
     )
   }
   if (b.kind === 'PAIR' && b.pairA && b.pairB) {
     return (
-      <span className="flex items-center gap-1 text-xs" style={{ color: '#e9d5ff' }}>
+      <span className="flex items-center gap-1 text-xs">
         <SymbolImg symbol={b.pairA} />
         <SymbolImg symbol={b.pairB} />
         <span style={{ color: '#a5b4fc' }}>Pair</span>
-        <span>·</span>
-        <span>{b.pairA}+{b.pairB}</span>
       </span>
     )
   }
@@ -397,38 +505,33 @@ function BetDescription({ b }: { b: Bet }) {
       : b.range === 'HIGH'
         ? <ArrowUp size={14} style={{ color: '#f87171' }} />
         : <ArrowUpDown size={14} style={{ color: '#a78bfa' }} />
+    const label = b.range === 'LOW' ? 'Low' : b.range === 'HIGH' ? 'High' : 'Middle'
     return (
-      <span className="flex items-center gap-1 text-xs" style={{ color: '#e9d5ff' }}>
+      <span className="flex items-center gap-1 text-xs">
         {icon}
-        <span style={{ color: '#a5b4fc' }}>Range</span>
-        <span>·</span>
-        <span>{b.range}</span>
+        <span style={{ color: '#a5b4fc' }}>{label}</span>
       </span>
     )
   }
   if (b.kind === 'SUM' && b.exactSum != null) {
-    return (
-      <span className="flex items-center gap-1 text-xs" style={{ color: '#e9d5ff' }}>
-        <span style={{ color: '#fbbf24' }}>ເລກ {b.exactSum}</span>
-      </span>
-    )
+    return <span className="text-xs font-bold" style={{ color: '#fbbf24' }}>ເລກ {b.exactSum}</span>
   }
   return <span className="text-xs">{b.kind}</span>
 }
 
-function BetCard({ b, rowNum }: { b: Bet; rowNum: number }) {
+function BetCard({ b, rowNum, onView, onLock }: { b: Bet; rowNum: number; onView: () => void; onLock: () => void }) {
+  const isLocked = b.user.selfPlayPhase === 'ADMIN_LOCKED'
   return (
-    <div
-      className="rounded-xl p-3"
-      style={{ background: '#0f172a', border: '1px solid #1e1b4b' }}
-    >
+    <div className="rounded-xl p-3" style={{ background: '#0f172a', border: '1px solid #1e1b4b' }}>
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
           <div className="flex items-center gap-1.5">
             <span className="text-[10px] font-bold tabular-nums" style={{ color: '#64748b' }}>#{rowNum}</span>
-            <div className="text-sm font-semibold" style={{ color: '#e9d5ff' }}>
-              {b.user.name ? `${b.user.name} · ` : ''}{b.user.tel}
-            </div>
+            <a href={`/admin/customers?q=${encodeURIComponent(b.user.tel)}`}
+              className="text-sm font-semibold hover:underline"
+              style={{ color: isLocked ? '#fca5a5' : '#fde68a' }}>
+              {b.user.tel}{isLocked ? ' 🔒' : ''}
+            </a>
           </div>
           <div className="mt-0.5 text-xs" style={{ color: '#818cf8' }}>{new Date(b.createdAt).toLocaleString()}</div>
         </div>
@@ -439,21 +542,37 @@ function BetCard({ b, rowNum }: { b: Bet; rowNum: number }) {
         {b.round && (
           <span className="flex items-center gap-1">
             <span>{b.round.mode} · {b.round.diceSum != null ? b.round.diceSum : b.round.status}</span>
-            {b.round.dice.map((d, i) => <SymbolImg key={i} symbol={d} size={14} />)}
+            {b.round.dice.map((d, di) => <SymbolImg key={di} symbol={d} size={14} />)}
           </span>
         )}
       </div>
       <div className="mt-2 grid grid-cols-2 gap-2">
         <div className="rounded-md px-2 py-1.5" style={{ background: '#1e1b4b' }}>
-          <div className="text-[9px] font-bold " style={{ color: '#a5b4fc' }}>STAKE</div>
+          <div className="text-[9px] font-bold" style={{ color: '#a5b4fc' }}>STAKE</div>
           <div className="font-semibold" style={{ color: '#fde68a' }}>{b.amount.toLocaleString()}</div>
         </div>
         <div className="rounded-md px-2 py-1.5" style={{ background: '#1e1b4b' }}>
-          <div className="text-[9px] font-bold " style={{ color: '#a5b4fc' }}>PAYOUT</div>
+          <div className="text-[9px] font-bold" style={{ color: '#a5b4fc' }}>PAYOUT</div>
           <div className="font-semibold" style={{ color: b.payout && b.payout > 0 ? '#4ade80' : '#a5b4fc' }}>
             {b.payout != null ? b.payout.toLocaleString() : '—'}
           </div>
         </div>
+      </div>
+      <div className="mt-2 flex gap-2">
+        <button type="button" onClick={onView}
+          className="flex flex-1 items-center justify-center gap-1.5 rounded-lg py-1.5 text-xs font-bold"
+          style={{ background: '#1e1b4b', color: '#a5b4fc', border: '1px solid #4338ca' }}>
+          <Eye size={12} /> View wallet
+        </button>
+        <button type="button" onClick={onLock}
+          className="flex flex-1 items-center justify-center gap-1.5 rounded-lg py-1.5 text-xs font-bold"
+          style={{
+            background: isLocked ? 'rgba(22,163,74,0.2)' : 'rgba(220,38,38,0.15)',
+            color: isLocked ? '#4ade80' : '#f87171',
+            border: `1px solid ${isLocked ? '#16a34a' : '#dc2626'}`,
+          }}>
+          <Lock size={12} />{isLocked ? 'Unlock' : 'Lock'}
+        </button>
       </div>
     </div>
   )
@@ -463,14 +582,297 @@ function ResultPill({ result }: { result: string | null }) {
   if (!result) return <span className="text-[10px]" style={{ color: '#818cf8' }}>—</span>
   const isWin = result === 'WIN'
   return (
-    <span
-      className="inline-block rounded-full px-2 py-0.5 text-[10px] font-bold "
-      style={{
-        background: isWin ? 'rgba(22,163,74,0.2)' : 'rgba(220,38,38,0.2)',
-        color: isWin ? '#4ade80' : '#f87171',
-      }}
-    >
+    <span className="inline-block rounded-full px-2 py-0.5 text-[10px] font-bold"
+      style={{ background: isWin ? 'rgba(22,163,74,0.2)' : 'rgba(220,38,38,0.2)', color: isWin ? '#4ade80' : '#f87171' }}>
       {result}
     </span>
+  )
+}
+
+function TxStatusPill({ status }: { status: string }) {
+  const map: Record<string, { bg: string; color: string }> = {
+    COMPLETED: { bg: 'rgba(22,163,74,0.2)', color: '#4ade80' },
+    PENDING:   { bg: 'rgba(234,179,8,0.2)', color: '#fde68a' },
+    FAILED:    { bg: 'rgba(220,38,38,0.2)', color: '#f87171' },
+    CANCELLED: { bg: 'rgba(100,116,139,0.2)', color: '#94a3b8' },
+  }
+  const s = map[status] ?? { bg: 'rgba(100,116,139,0.2)', color: '#94a3b8' }
+  return (
+    <span className="inline-block rounded-full px-2 py-0.5 text-[10px] font-bold" style={{ background: s.bg, color: s.color }}>
+      {status}
+    </span>
+  )
+}
+
+// ─── Lock confirm modal ───────────────────────────────────────────────
+
+function LockConfirmModal({
+  tel, isLocked, onClose, onConfirm,
+}: {
+  tel: string
+  isLocked: boolean
+  onClose: () => void
+  onConfirm: () => void
+}) {
+  return (
+    <div className="fixed inset-0 z-[200] flex items-center justify-center p-6"
+      style={{ background: 'rgba(0,0,0,0.8)' }} onClick={onClose}>
+      <div className="w-full max-w-sm rounded-2xl p-6"
+        style={{ background: '#1e0040', border: `2px solid ${isLocked ? '#16a34a' : '#dc2626'}` }}
+        onClick={e => e.stopPropagation()}>
+        <div className="mb-1 flex items-center gap-2">
+          <Lock size={18} style={{ color: isLocked ? '#4ade80' : '#f87171' }} />
+          <h2 className="text-base font-bold" style={{ color: isLocked ? '#4ade80' : '#f87171' }}>
+            {isLocked ? 'Unlock player?' : 'Lock player?'}
+          </h2>
+        </div>
+        <p className="mt-3 text-sm" style={{ color: '#e9d5ff' }}>
+          {isLocked
+            ? <><strong style={{ color: '#fde68a' }}>{tel}</strong> will return to NORMAL phase and play normally.</>
+            : <><strong style={{ color: '#fde68a' }}>{tel}</strong> will be forced to <strong className="text-red-400">lose every bet</strong> (ADMIN_LOCKED).</>
+          }
+        </p>
+        <div className="mt-5 flex gap-3">
+          <button type="button" onClick={onClose}
+            className="flex-1 rounded-xl py-2.5 text-sm font-bold"
+            style={{ background: '#2d1b4e', color: '#a78bfa', border: '1px solid #4c1d95' }}>
+            Cancel
+          </button>
+          <button type="button" onClick={onConfirm}
+            className="flex-1 rounded-xl py-2.5 text-sm font-bold"
+            style={{
+              background: isLocked ? 'linear-gradient(135deg,#16a34a,#14532d)' : 'linear-gradient(135deg,#dc2626,#7f1d1d)',
+              color: '#fff',
+              border: `1px solid ${isLocked ? '#4ade80' : '#fca5a5'}`,
+            }}>
+            {isLocked ? 'Yes, Unlock' : 'Yes, Lock'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ─── Player wallet modal (same as admin/wallet but with wallet picker) ─
+
+type UserBase = { id: string; tel: string; name: string | null; status: string; role: string; createdAt: string }
+type WalletBase = { type: string; balance: number }
+type DetailData = {
+  view: 'detail'
+  user: UserBase
+  wallet: WalletBase
+  recent: { id: string; type: string; amount: number; status: string; balanceBefore: number; balanceAfter: number; note: string | null; createdAt: string }[]
+}
+type SummaryData = {
+  view: 'summary'
+  user: UserBase
+  wallet: WalletBase
+  incoming: { type: string; total: number; count: number }[]
+  outgoing: { type: string; total: number; count: number }[]
+  incomingTotal: number
+  outgoingTotal: number
+  calculatedAvailable: number
+}
+
+function PlayerWalletModal({ userId, tel, onClose }: { userId: string; tel: string; onClose: () => void }) {
+  const [wallet, setWallet] = useState<'REAL' | 'DEMO' | 'PROMO'>('REAL')
+  const [kind, setKind] = useState<'detail' | 'summary'>('detail')
+  const detailFetcher = useFetcher<DetailData | { error: string }>()
+  const summaryFetcher = useFetcher<SummaryData | { error: string }>()
+
+  const active = kind === 'detail' ? detailFetcher : summaryFetcher
+  const detailData = detailFetcher.data && !('error' in detailFetcher.data) ? detailFetcher.data : null
+  const summaryData = summaryFetcher.data && !('error' in summaryFetcher.data) ? summaryFetcher.data : null
+  const error = active.data && 'error' in active.data ? active.data.error : null
+
+  // Reload whenever wallet or kind changes
+  const fetchKey = `${userId}-${wallet}-${kind}`
+  const [lastFetchKey, setLastFetchKey] = useState('')
+  if (fetchKey !== lastFetchKey) {
+    setLastFetchKey(fetchKey)
+    if (kind === 'detail') {
+      detailFetcher.load(`/api/admin/wallet-summary?userId=${userId}&view=detail&wallet=${wallet}`)
+    } else {
+      summaryFetcher.load(`/api/admin/wallet-summary?userId=${userId}&view=summary&wallet=${wallet}`)
+    }
+  }
+
+  const walletColor: Record<string, string> = { REAL: '#fde68a', DEMO: '#a5b4fc', PROMO: '#fcd34d' }
+  const walletLabel: Record<string, string> = { REAL: 'Real', DEMO: 'Demo', PROMO: 'Promo' }
+
+  return (
+    <div className="fixed inset-0 z-[100] flex items-end justify-center backdrop-blur-sm md:items-center md:p-4"
+      style={{ background: 'rgba(0,0,0,0.75)' }} onClick={onClose} role="dialog" aria-modal="true">
+      <div onClick={e => e.stopPropagation()}
+        className="relative flex h-[92vh] w-full flex-col overflow-hidden rounded-t-2xl md:h-auto md:max-h-[90vh] md:max-w-3xl md:rounded-2xl"
+        style={{ background: '#0f172a', border: '1px solid #1e1b4b' }}>
+
+        {/* Header */}
+        <div className="flex items-center justify-between gap-3 border-b px-5 py-4" style={{ borderColor: '#1e1b4b', background: '#1e1b4b' }}>
+          <div className="min-w-0">
+            <div className="flex items-center gap-1.5 text-xs font-bold" style={{ color: '#a5b4fc' }}>
+              <Wallet size={12} /> Player Wallet
+            </div>
+            <div className="text-sm font-bold" style={{ color: '#fde68a' }}>
+              <a href={`/admin/customers?q=${encodeURIComponent(tel)}`} className="hover:underline">{tel}</a>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 flex-wrap justify-end">
+            {/* Wallet tabs */}
+            <div className="flex overflow-hidden rounded-md text-[11px] font-bold" style={{ border: '1px solid #4338ca' }}>
+              {(['REAL', 'DEMO', 'PROMO'] as const).map(w => (
+                <button key={w} type="button" onClick={() => { setWallet(w); setKind('detail') }}
+                  className="px-2.5 py-1 transition-colors"
+                  style={{ background: wallet === w ? walletColor[w] : 'transparent', color: wallet === w ? '#0f172a' : '#a5b4fc' }}>
+                  {walletLabel[w]}
+                </button>
+              ))}
+            </div>
+            {/* View tabs */}
+            <div className="flex overflow-hidden rounded-md text-[11px] font-bold" style={{ border: '1px solid #4338ca' }}>
+              {(['detail', 'summary'] as const).map(k => (
+                <button key={k} type="button" onClick={() => setKind(k)}
+                  className="px-2.5 py-1 transition-colors"
+                  style={{ background: kind === k ? '#4338ca' : 'transparent', color: kind === k ? '#fff' : '#a5b4fc' }}>
+                  {k.toUpperCase()}
+                </button>
+              ))}
+            </div>
+            <button onClick={onClose} type="button"
+              className="flex h-8 w-8 items-center justify-center rounded-full"
+              style={{ background: '#1e1b4b', color: '#a5b4fc', border: '1px solid #4338ca' }}>
+              <X size={14} />
+            </button>
+          </div>
+        </div>
+
+        {/* Body */}
+        <div className="flex-1 overflow-y-auto px-5 py-4">
+          {active.state !== 'idle' && !active.data && (
+            <div className="flex h-32 items-center justify-center" style={{ color: '#a5b4fc' }}>
+              <Loader size={18} className="animate-spin" />
+            </div>
+          )}
+          {error && (
+            <div className="rounded-lg px-3 py-2 text-xs" style={{ background: 'rgba(220,38,38,0.15)', color: '#f87171', border: '1px solid #f87171' }}>
+              {error}
+            </div>
+          )}
+          {kind === 'detail' && detailData && <DetailView data={detailData} />}
+          {kind === 'summary' && summaryData && <SummaryView data={summaryData} />}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function DetailView({ data }: { data: DetailData }) {
+  const walletColor: Record<string, string> = { REAL: '#fde68a', DEMO: '#a5b4fc', PROMO: '#fcd34d' }
+  const color = walletColor[data.wallet.type] ?? '#e9d5ff'
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="rounded-xl p-4" style={{ background: 'linear-gradient(135deg, #1e1b4b, #0f172a)', border: '1px solid #4338ca' }}>
+        <div className="text-[10px] font-bold tracking-wider" style={{ color: '#a5b4fc' }}>{data.wallet.type} BALANCE</div>
+        <div className="mt-1 text-xl font-bold md:text-3xl" style={{ color }}>{data.wallet.balance.toLocaleString()} ₭</div>
+      </div>
+      <div>
+        <div className="mb-2 flex items-end justify-between gap-3">
+          <div className="text-[10px] font-bold" style={{ color: '#a5b4fc' }}>RECENT TRANSACTIONS</div>
+          <div className="text-right">
+            <div className="text-[9px]" style={{ color: '#64748b' }}>BALANCE AFTER</div>
+            <div className="text-xs font-bold" style={{ color }}>
+              {(data.recent[0]?.balanceAfter ?? data.wallet.balance).toLocaleString()} ₭
+            </div>
+          </div>
+        </div>
+        <div className="overflow-x-auto rounded-lg" style={{ border: '1px solid #1e1b4b' }}>
+          <table className="w-full min-w-[480px] text-left text-xs">
+            <thead style={{ color: '#a5b4fc' }}>
+              <tr style={{ background: '#1e1b4b' }}>
+                <th className="px-3 py-2">WHEN</th>
+                <th className="px-3 py-2">TYPE</th>
+                <th className="px-3 py-2 text-right">AMOUNT</th>
+                <th className="px-3 py-2">STATUS</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.recent.length === 0 && (
+                <tr><td colSpan={4} className="px-3 py-3 text-center" style={{ color: '#64748b' }}>No transactions yet.</td></tr>
+              )}
+              {data.recent.map(t => {
+                const isOut = t.type === 'WITHDRAW' || t.type === 'LOSS' || t.type === 'TRANSFER_OUT'
+                return (
+                  <tr key={t.id} style={{ borderTop: '1px solid #1e1b4b', color: '#e9d5ff' }}>
+                    <td className="px-3 py-2 whitespace-nowrap" style={{ color: '#a5b4fc' }}>{new Date(t.createdAt).toLocaleString()}</td>
+                    <td className="px-3 py-2">{TYPE_LABEL[t.type] ?? t.type}</td>
+                    <td className="px-3 py-2 text-right" style={{ color: isOut ? '#f87171' : '#4ade80' }}>
+                      {isOut ? '−' : '+'}{t.amount.toLocaleString()}
+                    </td>
+                    <td className="px-3 py-2"><TxStatusPill status={t.status} /></td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+        <div className="mt-3 flex justify-center">
+          <a href={`/admin/transactions?q=${encodeURIComponent(data.user.tel)}`}
+            className="rounded-md px-4 py-1.5 text-xs font-bold hover:opacity-80"
+            style={{ background: '#1e1b4b', color: '#a5b4fc', border: '1px solid #4338ca' }}>
+            View more →
+          </a>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function SummaryView({ data }: { data: SummaryData }) {
+  const walletColor: Record<string, string> = { REAL: '#fde68a', DEMO: '#a5b4fc', PROMO: '#fcd34d' }
+  const color = walletColor[data.wallet.type] ?? '#e9d5ff'
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+        <LedgerColumn tone="in" title="Deposits & Earnings" icon={<ArrowDownCircle size={14} />}
+          rows={data.incoming} total={data.incomingTotal} />
+        <LedgerColumn tone="out" title="Withdrawals & Losses" icon={<ArrowUpCircle size={14} />}
+          rows={data.outgoing} total={data.outgoingTotal} />
+      </div>
+      <div className="rounded-xl p-4" style={{ background: 'linear-gradient(135deg, #1e1b4b, #0f172a)', border: '1px solid #4338ca' }}>
+        <div className="text-[10px] font-bold tracking-wider" style={{ color: '#a5b4fc' }}>CALCULATED AVAILABLE (IN − OUT)</div>
+        <div className="mt-1 text-xl font-bold md:text-3xl" style={{ color: '#fde68a' }}>{data.calculatedAvailable.toLocaleString()} ₭</div>
+        <div className="mt-3 flex items-center justify-between text-xs">
+          <span style={{ color: '#64748b' }}>Current {data.wallet.type} balance</span>
+          <span className="font-bold" style={{ color }}>{data.wallet.balance.toLocaleString()} ₭</span>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function LedgerColumn({ tone, title, icon, rows, total }: {
+  tone: 'in' | 'out'; title: string; icon: React.ReactNode
+  rows: { type: string; total: number; count: number }[]; total: number
+}) {
+  const accent = tone === 'in' ? '#4ade80' : '#f87171'
+  return (
+    <div className="rounded-xl" style={{ background: '#0f172a', border: '1px solid #1e1b4b' }}>
+      <div className="flex items-center justify-between gap-2 px-4 py-3"
+        style={{ background: tone === 'in' ? 'rgba(74,222,128,0.08)' : 'rgba(248,113,113,0.08)', borderBottom: '1px solid #1e1b4b' }}>
+        <div className="flex items-center gap-1.5 text-[11px] font-bold" style={{ color: accent }}>{icon}{title}</div>
+        <div className="text-xs font-bold" style={{ color: accent }}>{tone === 'in' ? '+' : '−'}{total.toLocaleString()}</div>
+      </div>
+      <ul>
+        {rows.map(r => (
+          <li key={r.type} className="flex items-center justify-between gap-3 px-4 py-2 text-xs" style={{ borderTop: '1px solid #1e1b4b' }}>
+            <div className="flex flex-col">
+              <span style={{ color: '#e9d5ff' }}>{TYPE_LABEL[r.type] ?? r.type}</span>
+              <span className="text-[10px]" style={{ color: '#64748b' }}>{r.count} {r.count === 1 ? 'entry' : 'entries'}</span>
+            </div>
+            <span style={{ color: r.total > 0 ? accent : '#64748b' }} className="font-semibold">{r.total.toLocaleString()}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
   )
 }

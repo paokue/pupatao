@@ -1,12 +1,15 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { Form, useFetcher, useLoaderData, useNavigation, useRevalidator } from 'react-router'
-import { ArrowDown, ArrowUp, ArrowUpDown, Check, Loader, Lock, PlayCircle, Radio, Users as UsersIcon, X } from 'lucide-react'
+import { ArrowDown, ArrowUp, ArrowUpDown, CalendarClock, Check, Loader, Lock, PlayCircle, Radio, Square, Users as UsersIcon, X } from 'lucide-react'
 import type { DiceSymbol } from '@prisma/client'
 import type { Route } from './+types/admin.live'
 import { requireAdmin } from '~/lib/admin-auth.server'
 import { prisma } from '~/lib/prisma.server'
 import { notifyAdmin, notifyPresenceLive, notifyUser } from '~/lib/pusher.server'
 import { getPayoutConfig, type PayoutConfig } from '~/lib/payouts.server'
+import {
+  getLiveSchedule, getLiveStreamUrl, setLiveSchedule, setLiveStreamUrl,
+} from '~/lib/system-settings.server'
 import {
   ADMIN_CHANNEL,
   PRESENCE_LIVE,
@@ -118,6 +121,11 @@ export async function loader({ request }: Route.LoaderArgs) {
     select: { streamUrl: true },
   })
 
+  const [liveStreamUrl, schedule] = await Promise.all([
+    getLiveStreamUrl(),
+    getLiveSchedule(),
+  ])
+
   function serialize(r: typeof history[number]) {
     return {
       id: r.id,
@@ -158,6 +166,8 @@ export async function loader({ request }: Route.LoaderArgs) {
     history: history.map(serialize),
     historyHasMore,
     lastStreamUrl: lastWithStream?.streamUrl ?? '',
+    liveStreamUrl,
+    schedule,
   }
 }
 
@@ -239,9 +249,15 @@ export async function action({ request }: Route.ActionArgs) {
           bettingClosesAt,
         },
       })
-      await prisma.auditLog.create({
-        data: { actorId: admin.id, action: 'round.start', target: `round:${round.id}`, metadata: { seconds, streamUrl } },
-      })
+      await Promise.all([
+        prisma.auditLog.create({
+          data: { actorId: admin.id, action: 'round.start', target: `round:${round.id}`, metadata: { seconds, streamUrl } },
+        }),
+        // Set the global live stream URL so customers see the stream between rounds
+        setLiveStreamUrl(streamUrl, admin.id),
+        // Clear the schedule — we're live now, no countdown needed
+        setLiveSchedule(null, null, admin.id),
+      ])
       const startedPayload = {
         roundId: round.id,
         streamUrl: streamUrl,
@@ -254,6 +270,40 @@ export async function action({ request }: Route.ActionArgs) {
       return { ok: true }
     }
 
+    // These ops don't need a roundId — handle them before the roundId gate.
+    if (op === 'endLive') {
+      await setLiveStreamUrl(null, admin.id)
+      notifyPresenceLive('live:ended', {})
+      notifyAdmin('live:ended', {})
+      return { ok: true }
+    }
+
+    if (op === 'setSchedule') {
+      const dateStr  = String(fd.get('scheduleDate')  ?? '').trim()
+      const startStr = String(fd.get('scheduleStart') ?? '').trim()
+      const endStr   = String(fd.get('scheduleEnd')   ?? '').trim()
+      if (!dateStr || !startStr || !endStr) return { error: 'Date, start time and end time are required.' }
+      const start = new Date(`${dateStr}T${startStr}:00+07:00`)
+      const end   = new Date(`${dateStr}T${endStr}:00+07:00`)
+      if (isNaN(start.getTime()) || isNaN(end.getTime())) return { error: 'Invalid date/time values.' }
+      if (end <= start) return { error: 'End time must be after start time.' }
+      const startIso = start.toISOString()
+      const endIso   = end.toISOString()
+      await setLiveSchedule(startIso, endIso, admin.id)
+      const schedPayload = { start: startIso, end: endIso }
+      notifyPresenceLive('live:scheduled', schedPayload)
+      notifyAdmin('live:scheduled', schedPayload)
+      return { ok: true }
+    }
+
+    if (op === 'clearSchedule') {
+      await setLiveSchedule(null, null, admin.id)
+      const schedPayload = { start: null, end: null }
+      notifyPresenceLive('live:scheduled', schedPayload)
+      notifyAdmin('live:scheduled', schedPayload)
+      return { ok: true }
+    }
+
     const roundId = String(fd.get('roundId') ?? '')
     if (!roundId) return { error: 'roundId required' }
 
@@ -263,7 +313,10 @@ export async function action({ request }: Route.ActionArgs) {
     if (op === 'updateStream') {
       const rawStreamUrl = String(fd.get('streamUrl') ?? '').trim() || null
       const streamUrl = await normalizeStreamUrl(rawStreamUrl)
-      await prisma.gameRound.update({ where: { id: roundId }, data: { streamUrl } })
+      await Promise.all([
+        prisma.gameRound.update({ where: { id: roundId }, data: { streamUrl } }),
+        setLiveStreamUrl(streamUrl, admin.id),
+      ])
       // Broadcast so every open customer page revalidates and switches to the
       // new feed without waiting for a manual refresh.
       const payload = { roundId, streamUrl }
@@ -637,7 +690,7 @@ export async function action({ request }: Route.ActionArgs) {
 }
 
 export default function AdminLive() {
-  const { current, currentBets, history: initialHistory, historyHasMore: initialHasMore, lastStreamUrl } = useLoaderData<typeof loader>()
+  const { current, currentBets, history: initialHistory, historyHasMore: initialHasMore, lastStreamUrl, liveStreamUrl, schedule } = useLoaderData<typeof loader>()
   const navigation = useNavigation()
   const revalidator = useRevalidator()
   const loading = navigation.state !== 'idle'
@@ -745,7 +798,13 @@ export default function AdminLive() {
       </div>
 
       {/* ─── Stream — always rendered so it never disappears between rounds ─── */}
-      <LiveStreamPanel round={current} fallbackUrl={lastStreamUrl} loading={loading} />
+      <LiveStreamPanel
+        round={current}
+        fallbackUrl={lastStreamUrl}
+        liveStreamUrl={liveStreamUrl}
+        schedule={schedule}
+        loading={loading}
+      />
 
       {/* ─── Round controls (active round) or start-new-round form ─── */}
       {current ? (
@@ -1324,15 +1383,22 @@ type ResolveSummary = {
 // Always-visible stream area. Shows the active round's stream + URL update
 // form when a round is open; falls back to the last known stream URL when
 // no round is active so the admin keeps watching the camera between rounds.
+// When no round is active, the header shows End Live + Schedule buttons.
 function LiveStreamPanel({
   round,
   fallbackUrl,
+  liveStreamUrl,
+  schedule,
   loading,
 }: {
   round: CurrentRound | null
   fallbackUrl: string
+  liveStreamUrl: string | null
+  schedule: { start: string | null; end: string | null }
   loading: boolean
 }) {
+  const [showScheduleModal, setShowScheduleModal] = useState(false)
+
   // Live countdown for the active round's betting window.
   const closesAtMs = round?.bettingClosesAt ? new Date(round.bettingClosesAt).getTime() : null
   const [nowMs, setNowMs] = useState(() => Date.now())
@@ -1344,12 +1410,17 @@ function LiveStreamPanel({
   const remainingSeconds = closesAtMs ? Math.max(0, Math.ceil((closesAtMs - nowMs) / 1000)) : null
   const bettingExpired = remainingSeconds != null && remainingSeconds === 0
 
-  const url = round?.streamUrl ?? fallbackUrl ?? null
+  // Use liveStreamUrl (SystemSetting) as the between-rounds fallback, not the
+  // last DB round. After "End Live" liveStreamUrl is null, so both admin and
+  // customers see the schedule/offline card instead of a stale stream.
+  const url = round?.streamUrl ?? liveStreamUrl ?? null
+  const hasSchedule = !!schedule.start
+
   return (
     <div className="rounded-xl p-4" style={{ background: '#0f172a', border: '1px solid #1e1b4b' }}>
-      <div className="mb-2 flex items-center justify-between">
-        <span className="text-[10px] font-bold" style={{ color: '#a5b4fc' }}>LIVE STREAM</span>
-        <div className="flex items-center gap-2">
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <span className="text-[10px] font-bold shrink-0" style={{ color: '#a5b4fc' }}>LIVE STREAM</span>
+        <div className="flex flex-wrap items-center justify-end gap-2">
           {round && remainingSeconds != null && (
             <span
               className="rounded-full px-2.5 py-0.5 text-[10px] font-bold"
@@ -1363,15 +1434,50 @@ function LiveStreamPanel({
             </span>
           )}
           {round && <StatusPill status={round.status} />}
+
+          {/* When no active round: End Live + Schedule buttons */}
           {!round && (
-            <span className="rounded-full px-2.5 py-0.5 text-[10px] font-bold"
-              style={{ background: 'rgba(76,29,149,0.4)', color: '#c4b5fd', border: '1px solid #6d28d9' }}>
-              NO ACTIVE ROUND
-            </span>
+            <>
+              {/* End Live — always visible; disabled when no stream is active */}
+              <Form method="post" className="inline">
+                <input type="hidden" name="op" value="endLive" />
+                <button
+                  type="submit"
+                  disabled={loading || !liveStreamUrl}
+                  title={liveStreamUrl ? 'Stop the live stream for customers' : 'No live stream is currently active'}
+                  className="inline-flex items-center gap-1 rounded-md px-3 py-1 text-[10px] font-bold transition-opacity disabled:opacity-30"
+                  style={{ background: 'linear-gradient(135deg,#7f1d1d,#450a0a)', color: '#fca5a5', border: '1px solid #ef4444' }}
+                >
+                  {loading ? <Loader size={10} className="animate-spin" /> : <Square size={10} />}
+                  END LIVE
+                </button>
+              </Form>
+              <button
+                type="button"
+                onClick={() => setShowScheduleModal(true)}
+                className="inline-flex items-center gap-1 rounded-md px-3 py-1 text-[10px] font-bold"
+                style={{
+                  background: hasSchedule ? 'rgba(67,56,202,0.4)' : '#1e1b4b',
+                  color: hasSchedule ? '#a5b4fc' : '#818cf8',
+                  border: `1px solid ${hasSchedule ? '#4338ca' : '#312e81'}`,
+                }}
+              >
+                <CalendarClock size={10} />
+                {hasSchedule ? 'SCHEDULE ✓' : 'SCHEDULE'}
+              </button>
+              {!liveStreamUrl && (
+                <span className="rounded-full px-2.5 py-0.5 text-[10px] font-bold"
+                  style={{ background: 'rgba(76,29,149,0.4)', color: '#c4b5fd', border: '1px solid #6d28d9' }}>
+                  NO ACTIVE ROUND
+                </span>
+              )}
+            </>
           )}
         </div>
       </div>
-      <StreamEmbed url={url} />
+
+      {url ? <StreamEmbed url={url} /> : <AdminOfflineCard schedule={schedule} />}
+
       {round && (
         <Form method="post" className="mt-3 flex flex-wrap items-center gap-2">
           <input type="hidden" name="op" value="updateStream" />
@@ -1393,6 +1499,195 @@ function LiveStreamPanel({
           </button>
         </Form>
       )}
+
+      {/* Schedule modal */}
+      {showScheduleModal && (
+        <ScheduleModal
+          schedule={schedule}
+          loading={loading}
+          onClose={() => setShowScheduleModal(false)}
+        />
+      )}
+    </div>
+  )
+}
+
+// Shown in the stream area when END LIVE has been clicked (liveStreamUrl = null).
+// Mirrors what customers see: schedule + countdown, or an offline placeholder.
+function AdminOfflineCard({ schedule }: { schedule: { start: string | null; end: string | null } }) {
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(id)
+  }, [])
+
+  if (!schedule.start) {
+    return (
+      <div className="flex aspect-video flex-col items-center justify-center gap-3 rounded-lg"
+        style={{ background: '#0a0014', border: '1px dashed #4338ca' }}>
+        <span style={{ fontSize: 40 }}>📴</span>
+        <p className="text-xs font-semibold" style={{ color: '#6d28d9' }}>Live ended — no schedule set</p>
+        <p className="text-[10px]" style={{ color: '#475569' }}>Customers see an offline screen. Use SCHEDULE to set the next broadcast time.</p>
+      </div>
+    )
+  }
+
+  const startMs = new Date(schedule.start).getTime()
+  const endMs   = schedule.end ? new Date(schedule.end).getTime() : null
+  const diffMs  = startMs - now
+
+  const totalSec = Math.max(0, Math.floor(diffMs / 1000))
+  const days  = Math.floor(totalSec / 86400)
+  const hours = Math.floor((totalSec % 86400) / 3600)
+  const mins  = Math.floor((totalSec % 3600) / 60)
+  const secs  = totalSec % 60
+  const units = [{ l: 'Days', v: days }, { l: 'Hrs', v: hours }, { l: 'Min', v: mins }, { l: 'Sec', v: secs }]
+
+  const isPast    = endMs !== null && now > endMs
+  const isLive    = diffMs <= 0 && !isPast
+
+  return (
+    <div className="flex aspect-video flex-col items-center justify-center gap-4 rounded-lg"
+      style={{ background: '#0a0014', border: '1px dashed #4338ca' }}>
+      <span style={{ fontSize: 36 }}>{isPast ? '📴' : isLive ? '🔴' : '📅'}</span>
+      <div className="text-center">
+        <p className="text-xs font-bold" style={{ color: '#fde68a' }}>
+          {isPast ? 'Broadcast ended' : isLive ? 'Broadcast window — start the round!' : 'Next live broadcast'}
+        </p>
+        <p className="mt-0.5 text-[10px]" style={{ color: '#818cf8' }}>
+          {fmtGMT7(schedule.start!)}{schedule.end ? ` — ${fmtGMT7(schedule.end, { hour: '2-digit', minute: '2-digit', hour12: false })}` : ''} (GMT+7)
+        </p>
+      </div>
+      {!isPast && !isLive && (
+        <div className="flex gap-3">
+          {units.map(({ l, v }) => (
+            <div key={l} className="flex flex-col items-center">
+              <span className="rounded-lg px-3 py-1.5 text-lg font-bold tabular-nums"
+                style={{ background: 'rgba(76,29,149,0.5)', color: '#fde68a', minWidth: 48, textAlign: 'center' }}>
+                {String(v).padStart(2, '0')}
+              </span>
+              <span className="mt-0.5 text-[9px]" style={{ color: '#818cf8' }}>{l}</span>
+            </div>
+          ))}
+        </div>
+      )}
+      <p className="text-[10px]" style={{ color: '#475569' }}>Customers see this countdown. Start a round to go live.</p>
+    </div>
+  )
+}
+
+function ScheduleModal({
+  schedule,
+  loading,
+  onClose,
+}: {
+  schedule: { start: string | null; end: string | null }
+  loading: boolean
+  onClose: () => void
+}) {
+  const hasSchedule = !!schedule.start
+  return (
+    <div
+      className="fixed inset-0 z-[200] flex items-center justify-center p-4"
+      style={{ background: 'rgba(0,0,0,0.75)' }}
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-sm rounded-2xl p-5"
+        style={{ background: '#0f172a', border: '1px solid #4338ca' }}
+        onClick={e => e.stopPropagation()}
+      >
+        <div className="mb-4 flex items-center justify-between">
+          <span className="inline-flex items-center gap-2 text-sm font-bold" style={{ color: '#a5b4fc' }}>
+            <CalendarClock size={14} /> NEXT LIVE SCHEDULE
+          </span>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-full p-1"
+            style={{ color: '#a5b4fc', background: '#1e1b4b' }}
+          >
+            <X size={14} />
+          </button>
+        </div>
+
+        {/* Current schedule */}
+        {hasSchedule && (
+          <div className="mb-4 rounded-lg px-3 py-2.5" style={{ background: '#1e1b4b', border: '1px solid #312e81' }}>
+            <div className="text-[10px] font-bold mb-1" style={{ color: '#818cf8' }}>CURRENT</div>
+            <div className="text-xs font-semibold" style={{ color: '#fde68a' }}>
+              {fmtGMT7(schedule.start!)} — {schedule.end ? fmtGMT7(schedule.end, { hour: '2-digit', minute: '2-digit', hour12: false }) : '?'}
+            </div>
+            <div className="text-[10px] mt-0.5" style={{ color: '#818cf8' }}>GMT+7 (Laos)</div>
+          </div>
+        )}
+
+        {/* Set schedule form */}
+        <Form method="post" className="flex flex-col gap-3" onSubmit={onClose}>
+          <input type="hidden" name="op" value="setSchedule" />
+
+          <div className="flex flex-col gap-1">
+            <label className="text-[10px] font-semibold" style={{ color: '#a5b4fc' }}>DATE (GMT+7)</label>
+            <input
+              name="scheduleDate"
+              type="date"
+              defaultValue={schedule.start ? isoToGMT7DateInput(schedule.start) : ''}
+              required
+              className="rounded-lg px-3 py-2 text-xs outline-none"
+              style={{ background: '#1e1b4b', color: '#fde68a', border: '1px solid #4338ca' }}
+            />
+          </div>
+
+          <div className="grid grid-cols-2 gap-2">
+            <div className="flex flex-col gap-1">
+              <label className="text-[10px] font-semibold" style={{ color: '#a5b4fc' }}>START (GMT+7)</label>
+              <input
+                name="scheduleStart"
+                type="time"
+                defaultValue={schedule.start ? isoToGMT7TimeInput(schedule.start) : ''}
+                required
+                className="rounded-lg px-3 py-2 text-xs outline-none"
+                style={{ background: '#1e1b4b', color: '#fde68a', border: '1px solid #4338ca' }}
+              />
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className="text-[10px] font-semibold" style={{ color: '#a5b4fc' }}>END (GMT+7)</label>
+              <input
+                name="scheduleEnd"
+                type="time"
+                defaultValue={schedule.end ? isoToGMT7TimeInput(schedule.end) : ''}
+                required
+                className="rounded-lg px-3 py-2 text-xs outline-none"
+                style={{ background: '#1e1b4b', color: '#fde68a', border: '1px solid #4338ca' }}
+              />
+            </div>
+          </div>
+
+          <button
+            type="submit"
+            disabled={loading}
+            className="inline-flex items-center justify-center gap-1.5 rounded-xl py-2.5 text-xs font-bold disabled:opacity-50"
+            style={{ background: 'linear-gradient(135deg,#4338ca,#312e81)', color: '#fff', border: '1px solid #818cf8' }}
+          >
+            {loading ? <Loader size={12} className="animate-spin" /> : <Check size={12} />}
+            SAVE SCHEDULE
+          </button>
+        </Form>
+
+        {hasSchedule && (
+          <Form method="post" className="mt-2" onSubmit={onClose}>
+            <input type="hidden" name="op" value="clearSchedule" />
+            <button
+              type="submit"
+              disabled={loading}
+              className="w-full rounded-xl py-2 text-xs font-bold disabled:opacity-50"
+              style={{ background: 'rgba(127,29,29,0.4)', color: '#fca5a5', border: '1px solid rgba(239,68,68,0.4)' }}
+            >
+              Clear Schedule
+            </button>
+          </Form>
+        )}
+      </div>
     </div>
   )
 }
@@ -1638,6 +1933,28 @@ function HistoryRow({ r }: { r: HistoryRound }) {
     </div>
   )
 }
+
+// Formats a UTC ISO string as date + time in GMT+7 for display.
+function fmtGMT7(iso: string, opts?: Intl.DateTimeFormatOptions): string {
+  return new Date(iso).toLocaleString('en-GB', {
+    timeZone: 'Asia/Bangkok',
+    day: '2-digit', month: '2-digit', year: 'numeric',
+    hour: '2-digit', minute: '2-digit', hour12: false,
+    ...opts,
+  })
+}
+
+// Returns the local-time value for a <input type="date"> and <input type="time">
+// pre-filled from a UTC ISO string, displayed in GMT+7.
+function isoToGMT7DateInput(iso: string): string {
+  // e.g. "2026-05-19"
+  return new Date(iso).toLocaleDateString('en-CA', { timeZone: 'Asia/Bangkok' })
+}
+function isoToGMT7TimeInput(iso: string): string {
+  // e.g. "20:00"
+  return new Date(iso).toLocaleTimeString('en-GB', { timeZone: 'Asia/Bangkok', hour: '2-digit', minute: '2-digit', hour12: false })
+}
+
 
 function StatusPill({ status }: { status: string }) {
   const map: Record<string, { bg: string; color: string }> = {

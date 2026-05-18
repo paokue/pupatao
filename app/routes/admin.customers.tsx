@@ -1,6 +1,6 @@
 import { useState } from 'react'
-import { Form, useLoaderData, useNavigation, useRevalidator, useSearchParams, useSubmit } from 'react-router'
-import { Loader, Lock, LockOpen, Search, ShieldOff, ShieldCheck as ShieldCheckIcon } from 'lucide-react'
+import { Form, useFetcher, useLoaderData, useNavigation, useRevalidator, useSearchParams, useSubmit } from 'react-router'
+import { Eye, EyeOff, KeyRound, Loader, Lock, LockOpen, Search, ShieldOff, ShieldCheck as ShieldCheckIcon, X } from 'lucide-react'
 import type { Route } from './+types/admin.customers'
 import { requireAdmin } from '~/lib/admin-auth.server'
 import { prisma } from '~/lib/prisma.server'
@@ -10,6 +10,10 @@ import { ConfirmDialog } from '~/components/ConfirmDialog'
 
 const PAGE_SIZES = [10, 30, 50, 100, 200, 500] as const
 
+const PHASE_VALUES = ['NORMAL', 'PHASE_A', 'PHASE_B', 'PHASE_C', 'ADMIN_LOCKED'] as const
+type PhaseFilter = 'ALL' | typeof PHASE_VALUES[number]
+type StatusFilter = 'ALL' | 'ACTIVE' | 'SUSPENDED'
+
 export async function loader({ request }: Route.LoaderArgs) {
   await requireAdmin(request)
   const url = new URL(request.url)
@@ -17,16 +21,22 @@ export async function loader({ request }: Route.LoaderArgs) {
   const page = Math.max(1, parseInt(url.searchParams.get('page') ?? '1', 10) || 1)
   const pageSizeRaw = parseInt(url.searchParams.get('pageSize') ?? '30', 10)
   const pageSize = (PAGE_SIZES as readonly number[]).includes(pageSizeRaw) ? pageSizeRaw : 30
+  const phaseParam = url.searchParams.get('phase') ?? 'ALL'
+  const phase: PhaseFilter = (PHASE_VALUES as readonly string[]).includes(phaseParam) ? phaseParam as PhaseFilter : 'ALL'
+  const statusParam = url.searchParams.get('status') ?? 'ALL'
+  const statusFilter: StatusFilter = statusParam === 'ACTIVE' ? 'ACTIVE' : statusParam === 'SUSPENDED' ? 'SUSPENDED' : 'ALL'
 
-  const where = q
-    ? {
+  const where = {
+    ...(q ? {
       OR: [
         { tel: { contains: q, mode: 'insensitive' as const } },
         { firstName: { contains: q, mode: 'insensitive' as const } },
         { lastName: { contains: q, mode: 'insensitive' as const } },
       ],
-    }
-    : {}
+    } : {}),
+    ...(phase !== 'ALL' ? { selfPlayPhase: phase } : {}),
+    ...(statusFilter !== 'ALL' ? { status: statusFilter } : {}),
+  }
 
   // Load all matching users, then sort by latest deposit/withdraw date.
   // Pagination is applied after sorting since MongoDB/Prisma can't ORDER BY
@@ -63,6 +73,8 @@ export async function loader({ request }: Route.LoaderArgs) {
 
   return {
     q,
+    phase,
+    statusFilter,
     page,
     total,
     pageSize,
@@ -127,6 +139,20 @@ export async function action({ request }: Route.ActionArgs) {
     return { ok: true }
   }
 
+  if (op === 'resetPassword') {
+    const newPassword = String(fd.get('newPassword') ?? '').trim()
+    if (!newPassword || newPassword.length < 6) {
+      return { ok: false, error: 'Password must be at least 6 characters.' }
+    }
+    const { hashPassword } = await import('~/lib/auth.server')
+    const passwordHash = await hashPassword(newPassword)
+    await prisma.user.update({ where: { id: userId }, data: { passwordHash } })
+    await prisma.auditLog.create({
+      data: { actorId: admin.id, action: 'user.password_reset', target: `user:${userId}` },
+    })
+    return { ok: true, op: 'resetPassword' }
+  }
+
   return { error: 'Unknown op' }
 }
 
@@ -144,6 +170,7 @@ export default function AdminCustomers() {
   // Pending action target — populated when admin clicks suspend/activate;
   // cleared when the modal closes or the action settles.
   const [pending, setPending] = useState<CustomerRow | null>(null)
+  const [passwordModal, setPasswordModal] = useState<CustomerRow | null>(null)
 
   // The toast for "new customer registered" is fired by the parent admin layout;
   // here we just refresh the list so the new row appears at the top.
@@ -164,11 +191,75 @@ export default function AdminCustomers() {
     submit(next, { method: 'get' })
   }
 
+  function setPhase(p: PhaseFilter) {
+    const next = new URLSearchParams(params)
+    if (p === 'ALL') next.delete('phase')
+    else next.set('phase', p)
+    next.delete('page')
+    submit(next, { method: 'get' })
+  }
+
+  function setStatus(s: StatusFilter) {
+    const next = new URLSearchParams(params)
+    if (s === 'ALL') next.delete('status')
+    else next.set('status', s)
+    next.delete('page')
+    submit(next, { method: 'get' })
+  }
+
   return (
     <div className="flex flex-col gap-4">
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-bold" style={{ color: '#fde68a' }}>Customers</h1>
         <span className="text-xs" style={{ color: '#a5b4fc' }}>{data.total.toLocaleString()} total</span>
+      </div>
+
+      {/* Phase + Status filter pills — same row, phase left / status right */}
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex flex-wrap gap-1.5">
+          {([
+            { key: 'ALL',          label: 'All',      color: '#a5b4fc' },
+            { key: 'NORMAL',       label: 'Normal',   color: '#4ade80' },
+            { key: 'PHASE_A',      label: 'Phase A',  color: '#fbbf24' },
+            { key: 'PHASE_B',      label: 'Phase B',  color: '#fb923c' },
+            { key: 'PHASE_C',      label: 'Phase C',  color: '#f87171' },
+            { key: 'ADMIN_LOCKED', label: 'Locked',   color: '#fca5a5' },
+          ] as { key: PhaseFilter; label: string; color: string }[]).map(({ key, label, color }) => {
+            const active = data.phase === key
+            return (
+              <button key={key} type="button" onClick={() => setPhase(key)}
+                className="rounded-md px-3 py-1 text-xs font-bold"
+                style={{
+                  background: active ? 'rgba(30,27,75,1)' : 'transparent',
+                  color: active ? color : '#818cf8',
+                  border: `1px solid ${active ? '#4338ca' : '#1e1b4b'}`,
+                }}>
+                {label}
+              </button>
+            )
+          })}
+        </div>
+
+        <div className="flex gap-1.5">
+          {([
+            { key: 'ALL',       label: 'All',       color: '#a5b4fc' },
+            { key: 'ACTIVE',    label: 'Active',    color: '#4ade80' },
+            { key: 'SUSPENDED', label: 'Suspended', color: '#fde68a' },
+          ] as { key: StatusFilter; label: string; color: string }[]).map(({ key, label, color }) => {
+            const active = data.statusFilter === key
+            return (
+              <button key={key} type="button" onClick={() => setStatus(key)}
+                className="rounded-md px-3 py-1 text-xs font-bold"
+                style={{
+                  background: active ? 'rgba(30,27,75,1)' : 'transparent',
+                  color: active ? color : '#818cf8',
+                  border: `1px solid ${active ? '#4338ca' : '#1e1b4b'}`,
+                }}>
+                {label}
+              </button>
+            )
+          })}
+        </div>
       </div>
 
       <div className="flex items-center gap-2">
@@ -181,6 +272,8 @@ export default function AdminCustomers() {
           {PAGE_SIZES.map(s => <option key={s} value={s}>{s} / page</option>)}
         </select>
         <Form method="get" className="flex flex-1 items-center gap-2">
+          <input type="hidden" name="phase"  value={data.phase === 'ALL' ? '' : data.phase} />
+          <input type="hidden" name="status" value={data.statusFilter === 'ALL' ? '' : data.statusFilter} />
           <div className="relative flex-1">
             <Search size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2" style={{ color: '#818cf8' }} />
             <input
@@ -205,7 +298,7 @@ export default function AdminCustomers() {
       <div className="flex flex-col gap-2 md:hidden">
         {data.users.length === 0 && <EmptyState />}
         {data.users.map((u, i) => (
-          <CustomerCard key={u.id} u={u} rowNum={(data.page - 1) * data.pageSize + i + 1} onAction={setPending} />
+          <CustomerCard key={u.id} u={u} rowNum={(data.page - 1) * data.pageSize + i + 1} onAction={setPending} onResetPassword={setPasswordModal} />
         ))}
       </div>
 
@@ -250,7 +343,19 @@ export default function AdminCustomers() {
                   </div>
                 </td>
                 <td className="px-3 py-2 text-right">
-                  <ActionButton u={u} onClick={() => setPending(u)} disabled={loading} />
+                  <div className="flex items-center justify-end gap-1.5">
+                    <button
+                      type="button"
+                      title="Reset password"
+                      onClick={() => setPasswordModal(u)}
+                      disabled={loading}
+                      className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[10px] font-bold disabled:opacity-50"
+                      style={{ background: 'rgba(67,56,202,0.25)', color: '#a5b4fc', border: '1px solid #4338ca' }}
+                    >
+                      <KeyRound size={10} /> PW
+                    </button>
+                    <ActionButton u={u} onClick={() => setPending(u)} disabled={loading} />
+                  </div>
                 </td>
               </tr>
             ))}
@@ -280,6 +385,10 @@ export default function AdminCustomers() {
         </div>
       )}
 
+      {passwordModal && (
+        <ResetPasswordModal user={passwordModal} onClose={() => setPasswordModal(null)} />
+      )}
+
       {pending && (
         <ConfirmDialog
           open={!!pending}
@@ -302,7 +411,7 @@ export default function AdminCustomers() {
   )
 }
 
-function CustomerCard({ u, onAction, rowNum }: { u: CustomerRow; onAction: (u: CustomerRow) => void; rowNum: number }) {
+function CustomerCard({ u, onAction, onResetPassword, rowNum }: { u: CustomerRow; onAction: (u: CustomerRow) => void; onResetPassword: (u: CustomerRow) => void; rowNum: number }) {
   return (
     <div
       className="rounded-xl p-3"
@@ -330,12 +439,22 @@ function CustomerCard({ u, onAction, rowNum }: { u: CustomerRow; onAction: (u: C
           <div className="font-semibold" style={{ color: '#a5b4fc' }}>{u.demo.toLocaleString()}</div>
         </div>
       </div>
-      <div className="mt-2 flex items-center justify-between">
+      <div className="mt-2 flex items-center justify-between gap-2">
         <div className="flex items-center gap-1.5">
           <PhaseBadge phase={u.selfPlayPhase} />
           <GameLockButton u={u} onRevalidate={() => window.location.reload()} />
         </div>
-        <ActionButton u={u} onClick={() => onAction(u)} />
+        <div className="flex items-center gap-1.5">
+          <button
+            type="button"
+            onClick={() => onResetPassword(u)}
+            className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[10px] font-bold"
+            style={{ background: 'rgba(67,56,202,0.25)', color: '#a5b4fc', border: '1px solid #4338ca' }}
+          >
+            <KeyRound size={10} /> PW
+          </button>
+          <ActionButton u={u} onClick={() => onAction(u)} />
+        </div>
       </div>
     </div>
   )
@@ -409,6 +528,108 @@ function GameLockButton({ u, disabled, onRevalidate }: { u: CustomerRow; disable
       {isLocked ? <LockOpen size={10} /> : <Lock size={10} />}
       {isLocked ? 'Unlock' : 'Lock'}
     </button>
+  )
+}
+
+function ResetPasswordModal({ user, onClose }: { user: CustomerRow; onClose: () => void }) {
+  const fetcher = useFetcher<{ ok?: boolean; error?: string }>()
+  const [pw, setPw] = useState('')
+  const [show, setShow] = useState(false)
+  const submitting = fetcher.state !== 'idle'
+  const name = [user.firstName, user.lastName].filter(Boolean).join(' ') || user.tel
+
+  // Close + show toast on success
+  const prevData = useState<typeof fetcher.data>(undefined)
+  if (fetcher.state === 'idle' && fetcher.data?.ok && prevData[0] !== fetcher.data) {
+    prevData[1](fetcher.data)
+    // Defer to avoid calling setState during render
+    setTimeout(() => onClose(), 0)
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-[200] flex items-center justify-center p-6"
+      style={{ background: 'rgba(0,0,0,0.8)' }}
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-sm rounded-2xl p-6"
+        style={{ background: '#0f172a', border: '2px solid #4338ca' }}
+        onClick={e => e.stopPropagation()}
+      >
+        <div className="mb-4 flex items-center justify-between">
+          <div>
+            <div className="flex items-center gap-2 text-sm font-bold" style={{ color: '#fde68a' }}>
+              <KeyRound size={14} /> Reset Password
+            </div>
+            <div className="mt-0.5 text-xs" style={{ color: '#a5b4fc' }}>{name} · {user.tel}</div>
+          </div>
+          <button type="button" onClick={onClose}
+            className="flex h-8 w-8 items-center justify-center rounded-full"
+            style={{ background: '#1e1b4b', color: '#a5b4fc', border: '1px solid #4338ca' }}>
+            <X size={14} />
+          </button>
+        </div>
+
+        <fetcher.Form method="post" className="flex flex-col gap-3">
+          <input type="hidden" name="op" value="resetPassword" />
+          <input type="hidden" name="userId" value={user.id} />
+
+          <div className="flex flex-col gap-1">
+            <label className="text-[10px] font-bold" style={{ color: '#a5b4fc' }}>NEW PASSWORD</label>
+            <div className="relative">
+              <input
+                name="newPassword"
+                type={show ? 'text' : 'password'}
+                value={pw}
+                onChange={e => setPw(e.target.value)}
+                placeholder="Min. 6 characters"
+                autoComplete="new-password"
+                className="w-full rounded-lg px-3 py-2.5 pr-10 text-sm outline-none"
+                style={{ background: '#1e1b4b', color: '#fde68a', border: '1px solid #4338ca' }}
+              />
+              <button
+                type="button"
+                onClick={() => setShow(v => !v)}
+                className="absolute right-3 top-1/2 -translate-y-1/2"
+                style={{ color: '#818cf8' }}
+                tabIndex={-1}
+              >
+                {show ? <EyeOff size={14} /> : <Eye size={14} />}
+              </button>
+            </div>
+          </div>
+
+          {fetcher.data?.error && (
+            <div className="rounded-lg px-3 py-2 text-xs" style={{ background: 'rgba(220,38,38,0.15)', color: '#f87171', border: '1px solid #f87171' }}>
+              {fetcher.data.error}
+            </div>
+          )}
+          {fetcher.data?.ok && (
+            <div className="rounded-lg px-3 py-2 text-xs" style={{ background: 'rgba(22,163,74,0.15)', color: '#4ade80', border: '1px solid #4ade80' }}>
+              Password updated successfully.
+            </div>
+          )}
+
+          <div className="mt-1 flex gap-3">
+            <button type="button" onClick={onClose}
+              className="flex-1 rounded-xl py-2.5 text-sm font-bold"
+              style={{ background: '#1e1b4b', color: '#a5b4fc', border: '1px solid #4338ca' }}>
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={submitting || pw.length < 6}
+              className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-xl py-2.5 text-sm font-bold disabled:opacity-40"
+              style={{ background: 'linear-gradient(135deg,#4338ca,#312e81)', color: '#fff', border: '1px solid #818cf8' }}
+            >
+              {submitting ? <Loader size={14} className="animate-spin" /> : <KeyRound size={14} />}
+              {submitting ? 'Saving…' : 'Set Password'}
+            </button>
+          </div>
+        </fetcher.Form>
+      </div>
+    </div>
   )
 }
 

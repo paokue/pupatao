@@ -5,6 +5,8 @@ import {
   userChannel,
   type BetPlacedPayload,
   type CustomerRegisteredPayload,
+  type LiveEndedPayload,
+  type LiveScheduledPayload,
   type RoundDicePayload,
   type RoundResolvedPayload,
   type RoundSettledPayload,
@@ -52,6 +54,8 @@ export function notifyAdmin(event: 'round:resolved', payload: RoundResolvedPaylo
 export function notifyAdmin(event: 'round:started', payload: RoundStartedPayload): Promise<void>
 export function notifyAdmin(event: 'round:dice', payload: RoundDicePayload): Promise<void>
 export function notifyAdmin(event: 'round:streamUpdated', payload: RoundStreamUpdatedPayload): Promise<void>
+export function notifyAdmin(event: 'live:ended', payload: LiveEndedPayload): Promise<void>
+export function notifyAdmin(event: 'live:scheduled', payload: LiveScheduledPayload): Promise<void>
 export function notifyAdmin(event: string, payload: unknown): Promise<void> {
   return triggerSafe(ADMIN_CHANNEL, event, payload)
 }
@@ -64,6 +68,8 @@ export function notifyPresenceLive(event: 'round:started', payload: RoundStarted
 export function notifyPresenceLive(event: 'round:resolved', payload: RoundResolvedPayload): Promise<void>
 export function notifyPresenceLive(event: 'round:dice', payload: RoundDicePayload): Promise<void>
 export function notifyPresenceLive(event: 'round:streamUpdated', payload: RoundStreamUpdatedPayload): Promise<void>
+export function notifyPresenceLive(event: 'live:ended', payload: LiveEndedPayload): Promise<void>
+export function notifyPresenceLive(event: 'live:scheduled', payload: LiveScheduledPayload): Promise<void>
 export function notifyPresenceLive(event: string, payload: unknown): Promise<void> {
   return triggerSafe(PRESENCE_LIVE, event, payload)
 }
