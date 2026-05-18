@@ -77,7 +77,7 @@ export async function loader({ request }: Route.LoaderArgs) {
       skip: (page - 1) * pageSize,
       take: pageSize,
       include: {
-        user: { select: { id: true, tel: true, selfPlayPhase: true } },
+        user: { select: { id: true, tel: true, firstName: true, lastName: true, selfPlayPhase: true } },
         round: { select: { mode: true, status: true, dice1: true, dice2: true, dice3: true, diceSum: true } },
       },
     }),
@@ -101,6 +101,7 @@ export async function loader({ request }: Route.LoaderArgs) {
       user: {
         id: b.user.id,
         tel: b.user.tel,
+        name: [b.user.firstName, b.user.lastName].filter(Boolean).join(' ') || null,
         selfPlayPhase: b.user.selfPlayPhase as string,
       },
       round: b.round
@@ -370,9 +371,10 @@ export default function AdminPlayHistory() {
                         title={isLocked ? 'LOCKED' : undefined}
                       >
                         {b.user.tel}
+                        {isLocked && <span className="ml-1 text-[9px]">🔒</span>}
                       </a>
-                      {isLocked && (
-                        <span className="ml-1 text-[9px]" style={{ color: '#f87171' }}>🔒</span>
+                      {b.user.name && (
+                        <div className="text-[10px]" style={{ color: '#818cf8' }}>{b.user.name}</div>
                       )}
                     </td>
                     <td className="px-3 py-2"><BetDescription b={b} /></td>
@@ -528,9 +530,12 @@ function BetCard({ b, rowNum, onView, onLock }: { b: Bet; rowNum: number; onView
           <div className="flex items-center gap-1.5">
             <span className="text-[10px] font-bold tabular-nums" style={{ color: '#64748b' }}>#{rowNum}</span>
             <a href={`/admin/customers?q=${encodeURIComponent(b.user.tel)}`}
-              className="text-sm font-semibold hover:underline"
+              className="hover:underline"
               style={{ color: isLocked ? '#fca5a5' : '#fde68a' }}>
-              {b.user.tel}{isLocked ? ' 🔒' : ''}
+              <div className="text-sm font-semibold">{b.user.tel}{isLocked ? ' 🔒' : ''}</div>
+              {b.user.name && (
+                <div className="text-[10px]" style={{ color: '#818cf8' }}>{b.user.name}</div>
+              )}
             </a>
           </div>
           <div className="mt-0.5 text-xs" style={{ color: '#818cf8' }}>{new Date(b.createdAt).toLocaleString()}</div>
