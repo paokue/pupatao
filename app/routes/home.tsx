@@ -1643,12 +1643,23 @@ export default function FishPrawnCrabGame() {
       setPendingCell(null)
       return
     }
-    if (currentPairBets.length === 0 && currentRangeBets.length === 0 && currentBets.length === 0) return
+    if (currentPairBets.length === 0 && currentRangeBets.length === 0 && currentBets.length === 0 && currentSumBets.length === 0) return
     ensureBgMusic()
     soundEnabled && playClick()
     if (currentPairBets.length > 0) {
       const last = currentPairBets[currentPairBets.length - 1]
       setCurrentPairBets(prev => {
+        const next = [...prev]
+        if (last.amount > selectedChip) {
+          next[next.length - 1] = { ...last, amount: last.amount - selectedChip }
+        } else {
+          next.pop()
+        }
+        return next
+      })
+    } else if (currentSumBets.length > 0) {
+      const last = currentSumBets[currentSumBets.length - 1]
+      setCurrentSumBets(prev => {
         const next = [...prev]
         if (last.amount > selectedChip) {
           next[next.length - 1] = { ...last, amount: last.amount - selectedChip }
@@ -1681,7 +1692,7 @@ export default function FishPrawnCrabGame() {
       })
     }
     setBalance(prev => prev + selectedChip)
-  }, [pendingCell, currentBets, currentRangeBets, currentPairBets, selectedChip, ensureBgMusic, soundEnabled])
+  }, [pendingCell, currentBets, currentRangeBets, currentPairBets, currentSumBets, selectedChip, ensureBgMusic, soundEnabled])
 
   // Apply the outcome of a roll (random or live-entered). Payout + state reset.
   // Multipliers come from the server-supplied payout config so the optimistic

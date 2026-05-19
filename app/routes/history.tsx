@@ -249,21 +249,33 @@ export default function HistoryPage() {
           </div>
           <div className="grid grid-cols-3 gap-3">
             <div className="text-center">
-              <div className="text-[10px] font-bold " style={{ color: '#a78bfa' }}>{t('history.totalGames')}</div>
+              <div className="text-[10px] font-bold" style={{ color: '#a78bfa' }}>{t('history.totalGames')}</div>
               <div className="mt-1 text-2xl font-bold" style={{ color: '#fde68a' }}>{stats.totalRounds.toLocaleString()}</div>
             </div>
             <div className="border-x text-center" style={{ borderColor: '#6d28d9' }}>
-              <div className="text-[10px] font-bold " style={{ color: '#a78bfa' }}>{t('history.winRate')}</div>
+              <div className="text-[10px] font-bold" style={{ color: '#a78bfa' }}>{t('history.winRate')}</div>
               <div className="mt-1 text-2xl font-bold" style={{ color: '#4ade80' }}>{stats.winRate}%</div>
             </div>
-            <div className="text-center">
-              <div className="text-[10px] font-bold " style={{ color: '#a78bfa' }}>{t('history.netPL')}</div>
+            <div className="text-center min-w-0">
+              <div className="text-[10px] font-bold" style={{ color: '#a78bfa' }}>{t('history.netPL')}</div>
               <div
-                className="mt-1 text-2xl font-bold"
-                style={{ color: stats.netPL > 0 ? '#4ade80' : stats.netPL < 0 ? '#f87171' : '#fde68a' }}
+                className="mt-1 font-bold leading-tight"
+                style={{
+                  color: stats.netPL > 0 ? '#4ade80' : stats.netPL < 0 ? '#f87171' : '#fde68a',
+                  fontSize: Math.abs(stats.netPL) >= 1_000_000_000 ? '0.85rem'
+                    : Math.abs(stats.netPL) >= 100_000_000 ? '1rem'
+                    : Math.abs(stats.netPL) >= 10_000_000 ? '1.15rem'
+                    : '1.5rem',
+                }}
+                title={`${stats.netPL > 0 ? '+' : ''}${stats.netPL.toLocaleString()}`}
               >
-                {stats.netPL > 0 ? '+' : ''}{stats.netPL.toLocaleString()}
+                {stats.netPL > 0 ? '+' : ''}{fmtStatNumber(stats.netPL)}
               </div>
+              {Math.abs(stats.netPL) >= 10_000_000 && (
+                <div className="text-[9px]" style={{ color: '#6d28d9' }}>
+                  {stats.netPL > 0 ? '+' : ''}{stats.netPL.toLocaleString()}
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -358,6 +370,17 @@ export default function HistoryPage() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+
+// Compact format for stats: prevents very large numbers from breaking the 3-col grid.
+// Shows full number as a tooltip; abbreviated in the cell.
+function fmtStatNumber(n: number): string {
+  const abs = Math.abs(n)
+  const sign = n < 0 ? '-' : ''
+  if (abs >= 1_000_000_000) return `${sign}${(abs / 1_000_000_000).toFixed(2)}B`
+  if (abs >= 1_000_000)     return `${sign}${(abs / 1_000_000).toFixed(2)}M`
+  if (abs >= 1_000)         return `${sign}${(abs / 1_000).toFixed(1)}K`
+  return n.toLocaleString()
+}
 
 function FilterSelect({
   label,
