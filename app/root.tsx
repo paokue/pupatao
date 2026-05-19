@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import {
   Links,
   Meta,
@@ -153,6 +153,7 @@ export default function App({ loaderData }: Route.ComponentProps) {
       {loaderData.user && loaderData.competitionEnabled && (
         <CompetitionBanner />
       )}
+      <PWAInstallPrompt />
       <Outlet
         context={{
           user: loaderData.user,
@@ -211,6 +212,146 @@ function CompetitionBanner() {
           className="shrink-0 rounded-full p-0.5" style={{ color: '#818cf8' }}>
           <X size={14} />
         </button>
+      </div>
+    </div>
+  )
+}
+
+// PWA install prompt — shown once per week (localStorage) to users who haven't
+// installed the app yet. Android gets the native browser prompt; iOS/iPhone
+// gets a step-by-step instruction card (Safari doesn't support beforeinstallprompt).
+function PWAInstallPrompt() {
+  const [show, setShow] = useState(false)
+  const [isIos, setIsIos] = useState(false)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const [deferredPrompt, setDeferredPrompt] = useState<any>(null)
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    // Already installed as PWA (standalone mode) — never prompt
+    const isStandalone =
+      window.matchMedia('(display-mode: standalone)').matches ||
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (navigator as any).standalone === true
+    if (isStandalone) return
+
+    // Dismissed earlier in this browser session — don't re-show until next visit
+    try {
+      if (sessionStorage.getItem('pwa_prompt_dismissed') === '1') return
+    } catch { /* sessionStorage unavailable */ }
+
+    const ios = /iPad|iPhone|iPod/i.test(navigator.userAgent) &&
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      !(window as any).MSStream
+    setIsIos(ios)
+
+    if (ios) {
+      // iOS Safari doesn't fire beforeinstallprompt — show instructions after delay
+      const t = setTimeout(() => setShow(true), 5000)
+      return () => clearTimeout(t)
+    }
+
+    // Android / Chrome — wait for the browser's deferred install event
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const handler = (e: any) => {
+      e.preventDefault()
+      setDeferredPrompt(e)
+      setTimeout(() => setShow(true), 3000)
+    }
+    window.addEventListener('beforeinstallprompt', handler)
+    return () => window.removeEventListener('beforeinstallprompt', handler)
+  }, [])
+
+  function dismiss() {
+    // Suppress for this browser session only — shows again on next visit
+    try { sessionStorage.setItem('pwa_prompt_dismissed', '1') } catch { /* ignore */ }
+    setShow(false)
+  }
+
+  async function installAndroid() {
+    if (!deferredPrompt) return
+    deferredPrompt.prompt()
+    const { outcome } = await deferredPrompt.userChoice
+    setDeferredPrompt(null)
+    setShow(false)
+    // Whether accepted or not, suppress for this session
+    try { sessionStorage.setItem('pwa_prompt_dismissed', '1') } catch { /* ignore */ }
+  }
+
+  if (!show) return null
+
+  return (
+    <div
+      className="fixed bottom-4 left-1/2 z-[400] w-[calc(100%-2rem)] max-w-sm -translate-x-1/2"
+      style={{ filter: 'drop-shadow(0 8px 32px rgba(124,58,237,0.4))' }}
+    >
+      <div
+        className="rounded-2xl p-5"
+        style={{ background: 'linear-gradient(135deg,#1e0040,#2d1b4e)', border: '2px solid #7c3aed' }}
+      >
+        {/* Header */}
+        <div className="flex items-start justify-between gap-3 mb-3">
+          <div className="flex items-center gap-2">
+            <span style={{ fontSize: 28 }}>📲</span>
+            <div>
+              <div className="text-sm font-bold" style={{ color: '#fde68a' }}>ຕິດຕັ້ງແອັບ Pupatao</div>
+              <div className="text-[10px]" style={{ color: '#a78bfa' }}>
+                {isIos ? 'ສຳລັບ iPhone / iPad' : 'ໃຊ້ງານໄດ້ດີຂຶ້ນຄືແອັບ'}
+              </div>
+            </div>
+          </div>
+          <button type="button" onClick={dismiss}
+            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full"
+            style={{ background: 'rgba(255,255,255,0.08)', color: '#818cf8' }}>
+            <X size={14} />
+          </button>
+        </div>
+
+        {isIos ? (
+          /* iOS: step-by-step instructions (Safari has no install API) */
+          <>
+            <p className="mb-3 text-xs" style={{ color: '#c4b5fd' }}>
+              Safari ໃນ iPhone ສາມາດຕິດຕັ້ງໄດ້ດ້ວຍຂັ້ນຕອນດັ່ງນີ້:
+            </p>
+            <ol className="flex flex-col gap-2">
+              {[
+                { step: '1', icon: '⬆️', text: 'ກົດປຸ່ມ Share (ຮູບສີ່ລ່ຽມ + ລູກສອນ) ຢູ່ລຸ່ມໜ້າຈໍ' },
+                { step: '2', icon: '➕', text: 'ເລື່ອນລົງ ແລ້ວກົດ "Add to Home Screen"' },
+                { step: '3', icon: '✅', text: 'ກົດ "Add" ມູມຂວາເທິງ' },
+              ].map(({ step, icon, text }) => (
+                <li key={step} className="flex items-start gap-2 rounded-lg px-3 py-2"
+                  style={{ background: 'rgba(124,58,237,0.12)', border: '1px solid #4c1d95' }}>
+                  <span className="shrink-0 text-sm">{icon}</span>
+                  <span className="text-xs" style={{ color: '#e9d5ff' }}>{text}</span>
+                </li>
+              ))}
+            </ol>
+            <button type="button" onClick={dismiss}
+              className="mt-4 w-full rounded-xl py-2.5 text-sm font-bold"
+              style={{ background: 'linear-gradient(135deg,#4c1d95,#2d1b4e)', color: '#e9d5ff', border: '1px solid #7c3aed' }}>
+              ເຂົ້າໃຈແລ້ວ
+            </button>
+          </>
+        ) : (
+          /* Android / Chrome: trigger native install prompt */
+          <>
+            <p className="mb-4 text-xs" style={{ color: '#c4b5fd' }}>
+              ຕິດຕັ້ງ Pupatao ໃສ່ໜ້າຈໍຫຼັກ — ໄວ, ສະດວກ, ໃຊ້ໄດ້ຄືແອັບ!
+            </p>
+            <div className="flex gap-2">
+              <button type="button" onClick={dismiss}
+                className="flex-1 rounded-xl py-2.5 text-sm font-bold"
+                style={{ background: 'rgba(255,255,255,0.06)', color: '#a78bfa', border: '1px solid #4c1d95' }}>
+                ບໍ່ດຽວນີ້
+              </button>
+              <button type="button" onClick={installAndroid}
+                className="flex-1 rounded-xl py-2.5 text-sm font-bold"
+                style={{ background: 'linear-gradient(135deg,#7c3aed,#4c1d95)', color: '#fff', border: '1px solid #a78bfa' }}>
+                ຕິດຕັ້ງເລີຍ
+              </button>
+            </div>
+          </>
+        )}
       </div>
     </div>
   )

@@ -2177,6 +2177,23 @@ export default function FishPrawnCrabGame() {
 
   const displayDice = isRolling ? rollingDice : diceResults
 
+  // Fake viewer count — deterministic so all users see the same number at the
+  // same time. Uses two sine waves at different frequencies for natural drift.
+  // Stays between 500-650 and updates every 30 seconds.
+  const getFakeViewers = () => {
+    const t = Date.now() / (10 * 60 * 1000)  // time in 10-min units
+    const v = Math.sin(t * 2.31 + 1.47) * 0.6 + Math.sin(t * 0.73 + 0.83) * 0.4
+    return Math.round(570 + v * 70)  // 500 – 640
+  }
+  const [fakeViewers, setFakeViewers] = useState(getFakeViewers)
+  useEffect(() => {
+    // Only tick while in live mode — save battery when not watching
+    if (mode !== 'live') return
+    const id = setInterval(() => setFakeViewers(getFakeViewers()), 30_000)
+    return () => clearInterval(id)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode])
+
   // Dice display: 3 dice + SUM badge + win badge. Used in both RANDOM and LIVE modes.
   // Two visual states only:
   //   • Rolling/waiting  → bouncing dice (random symbols cycling)
@@ -2275,18 +2292,23 @@ export default function FishPrawnCrabGame() {
           {/* ── Floating header ── */}
           <div className="absolute inset-x-0 top-0 flex items-center justify-between gap-2 px-3"
             style={{ paddingTop: 'max(env(safe-area-inset-top), 10px)', paddingBottom: 8 }}>
-            {/* Left: avatar + name → opens profile dropdown */}
-            <div className="relative z-10 min-w-0">
+            {/* Left: avatar (name hidden for privacy) + fake viewer count */}
+            <div className="relative z-10 flex items-center gap-2 min-w-0">
               <button
                 onClick={() => setOverlayProfileOpen(v => !v)}
-                className="flex items-center gap-1.5 min-w-0"
+                className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[10px] font-bold"
+                style={{ background: '#4c1d95', border: '1px solid #a78bfa', color: '#e9d5ff' }}
               >
-                <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[10px] font-bold"
-                  style={{ background: '#4c1d95', border: '1px solid #a78bfa', color: '#e9d5ff' }}>
-                  {initials || '?'}
-                </div>
-                <span className="truncate text-[10px] font-semibold text-white max-w-[80px]">{displayName}</span>
+                {initials || '?'}
               </button>
+              {/* Fake viewer count — same for all users, drifts naturally above 500 */}
+              <div className="flex items-center gap-1 rounded-full px-2 py-0.5"
+                style={{ background: 'rgba(0,0,0,0.45)', border: '1px solid rgba(255,255,255,0.15)' }}>
+                <Eye size={10} style={{ color: '#f87171' }} />
+                <span className="text-[10px] font-bold text-white tabular-nums">
+                  {fakeViewers.toLocaleString()}
+                </span>
+              </div>
               {overlayProfileOpen && (
                 <ProfileDropdown name={displayName} onClose={() => setOverlayProfileOpen(false)} competitionEnabled={competitionMenuVisible} competitionType={loaderData.competitionType} />
               )}
