@@ -277,6 +277,19 @@ export async function action({ request }: Route.ActionArgs) {
   }
 
   if (op === 'withdraw') {
+    // Block withdrawals for competition participants during active Type B/C competition
+    const { getCompetitionConfig } = await import('~/lib/system-settings.server')
+    const competition = await getCompetitionConfig()
+    if (competition.enabled && competition.type !== 'DEMO_LIVE') {
+      const participant = await prisma.competitionParticipant.findUnique({ where: { userId: user.id } })
+      if (participant) {
+        return {
+          op,
+          error: 'ການຖອນເງິນຖືກລ໊ອກໄລຍະການແຂ່ງຂັນ. ກະລຸນາຖອນຫຼັງຈາກການແຂ່ງຂັນສຳເລັດ.',
+        }
+      }
+    }
+
     const amount = parseInt(String(form.get('amount') ?? ''), 10)
 
     if (!Number.isFinite(amount) || amount < MIN_WITHDRAW) {

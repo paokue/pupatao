@@ -9,6 +9,7 @@ export default [
   route("profile", "routes/profile.tsx"),
   route("wallet", "routes/wallet.tsx"),
   route("rules", "routes/rules.tsx"),
+  route("competition", "routes/competition.tsx"),
   route("api/avatar", "routes/api.avatar.tsx"),
   route("api/payment-slip", "routes/api.payment-slip.tsx"),
   route("api/play-round", "routes/api.play-round.tsx"),
@@ -36,6 +37,8 @@ export default [
     route("transactions", "routes/admin.transactions.tsx"),
     route("play-history", "routes/admin.play-history.tsx"),
     route("live", "routes/admin.live.tsx"),
+    route("competition", "routes/admin.competition.tsx"),
+    route("competition/:id", "routes/admin.competition.$id.tsx"),
     route("financial", "routes/admin.financial.tsx"),
   ]),
 ] satisfies RouteConfig

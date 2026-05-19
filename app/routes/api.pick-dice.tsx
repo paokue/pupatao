@@ -93,6 +93,20 @@ export async function action({ request }: { request: Request }) {
         return Response.json({ ok: true, dice, token })
       }
 
+      // Type B (REAL_LIVE) competition: participants cannot use real wallet in self-play.
+      // api.pick-dice is ONLY called for self-play (random) mode, so any REAL wallet
+      // bet here from a Type B participant is a violation — return an error.
+      if (parsed.wallet === 'REAL') {
+        const { getCompetitionConfig } = await import('~/lib/system-settings.server')
+        const competition = await getCompetitionConfig()
+        if (competition.enabled && competition.type === 'REAL_LIVE') {
+          const participant = await prisma.competitionParticipant.findUnique({ where: { userId: user.id } })
+          if (participant) {
+            return Response.json({ error: 'Real wallet is restricted to live mode during this competition.' }, { status: 403 })
+          }
+        }
+      }
+
       // Sleep mode: global operator flag that forces all REAL/PROMO rolls to 0
       // payout. Checked after individual lock so the two don't conflict.
       const { getSleepMode } = await import('~/lib/system-settings.server')

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Form, NavLink, Outlet, useLoaderData, useNavigation, useRevalidator } from 'react-router'
-import { BarChart2, Banknote, Dices, LayoutDashboard, Loader, LogOut, Radio, ShieldCheck, Users, Wallet } from 'lucide-react'
+import { BarChart2, Banknote, Dices, LayoutDashboard, Loader, LogOut, Radio, ShieldCheck, Trophy, Users, Wallet } from 'lucide-react'
 import { Skeleton } from '~/components/ui/skeleton'
 import { toast } from 'sonner'
 import type { Route } from './+types/admin'
@@ -63,6 +63,7 @@ const NAV: NavItem[] = [
   { to: '/admin/transactions', label: 'Transactions', mobileLabel: 'Trans', Icon: Banknote, badgeKey: 'pendingTx' },
   { to: '/admin/play-history', label: 'Play History', mobileLabel: 'Plays', Icon: Dices, badgeKey: 'pendingBets' },
   { to: '/admin/live', label: 'Live Play', mobileLabel: 'Live', Icon: Radio },
+  { to: '/admin/competition', label: 'Competition', mobileLabel: 'Contest', Icon: Trophy },
   { to: '/admin/financial', label: 'Financial', mobileLabel: 'Finance', Icon: BarChart2 },
 ]
 

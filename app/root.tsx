@@ -1,3 +1,4 @@
+import { useState } from "react"
 import {
   Links,
   Meta,
@@ -7,6 +8,7 @@ import {
   useRouteLoaderData,
 } from "react-router"
 import { Toaster } from "sonner"
+import { Trophy, X } from "lucide-react"
 import type { Route } from "./+types/root"
 import { DEFAULT_LOCALE, parseLocaleCookie, type Locale } from "./lib/i18n"
 import { GlobalNavLoader } from "./components/GlobalNavLoader"
@@ -79,7 +81,14 @@ export async function loader({ request }: Route.LoaderArgs) {
       role: user.role,
     }
     : null
-  return { user: sessionUser, wallets, locale }
+  const { getCompetitionConfig } = await import('./lib/system-settings.server')
+  const competition = await getCompetitionConfig()
+
+  return {
+    user: sessionUser, wallets, locale,
+    competitionEnabled: competition.enabled,    // for banner (only show while running)
+    competitionMenuVisible: competition.menuVisible, // for menu item visibility
+  }
 }
 
 export const links: Route.LinksFunction = () => [
@@ -140,13 +149,70 @@ export function Layout({ children }: { children: React.ReactNode }) {
 export default function App({ loaderData }: Route.ComponentProps) {
   // Descendant routes read these via `useOutletContext<{ user, wallets, locale }>()`.
   return (
-    <Outlet
-      context={{
-        user: loaderData.user,
-        wallets: loaderData.wallets,
-        locale: loaderData.locale,
-      }}
-    />
+    <>
+      {loaderData.user && loaderData.competitionEnabled && (
+        <CompetitionBanner />
+      )}
+      <Outlet
+        context={{
+          user: loaderData.user,
+          wallets: loaderData.wallets,
+          locale: loaderData.locale,
+        }}
+      />
+    </>
+  )
+}
+
+// Promo banner shown every time the user logs in while competition is active.
+// This component mounts fresh on each login (parent conditionally renders it when
+// user+competitionEnabled are both truthy) so useState(true) means "show on mount".
+// Dismissal is in-memory only — no storage — so it reappears after every login.
+function CompetitionBanner() {
+  const [visible, setVisible] = useState(true)
+
+  function dismiss() {
+    setVisible(false)
+  }
+
+  if (!visible) return null
+
+  return (
+    <div className="fixed bottom-4 left-1/2 z-[300] w-[calc(100%-2rem)] max-w-sm -translate-x-1/2"
+      style={{
+        background: 'linear-gradient(135deg,#1e0040,#3b0764)',
+        border: '2px solid #fbbf24',
+        borderRadius: 16,
+        boxShadow: '0 8px 32px rgba(251,191,36,0.25)',
+      }}>
+      <div className="flex items-start gap-3 p-4">
+        <span className="text-2xl shrink-0">🏆</span>
+        <div className="min-w-0 flex-1">
+          <div className="text-sm font-bold" style={{ color: '#fbbf24' }}>ການແຂ່ງຂັນ Demo!</div>
+          <div className="mt-0.5 text-xs" style={{ color: '#c4b5fd' }}>
+            ລະບົບມີການແຂ່ງຂັນ Demo Play ຢູ່ ຜູ້ທີ່ມີ Demo Balance ສູງສຸດຊະນະ!
+          </div>
+          <div className="mt-2 flex gap-2">
+            <a href="/competition"
+              onClick={dismiss}
+              className="rounded-lg px-3 py-1.5 text-xs font-bold"
+              style={{ background: 'linear-gradient(135deg,#ca8a04,#78350f)', color: '#fff', border: '1px solid #fbbf24' }}>
+              <Trophy size={10} className="mr-1 inline" />
+              ເບິ່ງຄະແນນ
+            </a>
+            <button type="button" onClick={dismiss}
+              className="rounded-lg px-3 py-1.5 text-xs font-bold"
+              style={{ background: 'rgba(255,255,255,0.08)', color: '#a5b4fc', border: '1px solid #4c1d95' }}>
+              ປິດ
+            </button>
+          </div>
+        </div>
+        <button type="button" onClick={dismiss}
+          className="shrink-0 rounded-full p-0.5" style={{ color: '#818cf8' }}>
+          <X size={14} />
+        </button>
+      </div>
+    </div>
   )
 }
 

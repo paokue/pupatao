@@ -32,8 +32,8 @@ export async function loader({ request }: Route.LoaderArgs) {
     }
     : {}
 
-  // Load all users + all deposit/withdraw totals, sort by total deposit desc
-  // (highest depositor on top), then paginate in memory.
+  // Load all users + all deposit/withdraw totals, sort by available (REAL) balance desc,
+  // then paginate in memory.
   const [allUsers, allTxGroups] = await Promise.all([
     prisma.user.findMany({ where, include: { wallets: true } }),
     prisma.transaction.groupBy({
@@ -52,9 +52,9 @@ export async function loader({ request }: Route.LoaderArgs) {
   }
 
   const sorted = [...allUsers].sort((a, b) => {
-    const da = totals.get(a.id)?.deposit ?? 0
-    const db = totals.get(b.id)?.deposit ?? 0
-    return db - da
+    const ra = a.wallets.find(w => w.type === 'REAL')?.balance ?? 0
+    const rb = b.wallets.find(w => w.type === 'REAL')?.balance ?? 0
+    return rb - ra
   })
 
   const total = sorted.length

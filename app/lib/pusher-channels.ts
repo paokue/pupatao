@@ -89,6 +89,40 @@ export interface RoundStreamUpdatedPayload {
 
 // Fires when the admin clicks "End Live" — stream URL has been cleared and
 // customers should switch from the stream view to the schedule/idle screen.
+// Public channel for competition ranking updates — no auth needed.
+export const COMPETITION_CHANNEL = 'competition'
+
+// Fired whenever any user's demo balance changes so all open ranking pages
+// can re-fetch and animate the position change.
+export interface RankingUpdatedPayload {
+  userId: string
+  newDemoBalance: number
+}
+
+// Fired when admin resets all demo wallets — users update their in-app balance.
+export interface CompetitionResetPayload {
+  newBalance: number  // always 1_000_000
+}
+
+// Fired when admin toggles competition ON or OFF.
+// When enabled=true: users on demo self-play should switch to real wallet.
+export interface CompetitionToggledPayload {
+  enabled: boolean
+}
+
+// Fired when admin takes the top-3 summary snapshot.
+export interface CompetitionSummarizedPayload {
+  winners: { rank: number; userId: string; name: string | null; tel: string; profile: string | null; demoBalance: number }[]
+}
+
+// Fired when admin ends the competition (saves history, clears all settings).
+export interface CompetitionEndedPayload {}
+
+// Fired when a user joins or is removed from a competition.
+export interface CompetitionParticipantChangedPayload {
+  totalParticipants: number
+}
+
 export interface LiveEndedPayload {
   // intentionally empty — revalidation handles the rest
 }

@@ -13,8 +13,13 @@ import { setBalance as storeSetBalance, setWalletBalance as storeSetWalletBalanc
 import { useSoundEngine, playClick, playChipPlace, playCoin, startBgMusic, stopBgMusic, attachBgMusicVisibilityGuard } from '~/hooks/use-sound-engine'
 import { usePresenceMembers, usePusherEvent } from '~/hooks/use-pusher'
 import {
+  COMPETITION_CHANNEL,
   PRESENCE_LIVE,
   userChannel,
+  type CompetitionEndedPayload,
+  type CompetitionResetPayload,
+  type CompetitionSummarizedPayload,
+  type CompetitionToggledPayload,
   type LiveEndedPayload,
   type LiveScheduledPayload,
   type RoundDicePayload,
@@ -794,9 +799,11 @@ function formatAmount(n: number): string {
 interface ProfileDropdownProps {
   name: string
   onClose: () => void
+  competitionEnabled?: boolean
+  competitionType?: string
 }
 
-function ProfileDropdown({ name, onClose }: ProfileDropdownProps) {
+function ProfileDropdown({ name, onClose, competitionEnabled, competitionType }: ProfileDropdownProps) {
   const navigate = useNavigate()
   const ref = useRef<HTMLDivElement>(null)
   const t = useT()
@@ -809,7 +816,8 @@ function ProfileDropdown({ name, onClose }: ProfileDropdownProps) {
     return () => document.removeEventListener('mousedown', handler)
   }, [onClose])
 
-  const items: { label: string; icon: ReactNode; href: string; desc: string; external?: boolean }[] = [
+  const items: { label: string; icon: ReactNode; href: string; desc: string; external?: boolean; highlight?: boolean }[] = [
+    ...(competitionEnabled ? [{ label: competitionType === 'DEMO_LIVE' ? '🏆 ການແຂ່ງຂັນ Demo' : '🏆 ການແຂ່ງຂັນ Real', icon: <span style={{ fontSize: 18 }}>🏆</span>, href: '/competition', desc: competitionType === 'DEMO_LIVE' ? 'ຄະແນນ Demo Competition' : 'ຄະແນນ Real Competition', highlight: true }] : []),
     { label: t('menu.wallet'), icon: <Wallet size={18} />, href: '/wallet', desc: t('menu.walletDesc') },
     { label: t('menu.playHistory'), icon: <ReceiptText size={18} />, href: '/history', desc: t('menu.playHistoryDesc') },
     { label: t('menu.profile'), icon: <User size={18} />, href: '/profile', desc: t('menu.profileDesc') },
@@ -857,14 +865,14 @@ function ProfileDropdown({ name, onClose }: ProfileDropdownProps) {
                 navigate(item.href)
               }
             }}
-            className="flex w-full items-center gap-3 px-4 py-3 text-left transition-all hover:opacity-90"
-            style={{ background: 'transparent' }}
-            onMouseEnter={e => (e.currentTarget.style.background = '#2d1b4e')}
-            onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
+            className="flex w-full items-center gap-3 px-4 py-2 text-left transition-all hover:opacity-90"
+            style={{ background: item.highlight ? 'rgba(202,138,4,0.12)' : 'transparent' }}
+            onMouseEnter={e => (e.currentTarget.style.background = item.highlight ? 'rgba(202,138,4,0.2)' : '#2d1b4e')}
+            onMouseLeave={e => (e.currentTarget.style.background = item.highlight ? 'rgba(202,138,4,0.12)' : 'transparent')}
           >
-            <span className="text-white">{item.icon}</span>
+            <span style={{ color: item.highlight ? '#fbbf24' : '#fff' }}>{item.icon}</span>
             <div>
-              <div className="text-sm font-semibold" style={{ color: '#e9d5ff' }}>{item.label}</div>
+              <div className="text-sm font-semibold" style={{ color: item.highlight ? '#fbbf24' : '#e9d5ff' }}>{item.label}</div>
               <div className="text-[10px] text-white">{item.desc}</div>
             </div>
           </button>
@@ -990,8 +998,8 @@ export async function loader({ request }: Route.LoaderArgs) {
   // The currently in-flight LIVE round (if any), plus the admin-controlled
   // stream URL and next schedule from SystemSetting. The stream URL is set
   // when admin starts a round and cleared when admin clicks "End Live".
-  const { getLiveStreamUrl, getLiveSchedule } = await import('~/lib/system-settings.server')
-  const [liveRoundRaw, liveStreamUrl, schedule] = await Promise.all([
+  const { getLiveStreamUrl, getLiveSchedule, getCompetitionConfig } = await import('~/lib/system-settings.server')
+  const [liveRoundRaw, liveStreamUrl, schedule, competitionCfg] = await Promise.all([
     prisma.gameRound.findFirst({
       where: { mode: 'LIVE', status: { in: ['BETTING', 'LOCKED', 'AWAITING_RESULT'] } },
       orderBy: { createdAt: 'desc' },
@@ -999,6 +1007,7 @@ export async function loader({ request }: Route.LoaderArgs) {
     }),
     getLiveStreamUrl(),
     getLiveSchedule(),
+    getCompetitionConfig(),
   ])
   const liveRound = liveRoundRaw
     ? {
@@ -1018,9 +1027,11 @@ export async function loader({ request }: Route.LoaderArgs) {
     return {
       selfPlayHistory: [] as SymbolKey[][],
       liveHistory: [] as SymbolKey[][],
-      liveRound,
-      liveStreamUrl,
-      schedule,
+      liveRound, liveStreamUrl, schedule,
+      competitionEnabled:      competitionCfg.enabled,
+      competitionMenuVisible:  competitionCfg.menuVisible,
+      competitionType:         competitionCfg.type,
+      isCompetitionParticipant: false,
       myLiveBets: [] as MyLiveBet[],
       payoutConfig,
     }
@@ -1073,6 +1084,12 @@ export async function loader({ request }: Route.LoaderArgs) {
     liveRound,
     liveStreamUrl,
     schedule,
+    competitionEnabled:      competitionCfg.enabled,
+    competitionMenuVisible:  competitionCfg.menuVisible,
+    competitionType:         competitionCfg.type,
+    isCompetitionParticipant: competitionCfg.type !== 'DEMO_LIVE' && competitionCfg.enabled
+      ? !!(await prisma.competitionParticipant.findUnique({ where: { userId: user.id } }))
+      : false,
     myLiveBets,
     payoutConfig,
   }
@@ -1194,6 +1211,12 @@ export default function FishPrawnCrabGame() {
   // The URL shown to customers: active round's stream takes priority; otherwise
   // use the admin-controlled SystemSetting (cleared by "End Live").
   const activeStreamUrl = liveRound?.streamUrl ?? loaderData.liveStreamUrl ?? null
+
+  // Local competition state — updated immediately via Pusher (before loader revalidation)
+  const [competitionEnabled,     setCompetitionEnabledLocal]     = useState(loaderData.competitionEnabled)
+  const [competitionMenuVisible, setCompetitionMenuVisibleLocal] = useState(loaderData.competitionMenuVisible)
+  useEffect(() => { setCompetitionEnabledLocal(loaderData.competitionEnabled) },     [loaderData.competitionEnabled])
+  useEffect(() => { setCompetitionMenuVisibleLocal(loaderData.competitionMenuVisible) }, [loaderData.competitionMenuVisible])
   const revalidator = useRevalidator()
 
   // Restore the user's last-selected play mode from localStorage on mount.
@@ -1284,6 +1307,44 @@ export default function FishPrawnCrabGame() {
     revalidator.revalidate()
   })
   usePusherEvent<LiveScheduledPayload>(presenceChannel, 'live:scheduled', () => {
+    revalidator.revalidate()
+  })
+
+  // Admin reset all demo wallets — update in-app demo balance immediately.
+  usePusherEvent<CompetitionResetPayload>(COMPETITION_CHANNEL, 'competition:reset', payload => {
+    storeSetWalletBalance('demo', payload.newBalance)
+    if (user.activeWallet === 'demo') setBalance(payload.newBalance)
+  })
+
+  usePusherEvent<CompetitionToggledPayload>(COMPETITION_CHANNEL, 'competition:toggled', payload => {
+    setCompetitionEnabledLocal(payload.enabled)
+    if (payload.enabled) setCompetitionMenuVisibleLocal(true)
+    revalidator.revalidate()
+    if (payload.enabled && mode === 'random') {
+      const cType = loaderData.competitionType
+      // DEMO_LIVE: demo self-play blocked → switch to real
+      if (cType === 'DEMO_LIVE' && user.activeWallet === 'demo') {
+        setCurrentBets([]); setCurrentRangeBets([]); setCurrentPairBets([]); setCurrentSumBets([]); setPendingCell(null)
+        switchWallet('real'); setBalance(user.balances.real)
+      }
+      // REAL_LIVE: real self-play blocked for participants only → switch to demo
+      if (cType === 'REAL_LIVE' && user.activeWallet === 'real' && loaderData.isCompetitionParticipant) {
+        setCurrentBets([]); setCurrentRangeBets([]); setCurrentPairBets([]); setCurrentSumBets([]); setPendingCell(null)
+        switchWallet('demo'); setBalance(user.balances.demo)
+      }
+      // REAL_ALL: no auto-switch needed
+    }
+  })
+
+  // Summary taken — menu stays visible
+  usePusherEvent<CompetitionSummarizedPayload>(COMPETITION_CHANNEL, 'competition:summarized', () => {
+    setCompetitionMenuVisibleLocal(true)
+  })
+
+  // Competition ended — hide menu immediately
+  usePusherEvent<CompetitionEndedPayload>(COMPETITION_CHANNEL, 'competition:ended', () => {
+    setCompetitionEnabledLocal(false)
+    setCompetitionMenuVisibleLocal(false)
     revalidator.revalidate()
   })
 
@@ -2216,7 +2277,7 @@ export default function FishPrawnCrabGame() {
                 <span className="truncate text-[10px] font-semibold text-white max-w-[80px]">{displayName}</span>
               </button>
               {overlayProfileOpen && (
-                <ProfileDropdown name={displayName} onClose={() => setOverlayProfileOpen(false)} />
+                <ProfileDropdown name={displayName} onClose={() => setOverlayProfileOpen(false)} competitionEnabled={competitionMenuVisible} competitionType={loaderData.competitionType} />
               )}
             </div>
 
@@ -2256,6 +2317,7 @@ export default function FishPrawnCrabGame() {
                 <PickerDropdown
                   items={[
                     { key: 'real', label: t('menu.realAccount') },
+                    // Demo is always shown in live mode (competition uses live demo play)
                     { key: 'demo', label: t('menu.demoAccount') },
                     ...((user.balances.promo ?? 0) > 0 ? [{ key: 'promo', label: t('menu.promoAccount') }] : []),
                   ]}
@@ -2792,7 +2854,7 @@ export default function FishPrawnCrabGame() {
                   </svg>
                 </button>
                 {profileOpen && (
-                  <ProfileDropdown name={displayName} onClose={() => setProfileOpen(false)} />
+                  <ProfileDropdown name={displayName} onClose={() => setProfileOpen(false)} competitionEnabled={competitionMenuVisible} competitionType={loaderData.competitionType} />
                 )}
               </>
             )}
@@ -2916,12 +2978,17 @@ export default function FishPrawnCrabGame() {
               <ChevronDown size={12} style={{ transform: walletOpen ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 120ms' }} />
             </button>
             {walletOpen && (() => {
-              // All three wallets are available in all modes.
-              // DEMO in LIVE: wins/losses stay in DEMO (no real money).
-              // PROMO in LIVE: profit from wins goes to REAL wallet.
+              // Per-type self-play wallet restrictions (immediate via local state):
+              // DEMO_LIVE: demo hidden from self-play for ALL users (no join needed)
+              // REAL_LIVE: real hidden from self-play ONLY for participants
+              // REAL_ALL:  no self-play restrictions (participants can use real everywhere)
+              const cType = loaderData.competitionType
+              const isParticipant = loaderData.isCompetitionParticipant
+              const hideDemoSelfPlay = mode === 'random' && competitionEnabled && cType === 'DEMO_LIVE'
+              const hideRealSelfPlay = mode === 'random' && competitionEnabled && cType === 'REAL_LIVE' && isParticipant
               const items: { key: string; label: string }[] = [
-                { key: 'real', label: t('menu.realAccount') },
-                { key: 'demo', label: t('menu.demoAccount') },
+                ...(!hideRealSelfPlay ? [{ key: 'real', label: t('menu.realAccount') }] : []),
+                ...(!hideDemoSelfPlay ? [{ key: 'demo', label: t('menu.demoAccount') }] : []),
               ]
               if ((user.balances.promo ?? 0) > 0) {
                 items.push({ key: 'promo', label: t('menu.promoAccount') })

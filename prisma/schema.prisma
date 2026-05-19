@@ -101,10 +101,23 @@ model User {
   bank                 Bank?
   sentTransfers        Transfer[]    @relation("SenderTransfers")
   receivedTransfers    Transfer[]    @relation("ReceiverTransfers")
+  competitionParticipant CompetitionParticipant?
 
   @@index([role])
   @@index([status])
   @@index([referredById])
+}
+
+// Stores users who have opted in to the current competition (Type B or C only).
+// Cleared when admin ends the competition. One record per user at most.
+model CompetitionParticipant {
+  id       String   @id @default(auto()) @map("_id") @db.ObjectId
+  userId   String   @unique @db.ObjectId
+  joinedAt DateTime @default(now())
+
+  user     User     @relation(fields: [userId], references: [id])
+
+  @@index([joinedAt(sort: Desc)])
 }
 
 // Staff account. Separate from User for auth segregation (email+2FA) and
@@ -465,4 +478,19 @@ model AuditLog {
   @@index([actorId, createdAt(sort: Desc)])
   @@index([action])
   @@index([target])
+}
+
+// Saved after each competition ends. `winners` is a JSON array of up to 3
+// CompetitionWinner objects: { rank, userId, name, tel, profile, demoBalance }.
+model CompetitionHistory {
+  id                String    @id @default(auto()) @map("_id") @db.ObjectId
+  type              String    @default("DEMO_LIVE") // DEMO_LIVE | REAL_LIVE | REAL_ALL
+  rules             String?
+  startDate         DateTime?
+  endDate           DateTime  @default(now())
+  winners           Json      // CompetitionWinner[]
+  totalParticipants Int       @default(0)
+  createdAt         DateTime  @default(now())
+
+  @@index([createdAt(sort: Desc)])
 }

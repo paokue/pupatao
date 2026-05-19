@@ -4,7 +4,7 @@
 // bets, wallet balance and ledger entries to the database.
 import type { DiceSymbol, RangeKey, BetResult } from '@prisma/client'
 import { prisma } from '~/lib/prisma.server'
-import { notifyAdmin, notifyUser } from '~/lib/pusher.server'
+import { notifyAdmin, notifyCompetition, notifyUser } from '~/lib/pusher.server'
 import {
   SYMBOL_VALUES,
   type SymbolBetIn, type RangeBetIn, type PairBetIn,
@@ -177,6 +177,11 @@ export async function action({ request }: { request: Request }) {
 
     notifyAdmin('round:resolved', { roundId: result.roundId, mode: 'RANDOM', dice: dice as string[], diceSum })
     notifyUser(user.id, 'round:resolved', { roundId: result.roundId, mode: 'RANDOM', dice: dice as string[], diceSum })
+    // Broadcast ranking update for demo wallet bets so all open competition
+    // pages re-fetch and animate the position change in real-time.
+    if (walletKey === 'DEMO') {
+      notifyCompetition('ranking:updated', { userId: user.id, newDemoBalance: newBalance })
+    }
 
     return Response.json({ ok: true, balance: newBalance, payout: totalPayout, net: netDelta })
   } catch (err) {

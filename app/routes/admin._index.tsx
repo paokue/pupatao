@@ -74,6 +74,7 @@ export default function AdminDashboard() {
     }
   }, [sleepFetcher.state, sleepFetcher.data])
 
+
   return (
     <div className="flex flex-col gap-4">
       <h1 className="text-xl font-bold" style={{ color: '#fde68a' }}>Dashboard</h1>
@@ -151,7 +152,7 @@ export default function AdminDashboard() {
         style={{ background: '#0f172a', color: '#a5b4fc', border: '1px solid #1e1b4b' }}
       >
         Use the sidebar to manage customers, review deposit slips and withdrawals,
-        inspect play history, and host LIVE rounds.
+        inspect play history, host LIVE rounds, and manage the Demo Competition.
       </div>
 
       {/* ── Confirmation modal ── */}

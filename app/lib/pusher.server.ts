@@ -1,12 +1,19 @@
 import Pusher from 'pusher'
 import {
   ADMIN_CHANNEL,
+  COMPETITION_CHANNEL,
   PRESENCE_LIVE,
   userChannel,
   type BetPlacedPayload,
+  type CompetitionEndedPayload,
+  type CompetitionParticipantChangedPayload,
+  type CompetitionResetPayload,
+  type CompetitionSummarizedPayload,
+  type CompetitionToggledPayload,
   type CustomerRegisteredPayload,
   type LiveEndedPayload,
   type LiveScheduledPayload,
+  type RankingUpdatedPayload,
   type RoundDicePayload,
   type RoundResolvedPayload,
   type RoundSettledPayload,
@@ -72,6 +79,16 @@ export function notifyPresenceLive(event: 'live:ended', payload: LiveEndedPayloa
 export function notifyPresenceLive(event: 'live:scheduled', payload: LiveScheduledPayload): Promise<void>
 export function notifyPresenceLive(event: string, payload: unknown): Promise<void> {
   return triggerSafe(PRESENCE_LIVE, event, payload)
+}
+
+export function notifyCompetition(event: 'ranking:updated', payload: RankingUpdatedPayload): Promise<void>
+export function notifyCompetition(event: 'competition:reset', payload: CompetitionResetPayload): Promise<void>
+export function notifyCompetition(event: 'competition:toggled', payload: CompetitionToggledPayload): Promise<void>
+export function notifyCompetition(event: 'competition:summarized', payload: CompetitionSummarizedPayload): Promise<void>
+export function notifyCompetition(event: 'competition:ended', payload: CompetitionEndedPayload): Promise<void>
+export function notifyCompetition(event: 'competition:participantChanged', payload: CompetitionParticipantChangedPayload): Promise<void>
+export function notifyCompetition(event: string, payload: unknown): Promise<void> {
+  return triggerSafe(COMPETITION_CHANNEL, event, payload)
 }
 
 export function notifyUser(userId: string, event: 'transaction:updated', payload: TxUpdatedPayload): Promise<void>
