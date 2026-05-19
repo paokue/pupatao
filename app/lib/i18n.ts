@@ -443,7 +443,7 @@ export const STRINGS = {
     en: "⏸ Waiting for the host to start the next round…",
   },
   "live.bettingClosed": {
-    lo: "🔒 ປິດການແທງແລ້ວ — ຜູ້ດໍາເນີນກຳລັງໃສ່ຜົນ.",
+    lo: "🔒 ແອັດມີນກຳລັງໃສ່ຜົນ.",
     en: "🔒 Betting closed — host is entering the result.",
   },
   "live.waitingHostShort": {

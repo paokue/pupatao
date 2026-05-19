@@ -251,7 +251,17 @@ function PWAInstallPrompt() {
       return () => clearTimeout(t)
     }
 
-    // Android / Chrome — wait for the browser's deferred install event
+    // Android / Chrome — beforeinstallprompt fires early (before React hydrates),
+    // so entry.client.tsx captures it globally. Check that first; fall back to
+    // a live listener in case it hasn't fired yet.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const captured = (window as any).__pwaInstallPrompt
+    if (captured) {
+      setDeferredPrompt(captured)
+      setTimeout(() => setShow(true), 3000)
+      return
+    }
+
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const handler = (e: any) => {
       e.preventDefault()

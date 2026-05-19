@@ -2292,7 +2292,7 @@ export default function FishPrawnCrabGame() {
           {/* ── Floating header ── */}
           <div className="absolute inset-x-0 top-0 flex items-center justify-between gap-2 px-3"
             style={{ paddingTop: 'max(env(safe-area-inset-top), 10px)', paddingBottom: 8 }}>
-            {/* Left: avatar (name hidden for privacy) + fake viewer count */}
+            {/* Left: avatar (name hidden for privacy) */}
             <div className="relative z-10 flex items-center gap-2 min-w-0">
               <button
                 onClick={() => setOverlayProfileOpen(v => !v)}
@@ -2301,14 +2301,6 @@ export default function FishPrawnCrabGame() {
               >
                 {initials || '?'}
               </button>
-              {/* Fake viewer count — same for all users, drifts naturally above 500 */}
-              <div className="flex items-center gap-1 rounded-full px-2 py-0.5"
-                style={{ background: 'rgba(0,0,0,0.45)', border: '1px solid rgba(255,255,255,0.15)' }}>
-                <Eye size={10} style={{ color: '#f87171' }} />
-                <span className="text-[10px] font-bold text-white tabular-nums">
-                  {fakeViewers.toLocaleString()}
-                </span>
-              </div>
               {overlayProfileOpen && (
                 <ProfileDropdown name={displayName} onClose={() => setOverlayProfileOpen(false)} competitionEnabled={competitionMenuVisible} competitionType={loaderData.competitionType} />
               )}
@@ -2369,13 +2361,23 @@ export default function FishPrawnCrabGame() {
             </div>
           </div>
 
-          {/* ── LIVE badge + confirmed bets feed below it ── */}
+          {/* ── LIVE badge + viewer count + confirmed bets feed below it ── */}
           <div className="absolute left-3 flex flex-col gap-1.5" style={{ top: 64 }}>
-            <span className="flex w-fit items-center gap-1 rounded-full px-2.5 py-1 text-[10px] font-bold"
-              style={{ background: 'rgba(220,38,38,0.9)', color: '#fff' }}>
-              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-white" />
-              LIVE
-            </span>
+            <div className="flex items-center gap-1.5">
+              <span className="flex w-fit items-center gap-1 rounded-full px-2.5 py-1 text-[10px] font-bold"
+                style={{ background: 'rgba(220,38,38,0.9)', color: '#fff' }}>
+                <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-white" />
+                LIVE
+              </span>
+              {/* Fake viewer count — only while stream is active */}
+              {activeStreamUrl && (
+                <span className="flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold"
+                  style={{ background: 'rgba(0,0,0,0.55)', color: '#fff', border: '1px solid rgba(255,255,255,0.15)' }}>
+                  <Eye size={9} style={{ color: '#f87171' }} />
+                  {fakeViewers.toLocaleString()}
+                </span>
+              )}
+            </div>
             {/* Confirmed bets — shown during both betting and awaiting_result; hidden when idle */}
             {myLiveBets.length > 0 && (livePhase === 'betting' || livePhase === 'awaiting_result') && (
               <div className="flex flex-col gap-1">
@@ -3147,10 +3149,17 @@ export default function FishPrawnCrabGame() {
                         bgColor="#4c1d95"
                         autoStart
                       >
-                        <div className="absolute top-2 left-2 flex items-center gap-1 rounded-full px-2 py-0.5 text-[9px] font-bold"
-                          style={{ background: 'rgba(220,38,38,0.9)', color: '#fff' }}>
-                          <span className="h-1.5 w-1.5 rounded-full bg-white animate-pulse" />
-                          LIVE
+                        <div className="absolute top-2 left-2 flex items-center gap-1.5">
+                          <div className="flex items-center gap-1 rounded-full px-2 py-0.5 text-[9px] font-bold"
+                            style={{ background: 'rgba(220,38,38,0.9)', color: '#fff' }}>
+                            <span className="h-1.5 w-1.5 rounded-full bg-white animate-pulse" />
+                            LIVE
+                          </div>
+                          <div className="flex items-center gap-1 rounded-full px-2 py-0.5 text-[9px] font-bold"
+                            style={{ background: 'rgba(0,0,0,0.55)', color: '#fff', border: '1px solid rgba(255,255,255,0.15)' }}>
+                            <Eye size={9} style={{ color: '#f87171' }} />
+                            {fakeViewers.toLocaleString()}
+                          </div>
                         </div>
                         <div className="absolute top-2 right-2 rounded-md px-2 py-0.5 text-[9px] font-bold"
                           style={{
