@@ -3,8 +3,7 @@
 // Phase ladder (REAL/PROMO only; DEMO always stays at its fixed 60 % tier):
 //
 //  NORMAL    → 50 % win / 50 % lose
-//    ↓ triggered when netProfit ≥ 100 % of lastDeposit (small deposit < 200 k)
-//    ↓           OR netProfit ≥ 200 000 ₭           (large deposit ≥ 200 k)
+//    ↓ triggered when netProfit ≥ threshold based on latest deposit tier
 //  PHASE_A   → 10 % win / 90 % lose   (phaseEntryBalance recorded here)
 //    ↓ triggered when balance ≤ 10 % of phaseEntryBalance
 //  PHASE_B   → 30 % win / 70 % lose
@@ -45,17 +44,17 @@ export async function resolveAndAdvancePhase(
 
   if (phase === 'NORMAL') {
     if (lastDepositAmount > 0) {
-      // Phase A trigger threshold — based on deposit size:
-      //   ≥ 200 000 ₭  → trigger when netProfit ≥ 200 000 (absolute)
-      //   100 000–199 999 → trigger when netProfit ≥ 100 % of deposit (1×)
-      //    50 000– 99 999 → trigger when netProfit ≥ 200 % of deposit (2×)
-      //         < 50 000  → trigger when netProfit ≥ 300 % of deposit (3×)
+      // Phase A trigger threshold — based on latest deposit size:
+      //   ≥ 200 000 ₭       → trigger when netProfit ≥ 200 000 (absolute)
+      //   100 000–199 999 ₭ → trigger when netProfit ≥ 100 % of deposit (1×)
+      //    30 000– 99 999 ₭ → trigger when netProfit ≥ 200 % of deposit (2×)
+      //         < 30 000 ₭  → trigger when netProfit ≥ 300 % of deposit (3×)
       let threshold: number
       if (lastDepositAmount >= 200_000) {
         threshold = 200_000
       } else if (lastDepositAmount >= 100_000) {
         threshold = lastDepositAmount          // 100 % profit
-      } else if (lastDepositAmount >= 50_000) {
+      } else if (lastDepositAmount >= 30_000) {
         threshold = lastDepositAmount * 2      // 200 % profit
       } else {
         threshold = lastDepositAmount * 3      // 300 % profit
