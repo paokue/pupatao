@@ -2282,9 +2282,11 @@ export default function FishPrawnCrabGame() {
             )}
           </div>
 
-          {/* Top gradient for text readability */}
-          <div className="pointer-events-none absolute inset-x-0 top-0 h-36"
-            style={{ background: 'linear-gradient(to bottom, rgba(0,0,0,0.75), transparent)' }} />
+          {/* Top cover — fully opaque band over the header height to hide platform
+              native UI (Facebook viewer avatars/count, YouTube controls) that bleeds
+              through the iframe, then fades to transparent below. */}
+          <div className="pointer-events-none absolute inset-x-0 top-0 h-40"
+            style={{ background: 'linear-gradient(to bottom, rgba(0,0,0,1) 0%, rgba(0,0,0,0.92) 40%, rgba(0,0,0,0.5) 70%, transparent 100%)' }} />
           {/* Bottom gradient */}
           <div className="pointer-events-none absolute inset-x-0 bottom-0 h-48"
             style={{ background: 'linear-gradient(to top, rgba(0,0,0,0.75), transparent)' }} />
