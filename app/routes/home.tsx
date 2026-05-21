@@ -2284,8 +2284,8 @@ export default function FishPrawnCrabGame() {
 
           {/* Top cover — hides platform native UI (FB viewer avatars/count) that
               bleeds through the iframe. Solid at top, fades out quickly. */}
-          <div className="pointer-events-none absolute inset-x-0 top-0 h-20"
-            style={{ background: 'linear-gradient(to bottom, rgba(0,0,0,1) 0%, rgba(0,0,0,0.9) 50%, transparent 100%)' }} />
+          <div className="pointer-events-none absolute inset-x-0 top-0 h-25"
+            style={{ background: 'linear-gradient(to bottom, rgba(0,0,0,1) 0%, rgba(0,0,0,1) 60%, rgba(0,0,0,0.7) 80%, transparent 100%)' }} />
           {/* Bottom gradient */}
           <div className="pointer-events-none absolute inset-x-0 bottom-0 h-48"
             style={{ background: 'linear-gradient(to top, rgba(0,0,0,0.75), transparent)' }} />
