@@ -2492,7 +2492,7 @@ export default function FishPrawnCrabGame() {
           {/* ── Dice overlay (awaiting_result) ── */}
           {livePhase === 'awaiting_result' && (
             <div className="absolute inset-x-0 flex flex-col items-center gap-3 px-4"
-              style={{ bottom: 90, paddingBottom: 'env(safe-area-inset-bottom)' }}>
+              style={{ bottom: 20, paddingBottom: 'env(safe-area-inset-bottom)' }}>
               <DiceReveal dice={revealedDice} />
             </div>
           )}
