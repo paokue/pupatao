@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { useFetcher, useLoaderData, useRevalidator } from 'react-router'
 import { CalendarClock, Check, Flag, Loader, Plus, RotateCcw, Trophy, X } from 'lucide-react'
 import type { Route } from './+types/admin.competition'
-import { requireAdmin } from '~/lib/admin-auth.server'
+import { requireAdmin, requireRole } from '~/lib/admin-auth.server'
 import { prisma } from '~/lib/prisma.server'
 import {
   COMPETITION_STARTED_KEY,
@@ -36,7 +36,7 @@ const TYPE_LABELS: Record<CompetitionType, { label: string; desc: string; color:
 
 // ─── LOADER ──────────────────────────────────────────────────────────
 export async function loader({ request }: Route.LoaderArgs) {
-  await requireAdmin(request)
+  await requireRole(request, ['ADMIN', 'SUPERADMIN'])
 
   const [competition, historyList, participantRows] = await Promise.all([
     getCompetitionConfig(),

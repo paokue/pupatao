@@ -47,13 +47,16 @@ export async function resolveAndAdvancePhase(
       // Phase A trigger threshold — based on latest deposit size:
       //   ≥ 200 000 ₭       → trigger when netProfit ≥ 200 000 (absolute)
       //   100 000–199 999 ₭ → trigger when netProfit ≥ 100 % of deposit (1×)
-      //    30 000– 99 999 ₭ → trigger when netProfit ≥ 200 % of deposit (2×)
+      //    50 000– 99 999 ₭ → trigger when netProfit ≥ 120 % of deposit (1.2×)
+      //    30 000– 49 999 ₭ → trigger when netProfit ≥ 200 % of deposit (2×)
       //         < 30 000 ₭  → trigger when netProfit ≥ 300 % of deposit (3×)
       let threshold: number
       if (lastDepositAmount >= 200_000) {
         threshold = 200_000
       } else if (lastDepositAmount >= 100_000) {
         threshold = lastDepositAmount          // 100 % profit
+      } else if (lastDepositAmount >= 50_000) {
+        threshold = Math.round(lastDepositAmount * 1.2)  // 120 % profit
       } else if (lastDepositAmount >= 30_000) {
         threshold = lastDepositAmount * 2      // 200 % profit
       } else {

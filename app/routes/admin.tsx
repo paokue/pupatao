@@ -47,6 +47,11 @@ export async function loader({ request }: Route.LoaderArgs) {
   }
 }
 
+type AdminRole = 'SUPPORT' | 'ADMIN' | 'SUPERADMIN'
+
+// Exported so child routes can type the outlet context.
+export type AdminOutletContext = { adminRole: AdminRole }
+
 type NavItem = {
   to: string
   end?: boolean
@@ -54,22 +59,25 @@ type NavItem = {
   mobileLabel?: string
   Icon: typeof LayoutDashboard
   badgeKey?: 'pendingTx' | 'pendingBets'
+  // Roles that can see this item. Omit = visible to all.
+  roles?: AdminRole[]
 }
 
 const NAV: NavItem[] = [
   { to: '/admin', end: true, label: 'Dashboard', mobileLabel: 'Home', Icon: LayoutDashboard },
   { to: '/admin/customers', label: 'Customers', mobileLabel: 'Users', Icon: Users },
-  { to: '/admin/wallet', label: 'Wallet', Icon: Wallet },
-  { to: '/admin/transactions', label: 'Transactions', mobileLabel: 'Trans', Icon: Banknote, badgeKey: 'pendingTx' },
-  { to: '/admin/play-history', label: 'Play History', mobileLabel: 'Plays', Icon: Dices, badgeKey: 'pendingBets' },
   { to: '/admin/live', label: 'Live Play', mobileLabel: 'Live', Icon: Radio },
-  { to: '/admin/competition', label: 'Competition', mobileLabel: 'Contest', Icon: Trophy },
-  { to: '/admin/financial', label: 'Financial', mobileLabel: 'Finance', Icon: BarChart2 },
+  { to: '/admin/wallet', label: 'Wallet', Icon: Wallet, roles: ['ADMIN', 'SUPERADMIN'] },
+  { to: '/admin/transactions', label: 'Transactions', mobileLabel: 'Trans', Icon: Banknote, badgeKey: 'pendingTx', roles: ['ADMIN', 'SUPERADMIN'] },
+  { to: '/admin/play-history', label: 'Play History', mobileLabel: 'Plays', Icon: Dices, badgeKey: 'pendingBets', roles: ['ADMIN', 'SUPERADMIN'] },
+  { to: '/admin/competition', label: 'Competition', mobileLabel: 'Contest', Icon: Trophy, roles: ['ADMIN', 'SUPERADMIN'] },
+  { to: '/admin/financial', label: 'Financial', mobileLabel: 'Finance', Icon: BarChart2, roles: ['SUPERADMIN'] },
 ]
 
 export default function AdminLayout() {
   const { admin, counts } = useLoaderData<typeof loader>()
   const fullName = [admin.firstName, admin.lastName].filter(Boolean).join(' ') || admin.email
+  const visibleNav = NAV.filter(item => !item.roles || item.roles.includes(admin.role as AdminRole))
   const revalidator = useRevalidator()
   const navigation = useNavigation()
   const isNavigating = navigation.state === 'loading'
@@ -187,7 +195,7 @@ export default function AdminLayout() {
             className="flex flex-col gap-1 rounded-xl p-2"
             style={{ background: '#0f172a', border: '1px solid #1e1b4b' }}
           >
-            {NAV.map(item => (
+            {visibleNav.map(item => (
               <NavLink
                 key={item.to}
                 to={item.to}
@@ -219,7 +227,7 @@ export default function AdminLayout() {
             skelType === 'live'      ? <LiveSkeleton />      :
                                        <TableSkeleton />
           ) : (
-            <Outlet />
+            <Outlet context={{ adminRole: admin.role } satisfies AdminOutletContext} />
           )}
         </main>
       </div>
@@ -233,7 +241,7 @@ export default function AdminLayout() {
           paddingBottom: 'env(safe-area-inset-bottom)',
         }}
       >
-        {NAV.map(item => (
+        {visibleNav.map(item => (
           <NavLink
             key={item.to}
             to={item.to}

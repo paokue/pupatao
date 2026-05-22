@@ -1,8 +1,9 @@
 import { useState } from 'react'
-import { Form, useFetcher, useLoaderData, useNavigation, useRevalidator, useSearchParams, useSubmit } from 'react-router'
+import { Form, useFetcher, useLoaderData, useNavigation, useOutletContext, useRevalidator, useSearchParams, useSubmit } from 'react-router'
 import { Eye, EyeOff, KeyRound, Loader, Lock, LockOpen, Search, ShieldOff, ShieldCheck as ShieldCheckIcon, X } from 'lucide-react'
 import type { Route } from './+types/admin.customers'
 import { requireAdmin } from '~/lib/admin-auth.server'
+import type { AdminOutletContext } from './admin'
 import { prisma } from '~/lib/prisma.server'
 import { ADMIN_CHANNEL, type CustomerRegisteredPayload } from '~/lib/pusher-channels'
 import { usePusherEvent } from '~/hooks/use-pusher'
@@ -96,6 +97,8 @@ export async function loader({ request }: Route.LoaderArgs) {
 
 export async function action({ request }: Route.ActionArgs) {
   const admin = await requireAdmin(request)
+  // SUPPORT role cannot perform mutations on customers
+  if (admin.role === 'SUPPORT') return { error: 'Insufficient permissions' }
   const fd = await request.formData()
   const op = String(fd.get('op') ?? '')
   const userId = String(fd.get('userId') ?? '')
@@ -160,6 +163,8 @@ type CustomerRow = ReturnType<typeof useLoaderData<typeof loader>>['users'][numb
 
 export default function AdminCustomers() {
   const data = useLoaderData<typeof loader>()
+  const { adminRole } = useOutletContext<AdminOutletContext>()
+  const isSupport = adminRole === 'SUPPORT'
   const [params] = useSearchParams()
   const navigation = useNavigation()
   const submit = useSubmit()
@@ -298,7 +303,7 @@ export default function AdminCustomers() {
       <div className="flex flex-col gap-2 md:hidden">
         {data.users.length === 0 && <EmptyState />}
         {data.users.map((u, i) => (
-          <CustomerCard key={u.id} u={u} rowNum={(data.page - 1) * data.pageSize + i + 1} onAction={setPending} onResetPassword={setPasswordModal} />
+          <CustomerCard key={u.id} u={u} rowNum={(data.page - 1) * data.pageSize + i + 1} onAction={isSupport ? undefined : setPending} onResetPassword={isSupport ? undefined : setPasswordModal} />
         ))}
       </div>
 
@@ -339,23 +344,25 @@ export default function AdminCustomers() {
                 <td className="px-3 py-2">
                   <div className="flex items-center gap-1.5">
                     <PhaseBadge phase={u.selfPlayPhase} />
-                    <GameLockButton u={u} disabled={loading} onRevalidate={revalidator.revalidate} />
+                    {!isSupport && <GameLockButton u={u} disabled={loading} onRevalidate={revalidator.revalidate} />}
                   </div>
                 </td>
                 <td className="px-3 py-2 text-right">
-                  <div className="flex items-center justify-end gap-1.5">
-                    <button
-                      type="button"
-                      title="Reset password"
-                      onClick={() => setPasswordModal(u)}
-                      disabled={loading}
-                      className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[10px] font-bold disabled:opacity-50"
-                      style={{ background: 'rgba(67,56,202,0.25)', color: '#a5b4fc', border: '1px solid #4338ca' }}
-                    >
-                      <KeyRound size={10} /> PW
-                    </button>
-                    <ActionButton u={u} onClick={() => setPending(u)} disabled={loading} />
-                  </div>
+                  {!isSupport && (
+                    <div className="flex items-center justify-end gap-1.5">
+                      <button
+                        type="button"
+                        title="Reset password"
+                        onClick={() => setPasswordModal(u)}
+                        disabled={loading}
+                        className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[10px] font-bold disabled:opacity-50"
+                        style={{ background: 'rgba(67,56,202,0.25)', color: '#a5b4fc', border: '1px solid #4338ca' }}
+                      >
+                        <KeyRound size={10} /> PW
+                      </button>
+                      <ActionButton u={u} onClick={() => setPending(u)} disabled={loading} />
+                    </div>
+                  )}
                 </td>
               </tr>
             ))}

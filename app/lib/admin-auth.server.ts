@@ -103,6 +103,17 @@ export async function requireAdmin(request: Request): Promise<Admin> {
   return admin
 }
 
+// Require the logged-in admin to have one of the allowed roles.
+// Throws a redirect to /admin if not — keeps the admin shell visible.
+export async function requireRole(
+  request: Request,
+  allowedRoles: Admin['role'][],
+): Promise<Admin> {
+  const admin = await requireAdmin(request)
+  if (!allowedRoles.includes(admin.role)) throw redirect('/admin')
+  return admin
+}
+
 export async function adminLogout(request: Request, redirectTo = '/admin/login') {
   const cookies = parseCookies(request.headers.get('cookie'))
   const raw = cookies[ADMIN_COOKIE]

@@ -3,7 +3,7 @@ import { Form, Link, useLoaderData, useNavigation, useRevalidator, useSearchPara
 import { ArrowRight, Check, Loader, Maximize2, Search, X } from 'lucide-react'
 import { toast } from 'sonner'
 import type { Route } from './+types/admin.transactions'
-import { requireAdmin } from '~/lib/admin-auth.server'
+import { requireAdmin, requireRole } from '~/lib/admin-auth.server'
 import { prisma } from '~/lib/prisma.server'
 import { notifyAdmin, notifyUser } from '~/lib/pusher.server'
 import { ADMIN_CHANNEL, type TxCreatedPayload, type TxResolvedPayload } from '~/lib/pusher-channels'
@@ -26,7 +26,7 @@ function userName(u: { tel: string; firstName: string | null; lastName: string |
 }
 
 export async function loader({ request }: Route.LoaderArgs) {
-  await requireAdmin(request)
+  await requireRole(request, ['ADMIN', 'SUPERADMIN'])
   const url = new URL(request.url)
   const tabRaw = url.searchParams.get('tab') ?? 'deposit'
   const statusRaw = url.searchParams.get('status') ?? 'ALL'

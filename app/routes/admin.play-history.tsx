@@ -3,7 +3,7 @@ import { Form, Link, useFetcher, useLoaderData, useNavigation, useRevalidator, u
 import { ArrowDown, ArrowDownCircle, ArrowUp, ArrowUpCircle, ArrowUpDown, Eye, Lock, Loader, Search, Wallet, X } from 'lucide-react'
 import type { Route } from './+types/admin.play-history'
 import type { WalletType } from '@prisma/client'
-import { requireAdmin } from '~/lib/admin-auth.server'
+import { requireRole } from '~/lib/admin-auth.server'
 import { prisma } from '~/lib/prisma.server'
 import { ADMIN_CHANNEL, type BetPlacedPayload, type RoundResolvedPayload } from '~/lib/pusher-channels'
 import { usePusherEvent } from '~/hooks/use-pusher'
@@ -34,7 +34,7 @@ function formatAmount(n: number): string {
 
 // ─── LOADER ──────────────────────────────────────────────────────────
 export async function loader({ request }: Route.LoaderArgs) {
-  await requireAdmin(request)
+  await requireRole(request, ['ADMIN', 'SUPERADMIN'])
   const url = new URL(request.url)
   const page = Math.max(1, parseInt(url.searchParams.get('page') ?? '1', 10) || 1)
   const pageSizeRaw = parseInt(url.searchParams.get('pageSize') ?? '30', 10)

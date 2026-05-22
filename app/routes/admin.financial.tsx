@@ -1,6 +1,6 @@
 import { Form, useLoaderData, useNavigation } from 'react-router'
 import { AlertTriangle, ArrowDownCircle, ArrowUpCircle, BarChart2, Clock, Loader, TrendingDown, TrendingUp, Users } from 'lucide-react'
-import { requireAdmin } from '~/lib/admin-auth.server'
+import { requireRole } from '~/lib/admin-auth.server'
 import { prisma } from '~/lib/prisma.server'
 
 type Period = 'today' | 'week' | 'month' | 'all' | 'custom'
@@ -64,7 +64,7 @@ function getPeriodRange(period: Period, from: string, to: string): { gte: Date; 
 }
 
 export async function loader({ request }: { request: Request }) {
-  await requireAdmin(request)
+  await requireRole(request, ['SUPERADMIN'])
   const url = new URL(request.url)
   const period = (url.searchParams.get('period') ?? 'month') as Period
   const from = url.searchParams.get('from') ?? ''

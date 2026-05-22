@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom'
 import { Form, useFetcher, useLoaderData, useNavigation, useSearchParams, useSubmit } from 'react-router'
 import { ArrowDownCircle, ArrowUpCircle, Loader, MoreVertical, Search, Wallet, X } from 'lucide-react'
 import type { Route } from './+types/admin.wallet'
-import { requireAdmin } from '~/lib/admin-auth.server'
+import { requireRole } from '~/lib/admin-auth.server'
 import { prisma } from '~/lib/prisma.server'
 
 const PAGE_SIZES = [10, 30, 50, 100, 200, 500] as const
@@ -15,7 +15,7 @@ const PAGE_SIZES = [10, 30, 50, 100, 200, 500] as const
 // Aggregates use a single groupBy keyed on (userId, type) for the visible
 // page only — avoids N+1 queries for every row.
 export async function loader({ request }: Route.LoaderArgs) {
-  await requireAdmin(request)
+  await requireRole(request, ['ADMIN', 'SUPERADMIN'])
   const url = new URL(request.url)
   const q = url.searchParams.get('q')?.trim() ?? ''
   const page = Math.max(1, parseInt(url.searchParams.get('page') ?? '1', 10) || 1)

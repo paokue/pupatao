@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react'
-import { Form, Link, useFetcher, useLoaderData, useNavigation } from 'react-router'
+import { Form, Link, useFetcher, useLoaderData, useNavigation, useOutletContext } from 'react-router'
 import { Banknote, Dices, Moon, Radio, Users } from 'lucide-react'
 import type { Route } from './+types/admin._index'
 import { requireAdmin } from '~/lib/admin-auth.server'
+import type { AdminOutletContext } from './admin'
 import { prisma } from '~/lib/prisma.server'
 import { getSleepMode, setSleepMode } from '~/lib/system-settings.server'
 
@@ -62,6 +63,8 @@ export async function action({ request }: Route.ActionArgs) {
 
 export default function AdminDashboard() {
   const d = useLoaderData<typeof loader>()
+  const { adminRole } = useOutletContext<AdminOutletContext>()
+  const isSuperAdmin = adminRole === 'SUPERADMIN'
   const navigation = useNavigation()
   const loading = navigation.state !== 'idle'
   const [showConfirm, setShowConfirm] = useState(false)
@@ -95,8 +98,8 @@ export default function AdminDashboard() {
           accent={d.liveRounds > 0 ? '#4ade80' : undefined} />
       </div>
 
-      {/* ── Sleep Mode ── */}
-      <div
+      {/* ── Sleep Mode — SUPERADMIN only ── */}
+      {isSuperAdmin && <div
         className="rounded-xl p-4"
         style={{
           background: d.sleepMode ? 'rgba(220,38,38,0.12)' : 'rgba(15,23,42,1)',
@@ -145,7 +148,7 @@ export default function AdminDashboard() {
             {d.sleepMode ? '☀️ Disable Sleep Mode' : '🌙 Enable Sleep Mode'}
           </button>
         </div>
-      </div>
+      </div>}
 
       <div
         className="rounded-xl p-4 text-xs"
@@ -155,8 +158,8 @@ export default function AdminDashboard() {
         inspect play history, host LIVE rounds, and manage the Demo Competition.
       </div>
 
-      {/* ── Confirmation modal ── */}
-      {showConfirm && (
+      {/* ── Confirmation modal — SUPERADMIN only ── */}
+      {isSuperAdmin && showConfirm && (
         <div
           className="fixed inset-0 z-[200] flex items-center justify-center p-6"
           style={{ background: 'rgba(0,0,0,0.8)' }}
