@@ -13,6 +13,21 @@ export async function loader({ request, params }: Route.LoaderArgs) {
   const record = await prisma.competitionHistory.findUnique({ where: { id } })
   if (!record) throw new Response('Competition not found', { status: 404 })
 
+  // Resolve admin names for configured/started/ended by
+  const adminIds = [record.configuredBy, record.startedBy, record.endedBy].filter(Boolean) as string[]
+  const admins = adminIds.length > 0
+    ? await prisma.admin.findMany({
+        where: { id: { in: adminIds } },
+        select: { id: true, firstName: true, lastName: true, email: true },
+      })
+    : []
+  function adminName(aid: string | null) {
+    if (!aid) return null
+    const a = admins.find(x => x.id === aid)
+    if (!a) return null
+    return [a.firstName, a.lastName].filter(Boolean).join(' ') || a.email
+  }
+
   return {
     id: record.id,
     type: record.type,
@@ -22,6 +37,9 @@ export async function loader({ request, params }: Route.LoaderArgs) {
     totalParticipants: record.totalParticipants,
     createdAt: record.createdAt.toISOString(),
     winners: record.winners as unknown as CompetitionWinner[],
+    configuredBy: adminName(record.configuredBy ?? null),
+    startedBy:    adminName(record.startedBy    ?? null),
+    endedBy:      adminName(record.endedBy      ?? null),
   }
 }
 
@@ -95,6 +113,30 @@ export default function AdminCompetitionDetail() {
             Archived on {fmtGMT7(record.createdAt)}
           </span>
         </div>
+
+        {/* Admin trail */}
+        {(record.configuredBy || record.startedBy || record.endedBy) && (
+          <div className="mt-4 flex flex-wrap gap-x-6 gap-y-2 border-t pt-3" style={{ borderColor: '#1e1b4b' }}>
+            {record.configuredBy && (
+              <div>
+                <div className="text-[10px] font-bold" style={{ color: '#a5b4fc' }}>CONFIGURED BY</div>
+                <div className="mt-0.5 text-xs font-semibold" style={{ color: '#fde68a' }}>{record.configuredBy}</div>
+              </div>
+            )}
+            {record.startedBy && (
+              <div>
+                <div className="text-[10px] font-bold" style={{ color: '#a5b4fc' }}>STARTED BY</div>
+                <div className="mt-0.5 text-xs font-semibold" style={{ color: '#4ade80' }}>{record.startedBy}</div>
+              </div>
+            )}
+            {record.endedBy && (
+              <div>
+                <div className="text-[10px] font-bold" style={{ color: '#a5b4fc' }}>ENDED BY</div>
+                <div className="mt-0.5 text-xs font-semibold" style={{ color: '#f87171' }}>{record.endedBy}</div>
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Winners podium */}

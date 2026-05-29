@@ -1,9 +1,9 @@
-import { useState } from 'react'
-import { Form, Link, useFetcher, useLoaderData, useNavigation, useRevalidator, useSearchParams, useSubmit } from 'react-router'
+import { useEffect, useState } from 'react'
+import { Form, Link, useFetcher, useLoaderData, useNavigation, useRevalidator, useSearchParams } from 'react-router'
 import { ArrowDown, ArrowDownCircle, ArrowUp, ArrowUpCircle, ArrowUpDown, Eye, Lock, Loader, Search, Wallet, X } from 'lucide-react'
 import type { Route } from './+types/admin.play-history'
 import type { WalletType } from '@prisma/client'
-import { requireRole } from '~/lib/admin-auth.server'
+import { requireAdmin, requireRole } from '~/lib/admin-auth.server'
 import { prisma } from '~/lib/prisma.server'
 import { ADMIN_CHANNEL, type BetPlacedPayload, type RoundResolvedPayload } from '~/lib/pusher-channels'
 import { usePusherEvent } from '~/hooks/use-pusher'
@@ -119,6 +119,7 @@ export async function loader({ request }: Route.LoaderArgs) {
 // ─── ACTION ──────────────────────────────────────────────────────────
 export async function action({ request }: Route.ActionArgs) {
   const admin = await requireAdmin(request)
+  if (admin.role === 'SUPPORT') return { error: 'Insufficient permissions' }
   const fd = await request.formData()
   const op = String(fd.get('op') ?? '')
   const userId = String(fd.get('userId') ?? '')
@@ -142,12 +143,19 @@ export default function AdminPlayHistory() {
   const [params] = useSearchParams()
   const navigation = useNavigation()
   const revalidator = useRevalidator()
-  const submit = useSubmit()
+  const lockFetcher = useFetcher<{ ok?: boolean; error?: string }>()
   const loading = navigation.state !== 'idle'
   const totalPages = Math.max(1, Math.ceil(data.total / data.pageSize))
 
   const [walletModal, setWalletModal] = useState<{ userId: string; tel: string } | null>(null)
   const [lockModal, setLockModal] = useState<{ userId: string; tel: string; isLocked: boolean } | null>(null)
+
+  // Revalidate once the lock/unlock fetcher settles
+  useEffect(() => {
+    if (lockFetcher.state === 'idle' && lockFetcher.data?.ok) {
+      revalidator.revalidate()
+    }
+  }, [lockFetcher.state, lockFetcher.data, revalidator])
 
   const onFirstPage = data.page === 1
   usePusherEvent<BetPlacedPayload>(ADMIN_CHANNEL, 'bet:placed', () => {
@@ -199,7 +207,7 @@ export default function AdminPlayHistory() {
     const fd = new FormData()
     fd.set('op', isLocked ? 'unlockGame' : 'lockGame')
     fd.set('userId', userId)
-    submit(fd, { method: 'post' })
+    lockFetcher.submit(fd, { method: 'post' })
     setLockModal(null)
   }
 
@@ -881,3 +889,18 @@ function LedgerColumn({ tone, title, icon, rows, total }: {
     </div>
   )
 }
+
+export function ErrorBoundary() {
+  return (
+    <div className="flex flex-col items-center justify-center gap-3 rounded-xl p-10 text-center"
+      style={{ background: '#0f172a', border: '1px solid #1e1b4b' }}>
+      <p className="text-sm font-semibold" style={{ color: '#f87171' }}>Something went wrong loading play history.</p>
+      <a href="/admin/play-history"
+        className="rounded-lg px-4 py-2 text-xs font-bold"
+        style={{ background: '#1e1b4b', color: '#a5b4fc', border: '1px solid #4338ca' }}>
+        Try again
+      </a>
+    </div>
+  )
+}
+

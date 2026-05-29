@@ -418,7 +418,7 @@ export default function AdminCustomers() {
   )
 }
 
-function CustomerCard({ u, onAction, onResetPassword, rowNum }: { u: CustomerRow; onAction: (u: CustomerRow) => void; onResetPassword: (u: CustomerRow) => void; rowNum: number }) {
+function CustomerCard({ u, onAction, onResetPassword, rowNum }: { u: CustomerRow; onAction?: (u: CustomerRow) => void; onResetPassword?: (u: CustomerRow) => void; rowNum: number }) {
   return (
     <div
       className="rounded-xl p-3"
@@ -449,19 +449,21 @@ function CustomerCard({ u, onAction, onResetPassword, rowNum }: { u: CustomerRow
       <div className="mt-2 flex items-center justify-between gap-2">
         <div className="flex items-center gap-1.5">
           <PhaseBadge phase={u.selfPlayPhase} />
-          <GameLockButton u={u} onRevalidate={() => window.location.reload()} />
+          {onAction && <GameLockButton u={u} onRevalidate={() => window.location.reload()} />}
         </div>
+        {(onResetPassword || onAction) && (
         <div className="flex items-center gap-1.5">
-          <button
+          {onResetPassword && <button
             type="button"
             onClick={() => onResetPassword(u)}
             className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[10px] font-bold"
             style={{ background: 'rgba(67,56,202,0.25)', color: '#a5b4fc', border: '1px solid #4338ca' }}
           >
             <KeyRound size={10} /> PW
-          </button>
-          <ActionButton u={u} onClick={() => onAction(u)} />
+          </button>}
+          {onAction && <ActionButton u={u} onClick={() => onAction(u)} />}
         </div>
+        )}
       </div>
     </div>
   )

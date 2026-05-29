@@ -53,6 +53,8 @@ export async function action({ request }: Route.ActionArgs) {
   const op = String(fd.get('op') ?? '')
 
   if (op === 'toggleSleepMode') {
+    // Sleep mode is a nuclear option — SUPERADMIN only, even via direct POST
+    if (admin.role !== 'SUPERADMIN') return { error: 'Insufficient permissions' }
     const current = await getSleepMode()
     await setSleepMode(!current, admin.id)
     return { ok: true, sleepMode: !current }

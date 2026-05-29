@@ -136,9 +136,11 @@ model Admin {
   createdAt       DateTime      @default(now())
   updatedAt       DateTime      @updatedAt
 
-  sessions     AdminSession[]
-  hostedRounds GameRound[]    @relation("HostRounds")
-  auditLogs    AuditLog[]     @relation("AuditActor")
+  sessions             AdminSession[]
+  hostedRounds         GameRound[]    @relation("HostRounds")
+  auditLogs            AuditLog[]     @relation("AuditActor")
+  approvedTransactions Transaction[]  @relation("ApprovedBy")
+  rejectedTransactions Transaction[]  @relation("RejectedBy")
 
   @@index([role])
   @@index([status])
@@ -294,12 +296,17 @@ model Transaction {
   roundId        String?           @db.ObjectId // link to GameRound (WIN / LOSS)
   betId          String?           @db.ObjectId // link to specific bet (WIN / LOSS)
   slipUrl        String? // payment-slip image URL (DEPOSIT / WITHDRAW with manual verification)
+  approvedById   String?           @db.ObjectId // admin who approved this tx
+  rejectedById   String?           @db.ObjectId // admin who rejected this tx
+  reviewedAt     DateTime?                      // when approved or rejected
   createdAt      DateTime          @default(now())
 
   user       User       @relation("UserTx", fields: [userId], references: [id])
   wallet     Wallet     @relation(fields: [walletId], references: [id])
   targetUser User?      @relation("ReceivedTx", fields: [targetUserId], references: [id])
   round      GameRound? @relation(fields: [roundId], references: [id])
+  approvedBy Admin?     @relation("ApprovedBy", fields: [approvedById], references: [id])
+  rejectedBy Admin?     @relation("RejectedBy", fields: [rejectedById], references: [id])
 
   @@index([userId, createdAt(sort: Desc)]) // full user history
   @@index([userId, type, createdAt(sort: Desc)]) // per-tab history on /wallet
@@ -490,6 +497,9 @@ model CompetitionHistory {
   endDate           DateTime  @default(now())
   winners           Json      // CompetitionWinner[]
   totalParticipants Int       @default(0)
+  configuredBy      String?   @db.ObjectId // admin who created/configured the competition
+  startedBy         String?   @db.ObjectId // admin who clicked Start
+  endedBy           String?   @db.ObjectId // admin who clicked End Competition
   createdAt         DateTime  @default(now())
 
   @@index([createdAt(sort: Desc)])

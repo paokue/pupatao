@@ -227,7 +227,7 @@ export default function AdminLayout() {
             skelType === 'live'      ? <LiveSkeleton />      :
                                        <TableSkeleton />
           ) : (
-            <Outlet context={{ adminRole: admin.role } satisfies AdminOutletContext} />
+            <Outlet context={{ adminRole: admin.role as AdminRole } satisfies AdminOutletContext} />
           )}
         </main>
       </div>

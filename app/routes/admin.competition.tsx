@@ -102,6 +102,7 @@ export async function loader({ request }: Route.LoaderArgs) {
 // ─── ACTION ──────────────────────────────────────────────────────────
 export async function action({ request }: Route.ActionArgs) {
   const admin = await requireAdmin(request)
+  if (admin.role === 'SUPPORT') return { error: 'Insufficient permissions' }
   const fd = await request.formData()
   const op = String(fd.get('op') ?? '')
 
@@ -118,6 +119,9 @@ export async function action({ request }: Route.ActionArgs) {
         update: { value: 'true', updatedBy: admin.id },
       })
     }
+    await prisma.auditLog.create({
+      data: { actorId: admin.id, action: next ? 'competition.start' : 'competition.stop' },
+    })
     notifyCompetition('competition:toggled', { enabled: next })
     return { ok: true }
   }
@@ -130,6 +134,9 @@ export async function action({ request }: Route.ActionArgs) {
     const start = startLocal ? new Date(`${startLocal}:00+07:00`).toISOString() : null
     const end   = endLocal   ? new Date(`${endLocal}:00+07:00`).toISOString()   : null
     await setCompetitionConfig({ type, rules, start, end }, admin.id)
+    await prisma.auditLog.create({
+      data: { actorId: admin.id, action: 'competition.configure', metadata: { type, rules, start, end } },
+    })
     return { ok: true }
   }
 
@@ -168,6 +175,9 @@ export async function action({ request }: Route.ActionArgs) {
       .slice(0, 3)
       .map((w, i) => ({ ...w, rank: i + 1 }))
     await setCompetitionSummary(top3, admin.id)
+    await prisma.auditLog.create({
+      data: { actorId: admin.id, action: 'competition.summarize', metadata: { top3Count: top3.length } },
+    })
     notifyCompetition('competition:summarized', { winners: top3 })
     return { ok: true }
   }
@@ -183,19 +193,26 @@ export async function action({ request }: Route.ActionArgs) {
 
   if (op === 'endCompetition') {
     const config = await getCompetitionConfig()
-    // Count participants: users with a non-zero relevant wallet balance or any bet
+    // Resolve who configured and who started from SystemSetting.updatedBy
+    const [configuredBySetting, startedBySetting] = await Promise.all([
+      prisma.systemSetting.findUnique({ where: { key: 'competitionType' }, select: { updatedBy: true } }),
+      prisma.systemSetting.findUnique({ where: { key: COMPETITION_STARTED_KEY }, select: { updatedBy: true } }),
+    ])
     const walletType = config.type === 'DEMO_LIVE' ? 'DEMO' : 'REAL'
     const totalParticipants = await prisma.user.count({
       where: { wallets: { some: { type: walletType, balance: { gt: 0 } } } },
     })
     await prisma.competitionHistory.create({
       data: {
-        type:      config.type,
-        rules:     config.rules,
-        startDate: config.start ? new Date(config.start) : null,
-        endDate:   config.end   ? new Date(config.end)   : new Date(),
-        winners:   JSON.parse(JSON.stringify(config.summary ?? [])),
+        type:          config.type,
+        rules:         config.rules,
+        startDate:     config.start ? new Date(config.start) : null,
+        endDate:       config.end   ? new Date(config.end)   : new Date(),
+        winners:       JSON.parse(JSON.stringify(config.summary ?? [])),
         totalParticipants,
+        configuredBy:  configuredBySetting?.updatedBy ?? null,
+        startedBy:     startedBySetting?.updatedBy    ?? null,
+        endedBy:       admin.id,
       },
     })
     // Clear ALL competition settings + participants
@@ -207,6 +224,9 @@ export async function action({ request }: Route.ActionArgs) {
         where: { key: { in: ['competitionType', COMPETITION_STARTED_KEY] } },
       }),
       prisma.competitionParticipant.deleteMany({}),
+      prisma.auditLog.create({
+        data: { actorId: admin.id, action: 'competition.end', metadata: { type: config.type, totalParticipants } },
+      }),
     ])
     notifyCompetition('competition:ended', {})
     return { ok: true }

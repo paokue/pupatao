@@ -112,15 +112,20 @@ export async function loader({ request }: Route.LoaderArgs) {
   // Deposit / Withdraw
   const txType = tab === 'deposit' ? 'DEPOSIT' as const : 'WITHDRAW' as const
   const baseWhere = { type: txType, ...telFilter }
+  const dwInclude = {
+    user: { select: USER_SELECT },
+    approvedBy: { select: { id: true, firstName: true, lastName: true, email: true } },
+    rejectedBy: { select: { id: true, firstName: true, lastName: true, email: true } },
+  }
 
   let total: number
-  let rows: Awaited<ReturnType<typeof prisma.transaction.findMany<{ include: { user: { select: typeof USER_SELECT } } }>>>
+  let rows: Awaited<ReturnType<typeof prisma.transaction.findMany<{ include: typeof dwInclude }>>>
 
   if (status === 'ALL') {
     const [count, pendingRows, otherRows] = await Promise.all([
       prisma.transaction.count({ where: baseWhere }),
-      prisma.transaction.findMany({ where: { ...baseWhere, status: 'PENDING' }, orderBy: { createdAt: 'desc' }, include: { user: { select: USER_SELECT } } }),
-      prisma.transaction.findMany({ where: { ...baseWhere, status: { not: 'PENDING' } }, orderBy: { createdAt: 'desc' }, skip: (page - 1) * pageSize, take: pageSize, include: { user: { select: USER_SELECT } } }),
+      prisma.transaction.findMany({ where: { ...baseWhere, status: 'PENDING' }, orderBy: { createdAt: 'desc' }, include: dwInclude }),
+      prisma.transaction.findMany({ where: { ...baseWhere, status: { not: 'PENDING' } }, orderBy: { createdAt: 'desc' }, skip: (page - 1) * pageSize, take: pageSize, include: dwInclude }),
     ])
     total = count
     rows = [...pendingRows, ...otherRows].slice(0, pageSize)
@@ -128,13 +133,16 @@ export async function loader({ request }: Route.LoaderArgs) {
     const where = { ...baseWhere, status }
     const [count, items] = await Promise.all([
       prisma.transaction.count({ where }),
-      prisma.transaction.findMany({ where, orderBy: { createdAt: 'desc' }, skip: (page - 1) * pageSize, take: pageSize, include: { user: { select: USER_SELECT } } }),
+      prisma.transaction.findMany({ where, orderBy: { createdAt: 'desc' }, skip: (page - 1) * pageSize, take: pageSize, include: dwInclude }),
     ])
     total = count
     rows = items
   }
 
-  const txs = rows
+  function adminName(a: { firstName: string; lastName: string; email: string } | null) {
+    if (!a) return null
+    return [a.firstName, a.lastName].filter(Boolean).join(' ') || a.email
+  }
 
   return {
     tab,
@@ -146,7 +154,7 @@ export async function loader({ request }: Route.LoaderArgs) {
     pendingDepositCount,
     pendingWithdrawCount,
     pendingTransferCount,
-    txs: txs.map(t => ({
+    txs: rows.map(t => ({
       id: t.id,
       type: tab as 'deposit' | 'withdraw',
       amount: t.amount,
@@ -154,15 +162,19 @@ export async function loader({ request }: Route.LoaderArgs) {
       slipUrl: t.slipUrl ?? null,
       note: t.note,
       createdAt: t.createdAt.toISOString(),
+      reviewedAt: t.reviewedAt?.toISOString() ?? null,
       balanceAfter: t.balanceAfter,
       sender: { tel: t.user.tel, name: userName(t.user) },
       recipient: null as null,
+      approvedBy: adminName(t.approvedBy),
+      rejectedBy: adminName(t.rejectedBy),
     })),
   }
 }
 
 export async function action({ request }: Route.ActionArgs) {
   const admin = await requireAdmin(request)
+  if (admin.role === 'SUPPORT') return { error: 'Insufficient permissions' }
   const fd = await request.formData()
   const op = String(fd.get('op') ?? '')
   const txId = String(fd.get('txId') ?? '')
@@ -179,7 +191,12 @@ export async function action({ request }: Route.ActionArgs) {
       const [updated] = await prisma.$transaction([
         prisma.transaction.update({
           where: { id: tx.id },
-          data: { status: 'CANCELLED', note: `${tx.note ?? 'Deposit'} — rejected by admin` },
+          data: {
+            status: 'CANCELLED',
+            note: `${tx.note ?? 'Deposit'} — rejected by admin`,
+            rejectedById: admin.id,
+            reviewedAt: new Date(),
+          },
         }),
         prisma.auditLog.create({
           data: {
@@ -220,6 +237,8 @@ export async function action({ request }: Route.ActionArgs) {
           balanceBefore: wallet.balance,
           balanceAfter: newBalance,
           note: `${tx.note ?? (tx.type === 'DEPOSIT' ? 'Deposit' : 'Withdraw')} — approved by admin`,
+          approvedById: admin.id,
+          reviewedAt: new Date(),
         },
       })
       await db.auditLog.create({
@@ -639,6 +658,18 @@ function TxCard({
           {new Date(tx.createdAt).toLocaleString()}
         </div>
         {tx.note && <div className="mt-1 text-xs" style={{ color: '#a5b4fc' }}>{tx.note}</div>}
+        {'approvedBy' in tx && tx.approvedBy && (
+          <div className="mt-1 text-[10px]" style={{ color: '#4ade80' }}>
+            ✓ Approved by <strong>{tx.approvedBy}</strong>
+            {tx.reviewedAt ? ` · ${new Date(tx.reviewedAt).toLocaleString()}` : ''}
+          </div>
+        )}
+        {'rejectedBy' in tx && tx.rejectedBy && (
+          <div className="mt-1 text-[10px]" style={{ color: '#f87171' }}>
+            ✗ Rejected by <strong>{tx.rejectedBy}</strong>
+            {tx.reviewedAt ? ` · ${new Date(tx.reviewedAt).toLocaleString()}` : ''}
+          </div>
+        )}
       </div>
       <div className="flex items-center gap-3 md:flex-col md:items-end">
         <span className="text-lg font-bold" style={{ color: '#fde68a' }}>
