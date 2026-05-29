@@ -144,6 +144,7 @@ export default function AdminPlayHistory() {
   const navigation = useNavigation()
   const revalidator = useRevalidator()
   const lockFetcher = useFetcher<{ ok?: boolean; error?: string }>()
+  const lockProcessing = lockFetcher.state !== 'idle'
   const loading = navigation.state !== 'idle'
   const totalPages = Math.max(1, Math.ceil(data.total / data.pageSize))
 
@@ -338,6 +339,7 @@ export default function AdminPlayHistory() {
               rowNum={(data.page - 1) * data.pageSize + i + 1}
               onView={() => setWalletModal({ userId: b.user.id, tel: b.user.tel })}
               onLock={() => confirmLock(b.user.id, b.user.tel, b.user.selfPlayPhase === 'ADMIN_LOCKED')}
+              lockProcessing={lockProcessing}
             />
           ))}
         </div>
@@ -418,16 +420,17 @@ export default function AdminPlayHistory() {
                         {/* Lock / Unlock */}
                         <button
                           type="button"
-                          onClick={() => confirmLock(b.user.id, b.user.tel, isLocked)}
+                          onClick={() => !lockProcessing && confirmLock(b.user.id, b.user.tel, isLocked)}
+                          disabled={lockProcessing}
                           title={isLocked ? 'Unlock player' : 'Lock player'}
-                          className="flex h-7 w-7 items-center justify-center rounded-md transition-opacity hover:opacity-80"
+                          className="flex h-7 w-7 items-center justify-center rounded-md transition-opacity hover:opacity-80 disabled:opacity-50"
                           style={{
                             background: isLocked ? 'rgba(22,163,74,0.2)' : 'rgba(220,38,38,0.15)',
                             color: isLocked ? '#4ade80' : '#f87171',
                             border: `1px solid ${isLocked ? '#16a34a' : '#dc2626'}`,
                           }}
                         >
-                          <Lock size={12} />
+                          {lockProcessing ? <Loader size={12} className="animate-spin" /> : <Lock size={12} />}
                         </button>
                       </div>
                     </td>
@@ -469,8 +472,9 @@ export default function AdminPlayHistory() {
         <LockConfirmModal
           tel={lockModal.tel}
           isLocked={lockModal.isLocked}
-          onClose={() => setLockModal(null)}
+          onClose={() => !lockProcessing && setLockModal(null)}
           onConfirm={() => executeLock(lockModal.userId, lockModal.isLocked)}
+          processing={lockProcessing}
         />
       )}
     </div>
@@ -529,7 +533,7 @@ function BetDescription({ b }: { b: Bet }) {
   return <span className="text-xs">{b.kind}</span>
 }
 
-function BetCard({ b, rowNum, onView, onLock }: { b: Bet; rowNum: number; onView: () => void; onLock: () => void }) {
+function BetCard({ b, rowNum, onView, onLock, lockProcessing }: { b: Bet; rowNum: number; onView: () => void; onLock: () => void; lockProcessing?: boolean }) {
   const isLocked = b.user.selfPlayPhase === 'ADMIN_LOCKED'
   return (
     <div className="rounded-xl p-3" style={{ background: '#0f172a', border: '1px solid #1e1b4b' }}>
@@ -577,14 +581,15 @@ function BetCard({ b, rowNum, onView, onLock }: { b: Bet; rowNum: number; onView
           style={{ background: '#1e1b4b', color: '#a5b4fc', border: '1px solid #4338ca' }}>
           <Eye size={12} /> View wallet
         </button>
-        <button type="button" onClick={onLock}
-          className="flex flex-1 items-center justify-center gap-1.5 rounded-lg py-1.5 text-xs font-bold"
+        <button type="button" onClick={onLock} disabled={lockProcessing}
+          className="flex flex-1 items-center justify-center gap-1.5 rounded-lg py-1.5 text-xs font-bold disabled:opacity-50"
           style={{
             background: isLocked ? 'rgba(22,163,74,0.2)' : 'rgba(220,38,38,0.15)',
             color: isLocked ? '#4ade80' : '#f87171',
             border: `1px solid ${isLocked ? '#16a34a' : '#dc2626'}`,
           }}>
-          <Lock size={12} />{isLocked ? 'Unlock' : 'Lock'}
+          {lockProcessing ? <Loader size={12} className="animate-spin" /> : <Lock size={12} />}
+          {isLocked ? 'Unlock' : 'Lock'}
         </button>
       </div>
     </div>
@@ -620,12 +625,13 @@ function TxStatusPill({ status }: { status: string }) {
 // ─── Lock confirm modal ───────────────────────────────────────────────
 
 function LockConfirmModal({
-  tel, isLocked, onClose, onConfirm,
+  tel, isLocked, onClose, onConfirm, processing,
 }: {
   tel: string
   isLocked: boolean
   onClose: () => void
   onConfirm: () => void
+  processing?: boolean
 }) {
   return (
     <div className="fixed inset-0 z-[200] flex items-center justify-center p-6"
@@ -651,14 +657,15 @@ function LockConfirmModal({
             style={{ background: '#2d1b4e', color: '#a78bfa', border: '1px solid #4c1d95' }}>
             Cancel
           </button>
-          <button type="button" onClick={onConfirm}
-            className="flex-1 rounded-xl py-2.5 text-sm font-bold"
+          <button type="button" onClick={onConfirm} disabled={processing}
+            className="flex flex-1 items-center justify-center gap-2 rounded-xl py-2.5 text-sm font-bold disabled:opacity-60"
             style={{
               background: isLocked ? 'linear-gradient(135deg,#16a34a,#14532d)' : 'linear-gradient(135deg,#dc2626,#7f1d1d)',
               color: '#fff',
               border: `1px solid ${isLocked ? '#4ade80' : '#fca5a5'}`,
             }}>
-            {isLocked ? 'Yes, Unlock' : 'Yes, Lock'}
+            {processing && <Loader size={14} className="animate-spin" />}
+            {processing ? 'Processing…' : isLocked ? 'Yes, Unlock' : 'Yes, Lock'}
           </button>
         </div>
       </div>
