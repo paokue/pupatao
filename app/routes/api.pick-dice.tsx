@@ -93,6 +93,19 @@ export async function action({ request }: { request: Request }) {
         return Response.json({ ok: true, dice, token })
       }
 
+      // PROMO self-play: always loses. Promo balance may only be used in live
+      // mode (and only when real balance is 0). In self-play it always burns.
+      if (parsed.wallet === 'PROMO') {
+        const { pickZeroPayoutDice } = await import('~/lib/game-logic.server')
+        const dice = pickZeroPayoutDice(parsed.symbolBets, parsed.rangeBets, parsed.pairBets, cfg)
+        const token = signRoundToken({
+          dice, wallet: parsed.wallet,
+          symbolBets: parsed.symbolBets, rangeBets: parsed.rangeBets, pairBets: parsed.pairBets,
+          exp: Date.now() + 120_000,
+        })
+        return Response.json({ ok: true, dice, token })
+      }
+
       // Type B (REAL_LIVE) competition: participants cannot use real wallet in self-play.
       // api.pick-dice is ONLY called for self-play (random) mode, so any REAL wallet
       // bet here from a Type B participant is a violation — return an error.

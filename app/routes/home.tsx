@@ -2345,7 +2345,8 @@ export default function FishPrawnCrabGame() {
                     { key: 'real', label: t('menu.realAccount') },
                     // Demo is always shown in live mode (competition uses live demo play)
                     { key: 'demo', label: t('menu.demoAccount') },
-                    ...((user.balances.promo ?? 0) > 0 ? [{ key: 'promo', label: t('menu.promoAccount') }] : []),
+                    // PROMO in live mode: only when real balance is 0
+                    ...((user.balances.promo ?? 0) > 0 && (user.balances.real ?? 0) === 0 ? [{ key: 'promo', label: t('menu.promoAccount') }] : []),
                   ]}
                   active={user.activeWallet}
                   align="right"

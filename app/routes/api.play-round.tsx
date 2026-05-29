@@ -128,6 +128,20 @@ export async function action({ request }: Route.ActionArgs) {
     }
 
     if (mode === 'LIVE') {
+      // PROMO in live mode: only allowed when real balance is 0.
+      // Prevents bonus abuse (deposit → get promo → play promo → withdraw deposit).
+      if (walletKey === 'PROMO') {
+        const realWallet = await prisma.wallet.findUnique({
+          where: { userId_type: { userId: user.id, type: 'REAL' } },
+          select: { balance: true },
+        })
+        if (realWallet && realWallet.balance > 0) {
+          return Response.json(
+            { error: 'ບໍ່ສາມາດໃຊ້ Promo Balance ໃນ Live mode ໄດ້ ເມື່ອມີ Real Balance ຢູ່' },
+            { status: 403 },
+          )
+        }
+      }
       return await handleLiveBets({ user, wallet, walletKey, totalStake, symbolBets, rangeBets, pairBets, sumBets })
     }
 

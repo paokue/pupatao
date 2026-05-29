@@ -148,13 +148,13 @@ export function LoginModal({ open, onClose, next, hint, onSwitchToRegister }: Lo
               <button
                 type="button"
                 onClick={onSwitchToRegister}
-                className="font-bold underline-offset-2 hover:underline"
+                className="text-base font-bold underline underline-offset-2"
                 style={{ color: '#fde68a' }}
               >
                 {t('auth.register')}
               </button>
             ) : (
-              <a href="/register" className="font-bold" style={{ color: '#fde68a' }}>
+              <a href="/register" className="text-base font-bold underline underline-offset-2" style={{ color: '#fde68a' }}>
                 {t('auth.register')}
               </a>
             )}

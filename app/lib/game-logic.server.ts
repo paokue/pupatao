@@ -51,7 +51,7 @@ function phaseSettings(wallet: WalletType, phase: SelfPlayPhase): {
   lockAll: boolean
 } {
   if (wallet === 'DEMO') {
-    return { winChance: 0.60, pickMax: true, lockAll: false }
+    return { winChance: 0.50, pickMax: true, lockAll: false }
   }
   switch (phase) {
     case 'ADMIN_LOCKED': return { winChance: 0.00, pickMax: false, lockAll: true }
