@@ -28,7 +28,7 @@ import {
   type RoundStartedPayload,
   type TxUpdatedPayload,
 } from '~/lib/pusher-channels'
-import { ArrowDown, ArrowUp, ArrowUpDown, BookOpen, Check, ChevronDown, Eye, LogOut, MessageCircle, Pencil, ReceiptText, RefreshCw, Undo, User, Volume2, VolumeOff, Wallet, X } from 'lucide-react'
+import { ArrowDown, ArrowUp, ArrowUpDown, BookOpen, CalendarClock, Check, ChevronDown, Eye, LogOut, MessageCircle, Pencil, ReceiptText, RefreshCw, Undo, User, Volume2, VolumeOff, Wallet, X } from 'lucide-react'
 
 type SymbolKey = 'fish' | 'prawn' | 'crab' | 'rooster' | 'gourd' | 'frog'
 
@@ -652,9 +652,9 @@ function LiveScheduleCard({
 
   return (
     <div className="flex flex-col items-center gap-3 text-center px-4">
-      <div style={{ fontSize: compact ? 28 : 40 }}>📅</div>
+      <CalendarClock size={compact ? 28 : 40} style={{ color: '#a78bfa' }} />
       <div>
-        <p className="text-xs font-bold" style={{ color: '#fde68a' }}>ການຖ່າຍທອດສົດຄັ້ງຕໍ່ໄປ</p>
+        <p className="text-base font-bold" style={{ color: '#fde68a' }}>ການຖ່າຍທອດສົດຄັ້ງຕໍ່ໄປ</p>
         <p className="mt-0.5 text-[10px]" style={{ color: '#a78bfa' }}>
           {fmtDate(schedule.start)} · {fmtTime(schedule.start)}{schedule.end ? ` – ${fmtTime(schedule.end)}` : ''} <span style={{ color: '#6d28d9' }}>(GMT+7)</span>
         </p>
