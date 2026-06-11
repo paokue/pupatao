@@ -50,7 +50,6 @@ export async function loader({ request }: Route.LoaderArgs) {
   const betType: BetTypeFilter = (['SYMBOL', 'PAIR', 'LOW', 'MIDDLE', 'HIGH'] as const).includes(betTypeParam as any) ? betTypeParam as BetTypeFilter : 'ALL'
   const mode: 'ALL' | 'RANDOM' | 'LIVE' = modeParam === 'RANDOM' ? 'RANDOM' : modeParam === 'LIVE' ? 'LIVE' : 'ALL'
 
-  const resultWhere = result !== 'ALL' ? { result } : {}
   const betTypeWhere =
     betType === 'SYMBOL' ? { kind: 'SYMBOL' as const }
     : betType === 'PAIR' ? { kind: 'PAIR' as const }
@@ -58,18 +57,37 @@ export async function loader({ request }: Route.LoaderArgs) {
     : betType === 'MIDDLE' ? { kind: 'RANGE' as const, range: 'MIDDLE' as const }
     : betType === 'HIGH' ? { kind: 'RANGE' as const, range: 'HIGH' as const }
     : {}
-  const modeWhere = mode !== 'ALL' ? { round: { is: { mode: mode as 'RANDOM' | 'LIVE' } } } : {}
+
+  // Pre-fetch IDs to avoid expensive $lookup relation filters on the Bet collection.
+  // Each lookup is on a small collection (Wallet, GameRound, User) with proper indexes,
+  // which is orders of magnitude faster than a full-collection join on 18K+ bets.
+  const { getSleepMode } = await import('~/lib/system-settings.server')
+  const [walletIds, roundIds, userIds, sleepMode] = await Promise.all([
+    // All wallets of the selected type — replaces wallet: { is: { type } }
+    prisma.wallet.findMany({ where: { type: walletType }, select: { id: true } })
+      .then(ws => ws.map(w => w.id)),
+    // Round IDs by mode — only when mode filter is active
+    mode !== 'ALL'
+      ? prisma.gameRound.findMany({ where: { mode: mode as 'RANDOM' | 'LIVE' }, select: { id: true } })
+          .then(rs => rs.map(r => r.id))
+      : Promise.resolve(null),
+    // User IDs matching phone search — only when q is set
+    q
+      ? prisma.user.findMany({ where: { tel: { contains: q, mode: 'insensitive' } }, select: { id: true } })
+          .then(us => us.map(u => u.id))
+      : Promise.resolve(null),
+    getSleepMode(),
+  ])
 
   const where = {
-    wallet: { is: { type: walletType } },
-    ...resultWhere,
+    walletId: { in: walletIds },
+    ...(result !== 'ALL' ? { result } : {}),
     ...betTypeWhere,
-    ...modeWhere,
-    ...(q ? { user: { is: { tel: { contains: q, mode: 'insensitive' as const } } } } : {}),
+    ...(roundIds !== null ? { roundId: { in: roundIds } } : {}),
+    ...(userIds !== null ? { userId: { in: userIds } } : {}),
   }
 
-  const { getSleepMode } = await import('~/lib/system-settings.server')
-  const [total, bets, sleepMode] = await Promise.all([
+  const [total, bets] = await Promise.all([
     prisma.bet.count({ where }),
     prisma.bet.findMany({
       where,
@@ -81,7 +99,6 @@ export async function loader({ request }: Route.LoaderArgs) {
         round: { select: { mode: true, status: true, dice1: true, dice2: true, dice3: true, diceSum: true } },
       },
     }),
-    getSleepMode(),
   ])
 
   return {

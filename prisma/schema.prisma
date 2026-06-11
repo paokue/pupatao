@@ -435,7 +435,7 @@ model Bet {
   @@index([roundId])
   @@index([userId, createdAt(sort: Desc)])
   @@index([userId, walletId, createdAt(sort: Desc)]) // /history filter: real wallet only
-  @@index([walletId])
+  @@index([walletId, createdAt(sort: Desc)])          // admin play-history: wallet filter + sort
 }
 
 enum BetKind {

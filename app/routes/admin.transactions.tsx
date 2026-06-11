@@ -37,18 +37,19 @@ export async function loader({ request }: Route.LoaderArgs) {
   const pageSize = (PAGE_SIZES as readonly number[]).includes(pageSizeRaw) ? pageSizeRaw : 30
   const q = url.searchParams.get('q')?.trim() ?? ''
 
-  // Phone-number filter on the user (sender) — and on the target user too for
-  // transfers, so admins can find a transfer by either side's tel.
-  const telFilter = q
-    ? { user: { is: { tel: { contains: q, mode: 'insensitive' as const } } } }
+  // Pre-fetch user IDs matching the phone search to avoid expensive $lookup joins.
+  const matchedUserIds = q
+    ? await prisma.user.findMany({
+        where: { tel: { contains: q, mode: 'insensitive' as const } },
+        select: { id: true },
+      }).then(us => us.map(u => u.id))
+    : null
+
+  const telFilter = matchedUserIds !== null
+    ? { userId: { in: matchedUserIds } }
     : {}
-  const transferTelFilter = q
-    ? {
-      OR: [
-        { user: { is: { tel: { contains: q, mode: 'insensitive' as const } } } },
-        { targetUser: { is: { tel: { contains: q, mode: 'insensitive' as const } } } },
-      ],
-    }
+  const transferTelFilter = matchedUserIds !== null
+    ? { OR: [{ userId: { in: matchedUserIds } }, { targetUserId: { in: matchedUserIds } }] }
     : {}
 
   const [pendingDepositCount, pendingWithdrawCount, pendingTransferCount] = await Promise.all([
