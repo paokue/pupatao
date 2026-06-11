@@ -1,7 +1,7 @@
 import type { Route } from './+types/api.play-round'
 import type { DiceSymbol, RangeKey, BetResult } from '@prisma/client'
 import { prisma } from '~/lib/prisma.server'
-import { notifyAdmin, notifyUser } from '~/lib/pusher.server'
+import { notifyAdmin, notifyAdminBatch, notifyUser } from '~/lib/pusher.server'
 import type { BetPlacedPayload } from '~/lib/pusher-channels'
 import {
   SYMBOL_VALUES, VALID_SYMBOLS, RANGE_BOUNDS, VALID_RANGES,
@@ -415,44 +415,21 @@ async function handleLiveBets(args: {
 
     const createdBets: Array<{ kind: 'SYMBOL' | 'RANGE' | 'PAIR' | 'SUM'; amount: number; symbol: DiceSymbol | null; range: RangeKey | null; pairA: DiceSymbol | null; pairB: DiceSymbol | null; exactSum: number | null }> = []
 
-    for (const b of symbolBets) {
-      await db.bet.create({
-        data: {
-          roundId: openRound.id, userId: user.id, walletId: wallet.id,
-          kind: 'SYMBOL', amount: b.amount,
-          symbol: b.symbol, cell: b.cell,
-        },
-      })
-      createdBets.push({ kind: 'SYMBOL', amount: b.amount, symbol: b.symbol, range: null, pairA: null, pairB: null, exactSum: null })
-    }
-    for (const b of rangeBets) {
-      await db.bet.create({
-        data: {
-          roundId: openRound.id, userId: user.id, walletId: wallet.id,
-          kind: 'RANGE', amount: b.amount, range: b.range,
-        },
-      })
-      createdBets.push({ kind: 'RANGE', amount: b.amount, symbol: null, range: b.range, pairA: null, pairB: null, exactSum: null })
-    }
-    for (const b of pairBets) {
-      await db.bet.create({
-        data: {
-          roundId: openRound.id, userId: user.id, walletId: wallet.id,
-          kind: 'PAIR', amount: b.amount,
-          pairA: b.symbolA, pairB: b.symbolB, cellA: b.cellA, cellB: b.cellB,
-        },
-      })
-      createdBets.push({ kind: 'PAIR', amount: b.amount, symbol: null, range: null, pairA: b.symbolA, pairB: b.symbolB, exactSum: null })
-    }
-    for (const b of sumBets) {
-      await db.bet.create({
-        data: {
-          roundId: openRound.id, userId: user.id, walletId: wallet.id,
-          kind: 'SUM', amount: b.amount, exactSum: b.sum,
-        },
-      })
-      createdBets.push({ kind: 'SUM', amount: b.amount, symbol: null, range: null, pairA: null, pairB: null, exactSum: b.sum })
-    }
+    // Create all bets in parallel — reduces DB round trips from N sequential to 1 parallel batch.
+    await Promise.all([
+      ...symbolBets.map(b => db.bet.create({
+        data: { roundId: openRound.id, userId: user.id, walletId: wallet.id, kind: 'SYMBOL', amount: b.amount, symbol: b.symbol, cell: b.cell },
+      }).then(() => createdBets.push({ kind: 'SYMBOL', amount: b.amount, symbol: b.symbol, range: null, pairA: null, pairB: null, exactSum: null }))),
+      ...rangeBets.map(b => db.bet.create({
+        data: { roundId: openRound.id, userId: user.id, walletId: wallet.id, kind: 'RANGE', amount: b.amount, range: b.range },
+      }).then(() => createdBets.push({ kind: 'RANGE', amount: b.amount, symbol: null, range: b.range, pairA: null, pairB: null, exactSum: null }))),
+      ...pairBets.map(b => db.bet.create({
+        data: { roundId: openRound.id, userId: user.id, walletId: wallet.id, kind: 'PAIR', amount: b.amount, pairA: b.symbolA, pairB: b.symbolB, cellA: b.cellA, cellB: b.cellB },
+      }).then(() => createdBets.push({ kind: 'PAIR', amount: b.amount, symbol: null, range: null, pairA: b.symbolA, pairB: b.symbolB, exactSum: null }))),
+      ...sumBets.map(b => db.bet.create({
+        data: { roundId: openRound.id, userId: user.id, walletId: wallet.id, kind: 'SUM', amount: b.amount, exactSum: b.sum },
+      }).then(() => createdBets.push({ kind: 'SUM', amount: b.amount, symbol: null, range: null, pairA: null, pairB: null, exactSum: b.sum }))),
+    ])
 
     await db.wallet.update({
       where: { id: wallet.id },
@@ -470,19 +447,22 @@ async function handleLiveBets(args: {
     return { roundId: openRound.id, newBalance, createdBets }
   })
 
-  // Realtime fanout — fire after the DB transaction commits.
+  // Realtime fanout — fire all bet events in one Pusher API call (triggerBatch)
+  // instead of N separate HTTP requests. Reduces latency proportional to bet count.
   const userName = [user.firstName, user.lastName].filter(Boolean).join(' ') || null
   const placedAtIso = placedAt.toISOString()
-  for (const b of result.createdBets) {
-    const payload: BetPlacedPayload = {
-      roundId: result.roundId, mode: 'LIVE',
-      userId: user.id, userTel: user.tel, userName,
-      kind: b.kind, amount: b.amount,
-      symbol: b.symbol, range: b.range, pairA: b.pairA, pairB: b.pairB,
-      exactSum: b.exactSum,
-      createdAt: placedAtIso,
-    }
-    notifyAdmin('bet:placed', payload)
+  if (result.createdBets.length > 0) {
+    notifyAdminBatch(result.createdBets.map(b => ({
+      event: 'bet:placed',
+      payload: {
+        roundId: result.roundId, mode: 'LIVE',
+        userId: user.id, userTel: user.tel, userName,
+        kind: b.kind, amount: b.amount,
+        symbol: b.symbol, range: b.range, pairA: b.pairA, pairB: b.pairB,
+        exactSum: b.exactSum,
+        createdAt: placedAtIso,
+      } satisfies BetPlacedPayload,
+    })))
   }
 
   return Response.json({

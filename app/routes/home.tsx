@@ -574,7 +574,7 @@ function LiveScheduleCard({
   schedule,
   compact = false,
 }: {
-  schedule: { start: string | null; end: string | null }
+  schedule: { start: string | null; end: string | null; notice: string | null }
   compact?: boolean
 }) {
   const [now, setNow] = useState(() => Date.now())
@@ -629,6 +629,9 @@ function LiveScheduleCard({
         <p className="text-[10px]" style={{ color: '#a78bfa' }}>
           {fmtTime(schedule.start)}{schedule.end ? ` – ${fmtTime(schedule.end)}` : ''} (GMT+7)
         </p>
+        {schedule.notice && (
+          <p className="text-[10px] italic" style={{ color: '#fde68a' }}>{schedule.notice}</p>
+        )}
       </div>
     )
   }
@@ -655,6 +658,9 @@ function LiveScheduleCard({
         <p className="mt-0.5 text-[10px]" style={{ color: '#a78bfa' }}>
           {fmtDate(schedule.start)} · {fmtTime(schedule.start)}{schedule.end ? ` – ${fmtTime(schedule.end)}` : ''} <span style={{ color: '#6d28d9' }}>(GMT+7)</span>
         </p>
+        {schedule.notice && (
+          <p className="mt-1 text-[10px] italic" style={{ color: '#fde68a' }}>{schedule.notice}</p>
+        )}
       </div>
       <div className={`grid grid-cols-4 ${compact ? 'gap-1.5' : 'gap-3'}`}>
         {units.map(({ label, value }) => (

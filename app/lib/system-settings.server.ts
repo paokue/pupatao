@@ -37,9 +37,10 @@ export interface CompetitionWinner {
   profile: string | null
   demoBalance: number
 }
-export const LIVE_STREAM_URL_KEY    = 'liveStreamUrl'
-export const LIVE_SCHEDULE_START_KEY = 'liveScheduleStart'
-export const LIVE_SCHEDULE_END_KEY   = 'liveScheduleEnd'
+export const LIVE_STREAM_URL_KEY      = 'liveStreamUrl'
+export const LIVE_SCHEDULE_START_KEY  = 'liveScheduleStart'
+export const LIVE_SCHEDULE_END_KEY    = 'liveScheduleEnd'
+export const LIVE_SCHEDULE_NOTICE_KEY = 'liveScheduleNotice'
 
 export async function getSleepMode(): Promise<boolean> {
   try {
@@ -85,18 +86,20 @@ export async function setLiveStreamUrl(url: string | null, adminId: string): Pro
   }
 }
 
-export async function getLiveSchedule(): Promise<{ start: string | null; end: string | null }> {
+export async function getLiveSchedule(): Promise<{ start: string | null; end: string | null; notice: string | null }> {
   try {
-    const [startSetting, endSetting] = await Promise.all([
+    const [startSetting, endSetting, noticeSetting] = await Promise.all([
       prisma.systemSetting.findUnique({ where: { key: LIVE_SCHEDULE_START_KEY }, select: { value: true } }),
       prisma.systemSetting.findUnique({ where: { key: LIVE_SCHEDULE_END_KEY }, select: { value: true } }),
+      prisma.systemSetting.findUnique({ where: { key: LIVE_SCHEDULE_NOTICE_KEY }, select: { value: true } }),
     ])
     return {
-      start: startSetting?.value ?? null,
-      end:   endSetting?.value   ?? null,
+      start:  startSetting?.value  ?? null,
+      end:    endSetting?.value    ?? null,
+      notice: noticeSetting?.value ?? null,
     }
   } catch {
-    return { start: null, end: null }
+    return { start: null, end: null, notice: null }
   }
 }
 
@@ -104,22 +107,21 @@ export async function setLiveSchedule(
   start: string | null,
   end: string | null,
   adminId: string,
+  notice?: string | null,
 ): Promise<void> {
+  const upsertOrDelete = (key: string, value: string | null) =>
+    value
+      ? prisma.systemSetting.upsert({
+          where: { key },
+          create: { key, value, updatedBy: adminId },
+          update: { value, updatedBy: adminId },
+        })
+      : prisma.systemSetting.deleteMany({ where: { key } })
+
   await Promise.all([
-    start
-      ? prisma.systemSetting.upsert({
-          where: { key: LIVE_SCHEDULE_START_KEY },
-          create: { key: LIVE_SCHEDULE_START_KEY, value: start, updatedBy: adminId },
-          update: { value: start, updatedBy: adminId },
-        })
-      : prisma.systemSetting.deleteMany({ where: { key: LIVE_SCHEDULE_START_KEY } }),
-    end
-      ? prisma.systemSetting.upsert({
-          where: { key: LIVE_SCHEDULE_END_KEY },
-          create: { key: LIVE_SCHEDULE_END_KEY, value: end, updatedBy: adminId },
-          update: { value: end, updatedBy: adminId },
-        })
-      : prisma.systemSetting.deleteMany({ where: { key: LIVE_SCHEDULE_END_KEY } }),
+    upsertOrDelete(LIVE_SCHEDULE_START_KEY, start),
+    upsertOrDelete(LIVE_SCHEDULE_END_KEY, end),
+    upsertOrDelete(LIVE_SCHEDULE_NOTICE_KEY, notice ?? null),
   ])
 }
 

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Form, Link, useFetcher, useLoaderData, useNavigation, useRevalidator, useSearchParams } from 'react-router'
 import { ArrowDown, ArrowDownCircle, ArrowUp, ArrowUpCircle, ArrowUpDown, Eye, Lock, Loader, Search, Wallet, X } from 'lucide-react'
 import type { Route } from './+types/admin.play-history'
@@ -159,8 +159,13 @@ export default function AdminPlayHistory() {
   }, [lockFetcher.state, lockFetcher.data, revalidator])
 
   const onFirstPage = data.page === 1
+  // Debounce bet:placed revalidations — multiple bets in quick succession (e.g.
+  // a player placing 5 bets at once) collapse into a single reload after 600ms.
+  const betDebounce = useRef<ReturnType<typeof setTimeout> | null>(null)
   usePusherEvent<BetPlacedPayload>(ADMIN_CHANNEL, 'bet:placed', () => {
-    if (onFirstPage) revalidator.revalidate()
+    if (!onFirstPage) return
+    if (betDebounce.current) clearTimeout(betDebounce.current)
+    betDebounce.current = setTimeout(() => revalidator.revalidate(), 600)
   })
   usePusherEvent<RoundResolvedPayload>(ADMIN_CHANNEL, 'round:resolved', () => {
     if (onFirstPage) revalidator.revalidate()

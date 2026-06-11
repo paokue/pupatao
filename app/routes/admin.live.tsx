@@ -282,6 +282,7 @@ export async function action({ request }: Route.ActionArgs) {
       const dateStr  = String(fd.get('scheduleDate')  ?? '').trim()
       const startStr = String(fd.get('scheduleStart') ?? '').trim()
       const endStr   = String(fd.get('scheduleEnd')   ?? '').trim()
+      const notice   = String(fd.get('scheduleNotice') ?? '').trim() || null
       if (!dateStr || !startStr || !endStr) return { error: 'Date, start time and end time are required.' }
       const start = new Date(`${dateStr}T${startStr}:00+07:00`)
       const end   = new Date(`${dateStr}T${endStr}:00+07:00`)
@@ -289,7 +290,7 @@ export async function action({ request }: Route.ActionArgs) {
       if (end <= start) return { error: 'End time must be after start time.' }
       const startIso = start.toISOString()
       const endIso   = end.toISOString()
-      await setLiveSchedule(startIso, endIso, admin.id)
+      await setLiveSchedule(startIso, endIso, admin.id, notice)
       const schedPayload = { start: startIso, end: endIso }
       notifyPresenceLive('live:scheduled', schedPayload)
       notifyAdmin('live:scheduled', schedPayload)
@@ -297,7 +298,7 @@ export async function action({ request }: Route.ActionArgs) {
     }
 
     if (op === 'clearSchedule') {
-      await setLiveSchedule(null, null, admin.id)
+      await setLiveSchedule(null, null, admin.id, null)
       const schedPayload = { start: null, end: null }
       notifyPresenceLive('live:scheduled', schedPayload)
       notifyAdmin('live:scheduled', schedPayload)
@@ -694,6 +695,7 @@ export default function AdminLive() {
   const navigation = useNavigation()
   const revalidator = useRevalidator()
   const loading = navigation.state !== 'idle'
+  const [activeTab, setActiveTab] = useState<'live' | 'history'>('live')
 
   // Round history pagination — first page comes from the loader (100 rows),
   // subsequent pages from /api/admin/live-history via this fetcher. We
@@ -785,11 +787,12 @@ export default function AdminLive() {
 
   return (
     <div className="flex flex-col gap-4">
+      {/* ─── Header ──────────────────────────────────────────────────── */}
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-bold" style={{ color: '#fde68a' }}>Live play</h1>
         {current && (
           <span
-            className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold "
+            className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold"
             style={{ background: 'rgba(220,38,38,0.2)', color: '#f87171', border: '1px solid #fca5a5' }}
           >
             <Radio size={10} className="animate-pulse" /> ROUND IN FLIGHT
@@ -797,88 +800,113 @@ export default function AdminLive() {
         )}
       </div>
 
-      {/* ─── Stream — always rendered so it never disappears between rounds ─── */}
-      <LiveStreamPanel
-        round={current}
-        fallbackUrl={lastStreamUrl}
-        liveStreamUrl={liveStreamUrl}
-        schedule={schedule}
-        loading={loading}
-      />
-
-      {/* ─── Round controls (active round) or start-new-round form ─── */}
-      {current ? (
-        <ActiveRoundPanel
-          round={current}
-          loading={loading}
-          onSettle={settleRound}
-          settling={resolveFetcher.state !== 'idle'}
-          settleError={resolveFetcher.data?.error ?? null}
-        />
-      ) : (
-        <StartRoundPanel defaultStreamUrl={lastStreamUrl} loading={loading} />
-      )}
-
-      {/* Settled summary — rendered as a modal so the stream stays visible. */}
-      {settledSummary && (
-        <div
-          className="fixed inset-0 z-[100] flex items-start justify-center overflow-y-auto p-4"
-          style={{ background: 'rgba(15,15,30,0.85)' }}
-          onClick={() => setSettledSummary(null)}
+      {/* ─── Tabs ────────────────────────────────────────────────────── */}
+      <div className="flex overflow-hidden rounded-xl" style={{ border: '1px solid #4338ca' }}>
+        <button
+          type="button"
+          onClick={() => setActiveTab('live')}
+          className="flex flex-1 items-center justify-center gap-1.5 py-2 text-xs font-bold transition-all"
+          style={{ background: activeTab === 'live' ? '#4338ca' : '#0f172a', color: activeTab === 'live' ? '#fff' : '#a5b4fc' }}
         >
-          <div
-            className="w-full max-w-2xl my-auto"
-            onClick={e => e.stopPropagation()}
-          >
-            <SettledSummaryPanel
-              summary={settledSummary}
-              onClose={() => setSettledSummary(null)}
-            />
-          </div>
-        </div>
-      )}
-
-      {/* ─── Live presence + bets feed (only meaningful while a round is open).
-            Viewers takes 2/5 (40%), live bets takes 3/5 (60%) of the row. */}
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-5">
-        <div className="md:col-span-2">
-          <ViewersPanel viewers={viewers} />
-        </div>
-        <div className="md:col-span-3">
-          <LiveBetsPanel bets={bets} hasOpenRound={!!current} roundId={current?.id ?? null} />
-        </div>
+          <Radio size={12} /> LIVE PLAY
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveTab('history')}
+          className="flex flex-1 items-center justify-center gap-1.5 py-2 text-xs font-bold transition-all"
+          style={{ background: activeTab === 'history' ? '#4338ca' : '#0f172a', color: activeTab === 'history' ? '#fff' : '#a5b4fc' }}
+        >
+          ROUND HISTORY
+          {historyPages.length > 0 && (
+            <span
+              className="rounded-full px-1.5 py-0.5 text-[9px] font-bold"
+              style={{ background: activeTab === 'history' ? 'rgba(255,255,255,0.2)' : '#1e1b4b', color: activeTab === 'history' ? '#fff' : '#818cf8' }}
+            >
+              {historyPages.length}{historyHasMore ? '+' : ''}
+            </span>
+          )}
+        </button>
       </div>
 
-      {/* ─── Round history ───────────────────────────────────────────── */}
-      <section>
-        <h2 className="mb-2 text-sm font-bold " style={{ color: '#a5b4fc' }}>ROUND HISTORY</h2>
-        {historyPages.length === 0 ? (
-          <div
-            className="rounded-xl p-6 text-center text-xs"
-            style={{ background: '#0f172a', color: '#818cf8', border: '1px solid #1e1b4b' }}
-          >
-            No previous rounds.
+      {/* ─── LIVE PLAY tab ───────────────────────────────────────────── */}
+      {activeTab === 'live' && (
+        <>
+          <LiveStreamPanel
+            round={current}
+            fallbackUrl={lastStreamUrl}
+            liveStreamUrl={liveStreamUrl}
+            schedule={schedule}
+            loading={loading}
+          />
+
+          {current ? (
+            <ActiveRoundPanel
+              round={current}
+              loading={loading}
+              onSettle={settleRound}
+              settling={resolveFetcher.state !== 'idle'}
+              settleError={resolveFetcher.data?.error ?? null}
+            />
+          ) : (
+            <StartRoundPanel defaultStreamUrl={lastStreamUrl} loading={loading} />
+          )}
+
+          {/* Settled summary — rendered as a modal so the stream stays visible. */}
+          {settledSummary && (
+            <div
+              className="fixed inset-0 z-[100] flex items-start justify-center overflow-y-auto p-4"
+              style={{ background: 'rgba(15,15,30,0.85)' }}
+              onClick={() => setSettledSummary(null)}
+            >
+              <div className="w-full max-w-2xl my-auto" onClick={e => e.stopPropagation()}>
+                <SettledSummaryPanel summary={settledSummary} onClose={() => setSettledSummary(null)} />
+              </div>
+            </div>
+          )}
+
+          {/* Viewers (40%) + Live bets (60%) */}
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-5">
+            <div className="md:col-span-2">
+              <ViewersPanel viewers={viewers} />
+            </div>
+            <div className="md:col-span-3">
+              <LiveBetsPanel bets={bets} hasOpenRound={!!current} roundId={current?.id ?? null} />
+            </div>
           </div>
-        ) : (
-          <div className="flex flex-col gap-2">
-            {historyPages.map(r => (
-              <HistoryRow key={r.id} r={r} />
-            ))}
-            {historyHasMore && (
-              <button
-                type="button"
-                onClick={loadMoreHistory}
-                disabled={loadingMore}
-                className="mt-2 inline-flex items-center justify-center gap-1.5 self-center rounded-full px-4 py-1.5 text-[11px] font-bold disabled:opacity-50"
-                style={{ background: '#1e1b4b', color: '#a5b4fc', border: '1px solid #4338ca' }}
-              >
-                {loadingMore ? <Loader size={12} className="animate-spin" /> : null}
-                {loadingMore ? 'LOADING…' : 'LOAD MORE'}
-              </button>
-            )}
-          </div>
-        )}
-      </section>
+        </>
+      )}
+
+      {/* ─── ROUND HISTORY tab ───────────────────────────────────────── */}
+      {activeTab === 'history' && (
+        <section>
+          {historyPages.length === 0 ? (
+            <div
+              className="rounded-xl p-6 text-center text-xs"
+              style={{ background: '#0f172a', color: '#818cf8', border: '1px solid #1e1b4b' }}
+            >
+              No previous rounds.
+            </div>
+          ) : (
+            <div className="flex flex-col gap-2">
+              {historyPages.map(r => (
+                <HistoryRow key={r.id} r={r} />
+              ))}
+              {historyHasMore && (
+                <button
+                  type="button"
+                  onClick={loadMoreHistory}
+                  disabled={loadingMore}
+                  className="mt-2 inline-flex items-center justify-center gap-1.5 self-center rounded-full px-4 py-1.5 text-[11px] font-bold disabled:opacity-50"
+                  style={{ background: '#1e1b4b', color: '#a5b4fc', border: '1px solid #4338ca' }}
+                >
+                  {loadingMore ? <Loader size={12} className="animate-spin" /> : null}
+                  {loadingMore ? 'LOADING…' : 'LOAD MORE'}
+                </button>
+              )}
+            </div>
+          )}
+        </section>
+      )}
     </div>
   )
 }
@@ -1394,7 +1422,7 @@ function LiveStreamPanel({
   round: CurrentRound | null
   fallbackUrl: string
   liveStreamUrl: string | null
-  schedule: { start: string | null; end: string | null }
+  schedule: { start: string | null; end: string | null; notice: string | null }
   loading: boolean
 }) {
   const [showScheduleModal, setShowScheduleModal] = useState(false)
@@ -1514,7 +1542,7 @@ function LiveStreamPanel({
 
 // Shown in the stream area when END LIVE has been clicked (liveStreamUrl = null).
 // Mirrors what customers see: schedule + countdown, or an offline placeholder.
-function AdminOfflineCard({ schedule }: { schedule: { start: string | null; end: string | null } }) {
+function AdminOfflineCard({ schedule }: { schedule: { start: string | null; end: string | null; notice: string | null } }) {
   const [now, setNow] = useState(() => Date.now())
   useEffect(() => {
     const id = setInterval(() => setNow(Date.now()), 1000)
@@ -1557,6 +1585,9 @@ function AdminOfflineCard({ schedule }: { schedule: { start: string | null; end:
         <p className="mt-0.5 text-[10px]" style={{ color: '#818cf8' }}>
           {fmtGMT7(schedule.start!)}{schedule.end ? ` — ${fmtGMT7(schedule.end, { hour: '2-digit', minute: '2-digit', hour12: false })}` : ''} (GMT+7)
         </p>
+        {schedule.notice && (
+          <p className="mt-1 text-[10px] italic" style={{ color: '#c4b5fd' }}>{schedule.notice}</p>
+        )}
       </div>
       {!isPast && !isLive && (
         <div className="flex gap-3">
@@ -1581,7 +1612,7 @@ function ScheduleModal({
   loading,
   onClose,
 }: {
-  schedule: { start: string | null; end: string | null }
+  schedule: { start: string | null; end: string | null; notice: string | null }
   loading: boolean
   onClose: () => void
 }) {
@@ -1663,30 +1694,44 @@ function ScheduleModal({
             </div>
           </div>
 
-          <button
-            type="submit"
-            disabled={loading}
-            className="inline-flex items-center justify-center gap-1.5 rounded-xl py-2.5 text-xs font-bold disabled:opacity-50"
-            style={{ background: 'linear-gradient(135deg,#4338ca,#312e81)', color: '#fff', border: '1px solid #818cf8' }}
-          >
-            {loading ? <Loader size={12} className="animate-spin" /> : <Check size={12} />}
-            SAVE SCHEDULE
-          </button>
-        </Form>
+          <div className="flex flex-col gap-1">
+            <label className="text-[10px] font-semibold" style={{ color: '#a5b4fc' }}>NOTICE (optional)</label>
+            <textarea
+              name="scheduleNotice"
+              defaultValue={schedule.notice ?? ''}
+              placeholder="e.g. Special event tonight! Double prizes."
+              rows={2}
+              className="rounded-lg px-3 py-2 text-xs outline-none resize-none"
+              style={{ background: '#1e1b4b', color: '#fde68a', border: '1px solid #4338ca' }}
+            />
+          </div>
 
-        {hasSchedule && (
-          <Form method="post" className="mt-2" onSubmit={onClose}>
-            <input type="hidden" name="op" value="clearSchedule" />
+          <div className="flex gap-2">
+            {hasSchedule && (
+              <Form method="post" onSubmit={onClose} className="flex flex-1">
+                <input type="hidden" name="op" value="clearSchedule" />
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="w-full rounded-xl py-2.5 text-xs font-bold disabled:opacity-50"
+                  style={{ background: 'rgba(127,29,29,0.4)', color: '#fca5a5', border: '1px solid rgba(239,68,68,0.4)' }}
+                >
+                  CLEAR
+                </button>
+              </Form>
+            )}
+
             <button
               type="submit"
               disabled={loading}
-              className="w-full rounded-xl py-2 text-xs font-bold disabled:opacity-50"
-              style={{ background: 'rgba(127,29,29,0.4)', color: '#fca5a5', border: '1px solid rgba(239,68,68,0.4)' }}
+              className="flex flex-1 items-center justify-center gap-1.5 rounded-xl py-2.5 text-xs font-bold disabled:opacity-50"
+              style={{ background: 'linear-gradient(135deg,#4338ca,#312e81)', color: '#fff', border: '1px solid #818cf8' }}
             >
-              Clear Schedule
+              {loading ? <Loader size={12} className="animate-spin" /> : <Check size={12} />}
+              SAVE
             </button>
-          </Form>
-        )}
+          </div>
+        </Form>
       </div>
     </div>
   )

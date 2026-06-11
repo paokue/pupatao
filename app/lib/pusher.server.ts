@@ -53,6 +53,23 @@ async function triggerSafe(channel: string | string[], event: string, payload: u
   }
 }
 
+// Send multiple events in a single HTTP request (Pusher triggerBatch, max 10 per call).
+// Use this instead of looping notifyAdmin when firing N events at once (e.g. live bets).
+async function triggerBatchSafe(events: Array<{ channel: string; name: string; data: unknown }>): Promise<void> {
+  if (events.length === 0) return
+  const c = client()
+  if (!c) return
+  // Pusher triggerBatch cap is 10 events per call — chunk if needed.
+  for (let i = 0; i < events.length; i += 10) {
+    const chunk = events.slice(i, i + 10)
+    try {
+      await c.triggerBatch(chunk.map(e => ({ channel: e.channel, name: e.name, data: JSON.stringify(e.data) })))
+    } catch (err) {
+      console.error('[pusher] triggerBatch failed', err)
+    }
+  }
+}
+
 export function notifyAdmin(event: 'transaction:created', payload: TxCreatedPayload): Promise<void>
 export function notifyAdmin(event: 'transaction:resolved', payload: TxResolvedPayload): Promise<void>
 export function notifyAdmin(event: 'customer:registered', payload: CustomerRegisteredPayload): Promise<void>
@@ -65,6 +82,12 @@ export function notifyAdmin(event: 'live:ended', payload: LiveEndedPayload): Pro
 export function notifyAdmin(event: 'live:scheduled', payload: LiveScheduledPayload): Promise<void>
 export function notifyAdmin(event: string, payload: unknown): Promise<void> {
   return triggerSafe(ADMIN_CHANNEL, event, payload)
+}
+
+// Send multiple admin events in one HTTP request. Use for live bet fanout where
+// a single player may place N bets — fires them all in one Pusher API call.
+export function notifyAdminBatch(events: Array<{ event: string; payload: unknown }>): Promise<void> {
+  return triggerBatchSafe(events.map(e => ({ channel: ADMIN_CHANNEL, name: e.event, data: e.payload })))
 }
 
 // Broadcast on the public-ish presence-live channel — every customer currently
