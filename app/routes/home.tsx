@@ -630,7 +630,7 @@ function LiveScheduleCard({
           {fmtTime(schedule.start)}{schedule.end ? ` – ${fmtTime(schedule.end)}` : ''} (GMT+7)
         </p>
         {schedule.notice && (
-          <p className="text-[10px] italic" style={{ color: '#fde68a' }}>{schedule.notice}</p>
+          <p className="text-base font-semibold italic" style={{ color: '#fde68a' }}>{schedule.notice}</p>
         )}
       </div>
     )
@@ -658,9 +658,6 @@ function LiveScheduleCard({
         <p className="mt-0.5 text-[10px]" style={{ color: '#a78bfa' }}>
           {fmtDate(schedule.start)} · {fmtTime(schedule.start)}{schedule.end ? ` – ${fmtTime(schedule.end)}` : ''} <span style={{ color: '#6d28d9' }}>(GMT+7)</span>
         </p>
-        {schedule.notice && (
-          <p className="mt-1 text-[10px] italic" style={{ color: '#fde68a' }}>{schedule.notice}</p>
-        )}
       </div>
       <div className={`grid grid-cols-4 ${compact ? 'gap-1.5' : 'gap-3'}`}>
         {units.map(({ label, value }) => (
@@ -680,6 +677,9 @@ function LiveScheduleCard({
           </div>
         ))}
       </div>
+      {schedule.notice && (
+        <p className="text-base font-semibold italic" style={{ color: '#fde68a' }}>{schedule.notice}</p>
+      )}
     </div>
   )
 }
@@ -2488,12 +2488,17 @@ export default function FishPrawnCrabGame() {
                 style={{ background: liveTimer <= 10 ? 'rgba(220,38,38,0.9)' : 'rgba(22,163,74,0.9)', color: '#fff' }}>
                 {t('live.statusBetting', { n: String(liveTimer) })}
               </span>
-            ) : (
+            ) : livePhase !== 'idle' ? (
               <span className="rounded-full px-3 py-1 text-xs font-bold"
-                style={{ background: livePhase === 'idle' ? 'rgba(76,29,149,0.9)' : 'rgba(234,88,12,0.9)', color: '#fff' }}>
-                {livePhase === 'idle' ? t('live.waitingHostStart') : t('live.bettingClosed')}
+                style={{ background: 'rgba(234,88,12,0.9)', color: '#fff' }}>
+                {t('live.bettingClosed')}
               </span>
-            )}
+            ) : activeStreamUrl ? (
+              <span className="rounded-full px-3 py-1 text-xs font-bold"
+                style={{ background: 'rgba(76,29,149,0.9)', color: '#fff' }}>
+                {t('live.waitingHostStart')}
+              </span>
+            ) : null}
           </div>
 
           {/* ── Dice overlay (awaiting_result) ── */}
@@ -2504,8 +2509,8 @@ export default function FishPrawnCrabGame() {
             </div>
           )}
 
-          {/* ── Idle waiting message ── */}
-          {livePhase === 'idle' && (
+          {/* ── Idle waiting message — only when a stream is active (schedule card hides it) ── */}
+          {livePhase === 'idle' && activeStreamUrl && (
             <div className="absolute inset-x-0 flex justify-center" style={{ bottom: 120 }}>
               <span className="rounded-xl px-4 py-2 text-sm font-semibold"
                 style={{ background: 'rgba(0,0,0,0.6)', color: '#c4b5fd' }}>
