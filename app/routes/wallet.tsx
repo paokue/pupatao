@@ -72,20 +72,15 @@ function toTxCreatedPayload(
 export async function loader({ request }: Route.LoaderArgs) {
   const user = await requireUser(request)
 
-  const wallet = await prisma.wallet.findUnique({
-    where: { userId_type: { userId: user.id, type: 'REAL' } },
+  // Fetch both wallets in one query — avoids two sequential round trips.
+  const wallets = await prisma.wallet.findMany({
+    where: { userId: user.id, type: { in: ['REAL', 'PROMO'] } },
   })
+  const wallet = wallets.find(w => w.type === 'REAL')
   if (!wallet) {
-    // Shouldn't happen — register creates both wallets — but be defensive.
     throw new Response('Real wallet not found for this account.', { status: 500 })
   }
-  // PROMO is read-only here (no deposit/withdraw/transfer affordances).
-  // Just surface the balance so customers see the bonus they can play with.
-  const promoWallet = await prisma.wallet.findUnique({
-    where: { userId_type: { userId: user.id, type: 'PROMO' } },
-    select: { balance: true },
-  })
-  const promoBalance = promoWallet?.balance ?? 0
+  const promoBalance = wallets.find(w => w.type === 'PROMO')?.balance ?? 0
 
   // Aggregates + history per tab + bank QR + pending locked transfers (sent
   // and received). Pending transfers drive the receive list and sender's

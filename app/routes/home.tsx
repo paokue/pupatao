@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useRef, type ReactNode } from 'react'
 import confetti from 'canvas-confetti'
-import { Form, useFetcher, useLoaderData, useNavigate, useOutletContext, useRevalidator, useSearchParams } from 'react-router'
+import { Form, Link, useFetcher, useLoaderData, useOutletContext, useRevalidator, useSearchParams } from 'react-router'
 import { toast } from 'sonner'
 import type { Route } from './+types/home'
 import { LoginModal } from '~/components/LoginModal'
@@ -810,7 +810,6 @@ interface ProfileDropdownProps {
 }
 
 function ProfileDropdown({ name, onClose, competitionEnabled, competitionType }: ProfileDropdownProps) {
-  const navigate = useNavigate()
   const ref = useRef<HTMLDivElement>(null)
   const t = useT()
 
@@ -859,30 +858,45 @@ function ProfileDropdown({ name, onClose, competitionEnabled, competitionType }:
       </div>
 
       <div className="py-1">
-        {items.map(item => (
-          <button
-            key={item.href}
-            onClick={() => {
-              playClick()
-              onClose()
-              if (item.external) {
+        {items.map(item =>
+          item.external ? (
+            <button
+              key={item.href}
+              onClick={() => {
+                playClick()
+                onClose()
                 window.open(item.href, '_blank', 'noopener,noreferrer')
-              } else {
-                navigate(item.href)
-              }
-            }}
-            className="flex w-full items-center gap-3 px-4 py-2 text-left transition-all hover:opacity-90"
-            style={{ background: item.highlight ? 'rgba(202,138,4,0.12)' : 'transparent' }}
-            onMouseEnter={e => (e.currentTarget.style.background = item.highlight ? 'rgba(202,138,4,0.2)' : '#2d1b4e')}
-            onMouseLeave={e => (e.currentTarget.style.background = item.highlight ? 'rgba(202,138,4,0.12)' : 'transparent')}
-          >
-            <span style={{ color: item.highlight ? '#fbbf24' : '#fff' }}>{item.icon}</span>
-            <div>
-              <div className="text-sm font-semibold" style={{ color: item.highlight ? '#fbbf24' : '#e9d5ff' }}>{item.label}</div>
-              <div className="text-[10px] text-white">{item.desc}</div>
-            </div>
-          </button>
-        ))}
+              }}
+              className="flex w-full items-center gap-3 px-4 py-2 text-left transition-all hover:opacity-90"
+              style={{ background: 'transparent' }}
+              onMouseEnter={e => (e.currentTarget.style.background = '#2d1b4e')}
+              onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
+            >
+              <span style={{ color: '#fff' }}>{item.icon}</span>
+              <div>
+                <div className="text-sm font-semibold" style={{ color: '#e9d5ff' }}>{item.label}</div>
+                <div className="text-[10px] text-white">{item.desc}</div>
+              </div>
+            </button>
+          ) : (
+            <Link
+              key={item.href}
+              to={item.href}
+              prefetch="intent"
+              onClick={() => { playClick(); onClose() }}
+              className="flex w-full items-center gap-3 px-4 py-2 text-left transition-all hover:opacity-90"
+              style={{ background: item.highlight ? 'rgba(202,138,4,0.12)' : 'transparent' }}
+              onMouseEnter={e => (e.currentTarget.style.background = item.highlight ? 'rgba(202,138,4,0.2)' : '#2d1b4e')}
+              onMouseLeave={e => (e.currentTarget.style.background = item.highlight ? 'rgba(202,138,4,0.12)' : 'transparent')}
+            >
+              <span style={{ color: item.highlight ? '#fbbf24' : '#fff' }}>{item.icon}</span>
+              <div>
+                <div className="text-sm font-semibold" style={{ color: item.highlight ? '#fbbf24' : '#e9d5ff' }}>{item.label}</div>
+                <div className="text-[10px] text-white">{item.desc}</div>
+              </div>
+            </Link>
+          )
+        )}
       </div>
 
       <div className="mx-4" style={{ height: 1, background: '#4c1d95' }} />

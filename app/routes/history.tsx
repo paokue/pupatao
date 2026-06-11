@@ -59,8 +59,7 @@ export async function loader({ request }: Route.LoaderArgs) {
     throw new Response('Wallets not found.', { status: 500 })
   }
 
-  // 500 most recent bets per wallet — sufficient for now; if a player accumulates
-  // more we'll add proper pagination.
+  // 100 most recent bets per wallet — covers typical usage without over-fetching.
   const betInclude = {
     round: {
       select: {
@@ -77,13 +76,13 @@ export async function loader({ request }: Route.LoaderArgs) {
     prisma.bet.findMany({
       where: { walletId: realWallet.id },
       orderBy: { createdAt: 'desc' },
-      take: 500,
+      take: 100,
       include: betInclude,
     }),
     prisma.bet.findMany({
       where: { walletId: demoWallet.id },
       orderBy: { createdAt: 'desc' },
-      take: 500,
+      take: 100,
       include: betInclude,
     }),
   ])
