@@ -9,6 +9,7 @@ import { notifyAdmin, notifyPresenceLive, notifyUser } from '~/lib/pusher.server
 import { getPayoutConfig, type PayoutConfig } from '~/lib/payouts.server'
 import {
   getLiveSchedule, getLiveStreamUrl, setLiveSchedule, setLiveStreamUrl,
+  LIVE_BETTING_SECONDS_KEY,
 } from '~/lib/system-settings.server'
 import {
   ADMIN_CHANNEL,
@@ -121,10 +122,12 @@ export async function loader({ request }: Route.LoaderArgs) {
     select: { streamUrl: true },
   })
 
-  const [liveStreamUrl, schedule] = await Promise.all([
+  const [liveStreamUrl, schedule, bettingSecondsSetting] = await Promise.all([
     getLiveStreamUrl(),
     getLiveSchedule(),
+    prisma.systemSetting.findUnique({ where: { key: LIVE_BETTING_SECONDS_KEY }, select: { value: true } }),
   ])
+  const savedBettingSeconds = bettingSecondsSetting ? parseInt(bettingSecondsSetting.value, 10) || DEFAULT_BETTING_SECONDS : DEFAULT_BETTING_SECONDS
 
   function serialize(r: typeof history[number]) {
     return {
@@ -168,6 +171,7 @@ export async function loader({ request }: Route.LoaderArgs) {
     lastStreamUrl: lastWithStream?.streamUrl ?? '',
     liveStreamUrl,
     schedule,
+    savedBettingSeconds,
   }
 }
 
@@ -257,6 +261,12 @@ export async function action({ request }: Route.ActionArgs) {
         setLiveStreamUrl(streamUrl, admin.id),
         // Clear the schedule — we're live now, no countdown needed
         setLiveSchedule(null, null, admin.id),
+        // Persist the betting window so the form remembers it next round
+        prisma.systemSetting.upsert({
+          where: { key: LIVE_BETTING_SECONDS_KEY },
+          create: { key: LIVE_BETTING_SECONDS_KEY, value: String(seconds), updatedBy: admin.id },
+          update: { value: String(seconds), updatedBy: admin.id },
+        }),
       ])
       const startedPayload = {
         roundId: round.id,
@@ -691,7 +701,7 @@ export async function action({ request }: Route.ActionArgs) {
 }
 
 export default function AdminLive() {
-  const { current, currentBets, history: initialHistory, historyHasMore: initialHasMore, lastStreamUrl, liveStreamUrl, schedule } = useLoaderData<typeof loader>()
+  const { current, currentBets, history: initialHistory, historyHasMore: initialHasMore, lastStreamUrl, liveStreamUrl, schedule, savedBettingSeconds } = useLoaderData<typeof loader>()
   const navigation = useNavigation()
   const revalidator = useRevalidator()
   const loading = navigation.state !== 'idle'
@@ -846,9 +856,11 @@ export default function AdminLive() {
               onSettle={settleRound}
               settling={resolveFetcher.state !== 'idle'}
               settleError={resolveFetcher.data?.error ?? null}
+              viewers={viewers}
+              bets={bets}
             />
           ) : (
-            <StartRoundPanel defaultStreamUrl={lastStreamUrl} loading={loading} />
+            <StartRoundPanel defaultStreamUrl={lastStreamUrl} defaultSeconds={savedBettingSeconds} loading={loading} />
           )}
 
           {/* Settled summary — rendered as a modal so the stream stays visible. */}
@@ -859,20 +871,29 @@ export default function AdminLive() {
               onClick={() => setSettledSummary(null)}
             >
               <div className="w-full max-w-2xl my-auto" onClick={e => e.stopPropagation()}>
-                <SettledSummaryPanel summary={settledSummary} onClose={() => setSettledSummary(null)} />
+                <SettledSummaryPanel
+                  summary={settledSummary}
+                  onClose={() => setSettledSummary(null)}
+                  defaultStreamUrl={lastStreamUrl}
+                  defaultSeconds={savedBettingSeconds}
+                  loading={loading}
+                />
               </div>
             </div>
           )}
 
-          {/* Viewers (40%) + Live bets (60%) */}
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-5">
-            <div className="md:col-span-2">
-              <ViewersPanel viewers={viewers} />
+          {/* Viewers + Live bets — shown inside ResultEntryModal when a round is in flight,
+              and here on the main page when no round is active. */}
+          {!current && (
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-5">
+              <div className="md:col-span-2">
+                <ViewersPanel viewers={viewers} />
+              </div>
+              <div className="md:col-span-3">
+                <LiveBetsPanel bets={bets} hasOpenRound={false} roundId={null} />
+              </div>
             </div>
-            <div className="md:col-span-3">
-              <LiveBetsPanel bets={bets} hasOpenRound={!!current} roundId={current?.id ?? null} />
-            </div>
-          </div>
+          )}
         </>
       )}
 
@@ -911,7 +932,19 @@ export default function AdminLive() {
   )
 }
 
-function SettledSummaryPanel({ summary, onClose }: { summary: ResolveSummary; onClose: () => void }) {
+function SettledSummaryPanel({
+  summary,
+  onClose,
+  defaultStreamUrl,
+  defaultSeconds,
+  loading,
+}: {
+  summary: ResolveSummary
+  onClose: () => void
+  defaultStreamUrl: string
+  defaultSeconds: number
+  loading: boolean
+}) {
   return (
     <div className="rounded-xl p-4" style={{ background: '#0f172a', border: '1px solid #4ade80' }}>
       <div className="mb-3 flex items-center justify-between">
@@ -960,7 +993,7 @@ function SettledSummaryPanel({ summary, onClose }: { summary: ResolveSummary; on
       {summary.players.length === 0 ? (
         <p className="text-center text-[11px]" style={{ color: '#475569' }}>No bets were placed in this round.</p>
       ) : (
-        <ul className="flex max-h-72 flex-col gap-1 overflow-y-auto">
+        <ul className="mb-4 flex max-h-48 flex-col gap-1 overflow-y-auto">
           {summary.players.map(p => (
             <li
               key={p.userId}
@@ -978,6 +1011,50 @@ function SettledSummaryPanel({ summary, onClose }: { summary: ResolveSummary; on
           ))}
         </ul>
       )}
+
+      {/* ── Start next round ── */}
+      <div className="mt-2 rounded-lg p-3" style={{ background: '#0a1a0f', border: '1px solid #166534' }}>
+        <div className="mb-3 flex items-center gap-2 text-[10px] font-bold" style={{ color: '#4ade80' }}>
+          <Radio size={11} /> START NEXT ROUND
+        </div>
+        <Form method="post" className="flex flex-col gap-2" onSubmit={onClose}>
+          <input type="hidden" name="op" value="startRound" />
+
+          <label className="text-[10px] font-semibold" style={{ color: '#86efac' }}>STREAM URL</label>
+          <input
+            name="streamUrl"
+            defaultValue={defaultStreamUrl}
+            placeholder="YouTube, MP4, HLS, …"
+            className="rounded-lg px-3 py-2 text-xs outline-none"
+            style={{ background: '#1e1b4b', color: '#fde68a', border: '1px solid #4338ca' }}
+          />
+
+          <div className="flex gap-3">
+            <div className="flex flex-1 flex-col gap-2">
+              <label className="text-[10px] font-semibold" style={{ color: '#86efac' }}>BETTING WINDOW (SECONDS)</label>
+              <input
+                name="seconds"
+                type="number"
+                min={15}
+                max={600}
+                defaultValue={defaultSeconds}
+                className="rounded-lg px-3 py-2 text-xs outline-none"
+                style={{ background: '#1e1b4b', color: '#fde68a', border: '1px solid #4338ca' }}
+              />
+            </div>
+          </div>
+
+          <button
+            type="submit"
+            disabled={loading}
+            className="mt-1 inline-flex items-center justify-center gap-1.5 rounded-lg py-2.5 text-xs font-bold disabled:opacity-50"
+            style={{ background: 'linear-gradient(135deg, #16a34a, #15803d)', color: '#fff', border: '1.5px solid #4ade80' }}
+          >
+            {loading ? <Loader size={14} className="animate-spin" /> : <PlayCircle size={14} />}
+            START NEXT ROUND
+          </button>
+        </Form>
+      </div>
     </div>
   )
 }
@@ -1017,10 +1094,12 @@ function LiveBetsPanel({
   bets,
   hasOpenRound,
   roundId,
+  maxHeight = '500px',
 }: {
   bets: LiveBet[]
   hasOpenRound: boolean
   roundId: string | null
+  maxHeight?: string
 }) {
   const totalStake = bets.reduce((sum, b) => sum + b.amount, 0)
   return (
@@ -1038,9 +1117,7 @@ function LiveBetsPanel({
       ) : bets.length === 0 ? (
         <p className="text-center text-[10px]" style={{ color: '#475569' }}>No bets in this round yet.</p>
       ) : (
-        // ~10 rows fit before the list scrolls. Each row is roughly 50px
-        // (two lines of small text + padding), so ≈ 500px caps the list.
-        <ul className="flex max-h-[500px] flex-col gap-1 overflow-y-auto">
+        <ul className="flex flex-col gap-1 overflow-y-auto" style={{ maxHeight }}>
           {bets.map(b => (
             <li
               key={b.id}
@@ -1123,12 +1200,16 @@ function ActiveRoundPanel({
   onSettle,
   settling,
   settleError,
+  viewers,
+  bets,
 }: {
   round: CurrentRound
   loading: boolean
   onSettle: (roundId: string) => void
   settling: boolean
   settleError: string | null
+  viewers: ReturnType<typeof usePresenceMembers>
+  bets: LiveBet[]
 }) {
   // Server is the source of truth for which dice are "live" — admin clicks
   // PATCH the GameRound and re-broadcast on round:dice. We mirror the server
@@ -1274,6 +1355,8 @@ function ActiveRoundPanel({
           bettingExpired={bettingExpired}
           remainingSeconds={remainingSeconds}
           onClose={() => setResultModalOpen(false)}
+          viewers={viewers}
+          bets={bets}
         />
       )}
     </div>
@@ -1292,6 +1375,8 @@ function ResultEntryModal({
   bettingExpired,
   remainingSeconds,
   onClose,
+  viewers,
+  bets,
 }: {
   round: CurrentRound
   dice: (DiceSymbol | null)[]
@@ -1304,17 +1389,19 @@ function ResultEntryModal({
   bettingExpired: boolean
   remainingSeconds: number | null
   onClose: () => void
+  viewers: ReturnType<typeof usePresenceMembers>
+  bets: LiveBet[]
 }) {
   const stillBetting = round.status === 'BETTING' && !bettingExpired
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto p-4"
       style={{ background: 'rgba(0,0,0,0.7)' }}
       onClick={onClose}
     >
       <div
         onClick={e => e.stopPropagation()}
-        className="w-full max-w-2xl rounded-xl p-4"
+        className="my-auto w-full max-w-2xl rounded-xl p-4"
         style={{ background: '#0f172a', border: '1px solid #1e1b4b' }}
       >
         <div className="mb-3 flex items-center justify-between">
@@ -1378,6 +1465,15 @@ function ResultEntryModal({
                 {submitting ? <Loader size={10} className="animate-spin" /> : <Check size={10} />}
                 SUMMARY
               </button>
+            </div>
+
+            <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-5">
+              <div className="md:col-span-2">
+                <ViewersPanel viewers={viewers} />
+              </div>
+              <div className="md:col-span-3">
+                <LiveBetsPanel bets={bets} hasOpenRound={true} roundId={round.id} maxHeight="240px" />
+              </div>
             </div>
           </>
         )}
@@ -1737,7 +1833,7 @@ function ScheduleModal({
   )
 }
 
-function StartRoundPanel({ defaultStreamUrl, loading }: { defaultStreamUrl: string; loading: boolean }) {
+function StartRoundPanel({ defaultStreamUrl, defaultSeconds, loading }: { defaultStreamUrl: string; defaultSeconds: number; loading: boolean }) {
   return (
     <div className="rounded-xl p-4" style={{ background: '#0f172a', border: '1px solid #1e1b4b' }}>
       <div className="mb-3 flex items-center gap-2 text-[10px] font-bold " style={{ color: '#a5b4fc' }}>
@@ -1761,7 +1857,7 @@ function StartRoundPanel({ defaultStreamUrl, loading }: { defaultStreamUrl: stri
           type="number"
           min={15}
           max={600}
-          defaultValue={DEFAULT_BETTING_SECONDS}
+          defaultValue={defaultSeconds}
           className="rounded-lg px-3 py-2 text-xs outline-none"
           style={{ background: '#1e1b4b', color: '#fde68a', border: '1px solid #4338ca' }}
         />

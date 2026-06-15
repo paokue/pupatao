@@ -37,10 +37,11 @@ export interface CompetitionWinner {
   profile: string | null
   demoBalance: number
 }
-export const LIVE_STREAM_URL_KEY      = 'liveStreamUrl'
-export const LIVE_SCHEDULE_START_KEY  = 'liveScheduleStart'
-export const LIVE_SCHEDULE_END_KEY    = 'liveScheduleEnd'
-export const LIVE_SCHEDULE_NOTICE_KEY = 'liveScheduleNotice'
+export const LIVE_STREAM_URL_KEY        = 'liveStreamUrl'
+export const LIVE_SCHEDULE_START_KEY    = 'liveScheduleStart'
+export const LIVE_SCHEDULE_END_KEY      = 'liveScheduleEnd'
+export const LIVE_SCHEDULE_NOTICE_KEY   = 'liveScheduleNotice'
+export const LIVE_BETTING_SECONDS_KEY   = 'liveBettingSeconds'
 
 export async function getSleepMode(): Promise<boolean> {
   try {
