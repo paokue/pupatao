@@ -1381,17 +1381,9 @@ function ActiveRoundPanel({
   }
   const submitting = settling
 
-  // Result-entry modal: opened from the compact bar below the stream. Auto-
-  // opens once the betting timer expires so the admin doesn't have to click
-  // through to start entering dice.
-  const [resultModalOpen, setResultModalOpen] = useState(false)
-  const [autoOpened, setAutoOpened] = useState(false)
-  useEffect(() => {
-    if (bettingExpired && !autoOpened) {
-      setResultModalOpen(true)
-      setAutoOpened(true)
-    }
-  }, [bettingExpired, autoOpened])
+  // Result-entry modal: open immediately when a round is active so the admin
+  // can watch bets stream in. Admin can close it and re-open via the button.
+  const [resultModalOpen, setResultModalOpen] = useState(true)
 
   return (
     <div className="flex flex-col gap-4">
