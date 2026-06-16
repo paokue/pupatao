@@ -1516,13 +1516,11 @@ function ResultEntryModal({
         </div>
 
         {stillBetting ? (
-          <div className="rounded-xl p-6 text-center" style={{ background: '#1e1b4b' }}>
-            <p className="text-xs" style={{ color: '#cbd5e1' }}>
-              Dice board opens after the betting window closes
-              {remainingSeconds != null && (
-                <span style={{ color: '#fde68a' }}> ({remainingSeconds}s remaining)</span>
-              )}
-            </p>
+          <div className="mb-3 rounded-xl px-4 py-2.5 text-center text-xs" style={{ background: '#1e1b4b' }}>
+            <span style={{ color: '#cbd5e1' }}>Betting window open</span>
+            {remainingSeconds != null && (
+              <span style={{ color: '#fde68a' }}> · {remainingSeconds}s remaining</span>
+            )}
           </div>
         ) : (
           <>
@@ -1562,17 +1560,17 @@ function ResultEntryModal({
                 SUMMARY
               </button>
             </div>
-
-            <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-5">
-              <div className="md:col-span-2">
-                <ViewersPanel viewers={viewers} />
-              </div>
-              <div className="md:col-span-3">
-                <LiveBetsPanel bets={bets} hasOpenRound={true} roundId={round.id} maxHeight="240px" />
-              </div>
-            </div>
           </>
         )}
+
+        <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-5">
+          <div className="md:col-span-2">
+            <ViewersPanel viewers={viewers} />
+          </div>
+          <div className="md:col-span-3">
+            <LiveBetsPanel bets={bets} hasOpenRound={true} roundId={round.id} maxHeight="240px" />
+          </div>
+        </div>
       </div>
     </div>
   )
