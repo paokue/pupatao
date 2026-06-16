@@ -11,10 +11,10 @@ import { usePusherEvent } from '~/hooks/use-pusher'
 import { ConfirmDialog } from '~/components/ConfirmDialog'
 
 const PAGE_SIZES = [10, 30, 50, 100, 200, 500] as const
-type Tab = 'deposit' | 'withdraw' | 'transfer'
+type Tab = 'deposit' | 'withdraw' | 'transfer' | 'reward'
 type StatusFilter = 'PENDING' | 'COMPLETED' | 'CANCELLED' | 'ALL'
 
-function isTab(v: string): v is Tab { return v === 'deposit' || v === 'withdraw' || v === 'transfer' }
+function isTab(v: string): v is Tab { return v === 'deposit' || v === 'withdraw' || v === 'transfer' || v === 'reward' }
 function isStatus(v: string): v is StatusFilter {
   return v === 'PENDING' || v === 'COMPLETED' || v === 'CANCELLED' || v === 'ALL'
 }
@@ -57,6 +57,44 @@ export async function loader({ request }: Route.LoaderArgs) {
     prisma.transaction.count({ where: { type: 'WITHDRAW', status: 'PENDING' } }),
     prisma.transaction.count({ where: { type: 'TRANSFER_OUT', status: 'PENDING' } }),
   ])
+
+  if (tab === 'reward') {
+    const rewardInclude = { user: { select: USER_SELECT } }
+    const baseWhere = { type: 'SYSTEM_REWARD' as const, ...telFilter }
+    const [total, items] = await Promise.all([
+      prisma.transaction.count({ where: baseWhere }),
+      prisma.transaction.findMany({
+        where: baseWhere,
+        orderBy: { createdAt: 'desc' },
+        skip: (page - 1) * pageSize,
+        take: pageSize,
+        include: rewardInclude,
+      }),
+    ])
+    return {
+      tab,
+      status,
+      q,
+      page,
+      total,
+      pageSize,
+      pendingDepositCount,
+      pendingWithdrawCount,
+      pendingTransferCount,
+      txs: items.map(t => ({
+        id: t.id,
+        type: 'reward' as const,
+        amount: t.amount,
+        status: t.status,
+        note: t.note,
+        createdAt: t.createdAt.toISOString(),
+        balanceAfter: t.balanceAfter,
+        slipUrl: null as string | null,
+        sender: { tel: t.user.tel, name: userName(t.user) },
+        recipient: null as null,
+      })),
+    }
+  }
 
   if (tab === 'transfer') {
     const cfInclude = { user: { select: USER_SELECT }, targetUser: { select: USER_SELECT } }
@@ -363,6 +401,7 @@ const TABS: { key: Tab; label: string }[] = [
   { key: 'deposit', label: 'Deposit' },
   { key: 'withdraw', label: 'Withdraw' },
   { key: 'transfer', label: 'Transfer' },
+  { key: 'reward', label: '🎁 Reward' },
 ]
 
 type TxLite = ReturnType<typeof useLoaderData<typeof loader>>['txs'][number]
@@ -436,7 +475,7 @@ export default function AdminTransactions() {
         <div className="flex flex-col gap-2">
           <div className="flex gap-2">
             {TABS.map(t => {
-              const count = t.key === 'deposit' ? data.pendingDepositCount : t.key === 'withdraw' ? data.pendingWithdrawCount : data.pendingTransferCount
+              const count = t.key === 'deposit' ? data.pendingDepositCount : t.key === 'withdraw' ? data.pendingWithdrawCount : t.key === 'transfer' ? data.pendingTransferCount : 0
               return (
                 <Link
                   key={t.key}
@@ -458,22 +497,24 @@ export default function AdminTransactions() {
               )
             })}
           </div>
-          <div className="flex flex-wrap gap-1.5">
-            {STATUS_FILTERS.map(s => (
-              <Link
-                key={s}
-                to={statusHref(s)}
-                className="rounded-md px-2 py-1 text-[10px] font-bold"
-                style={{
-                  background: data.status === s ? '#1e1b4b' : 'transparent',
-                  color: data.status === s ? '#fde68a' : '#818cf8',
-                  border: `1px solid ${data.status === s ? '#4338ca' : '#1e1b4b'}`,
-                }}
-              >
-                {s}
-              </Link>
-            ))}
-          </div>
+          {data.tab !== 'reward' && (
+            <div className="flex flex-wrap gap-1.5">
+              {STATUS_FILTERS.map(s => (
+                <Link
+                  key={s}
+                  to={statusHref(s)}
+                  className="rounded-md px-2 py-1 text-[10px] font-bold"
+                  style={{
+                    background: data.status === s ? '#1e1b4b' : 'transparent',
+                    color: data.status === s ? '#fde68a' : '#818cf8',
+                    border: `1px solid ${data.status === s ? '#4338ca' : '#1e1b4b'}`,
+                  }}
+                >
+                  {s}
+                </Link>
+              ))}
+            </div>
+          )}
         </div>
 
         {/* RIGHT: phone-number filter — preserves active tab/status, resets
@@ -537,6 +578,8 @@ export default function AdminTransactions() {
         {data.txs.map((tx, i) =>
           tx.type === 'transfer' ? (
             <TransferCard key={tx.id} tx={tx} rowNum={(data.page - 1) * data.pageSize + i + 1} />
+          ) : tx.type === 'reward' ? (
+            <RewardCard key={tx.id} tx={tx} rowNum={(data.page - 1) * data.pageSize + i + 1} />
           ) : (
             <TxCard
               key={tx.id}
@@ -750,6 +793,38 @@ function TransferCard({ tx, rowNum }: { tx: TxLite; rowNum: number }) {
       <div className="flex items-center gap-3 md:flex-col md:items-end">
         <span className="text-lg font-bold" style={{ color: '#fde68a' }}>
           {tx.amount.toLocaleString()} ₭
+        </span>
+        <span className="text-[10px]" style={{ color: '#818cf8' }}>
+          Balance after: {tx.balanceAfter.toLocaleString()} ₭
+        </span>
+      </div>
+    </div>
+  )
+}
+
+function RewardCard({ tx, rowNum }: { tx: TxLite; rowNum: number }) {
+  return (
+    <div className="flex flex-col gap-3 rounded-xl p-4 md:flex-row md:items-center"
+      style={{ background: '#0f172a', border: '1px solid #14532d' }}>
+      <div className="min-w-0 flex-1">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-[10px] font-bold tabular-nums" style={{ color: '#64748b' }}>#{rowNum}</span>
+          <span className="font-semibold" style={{ color: '#e9d5ff' }}>
+            {tx.sender.name !== tx.sender.tel ? `${tx.sender.name} · ` : ''}{tx.sender.tel}
+          </span>
+          <span className="rounded-full px-2 py-0.5 text-[10px] font-bold"
+            style={{ background: 'rgba(22,163,74,0.2)', color: '#4ade80' }}>
+            REWARD
+          </span>
+        </div>
+        <div className="mt-0.5 text-xs" style={{ color: '#818cf8' }}>
+          {new Date(tx.createdAt).toLocaleString()}
+        </div>
+        {tx.note && <div className="mt-1 text-xs" style={{ color: '#a5b4fc' }}>{tx.note}</div>}
+      </div>
+      <div className="flex items-center gap-3 md:flex-col md:items-end">
+        <span className="text-lg font-bold" style={{ color: '#4ade80' }}>
+          +{tx.amount.toLocaleString()} ₭
         </span>
         <span className="text-[10px]" style={{ color: '#818cf8' }}>
           Balance after: {tx.balanceAfter.toLocaleString()} ₭

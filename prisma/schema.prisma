@@ -103,6 +103,10 @@ model User {
   receivedTransfers    Transfer[]    @relation("ReceiverTransfers")
   competitionParticipant CompetitionParticipant?
 
+  // Live win-streak counter — incremented on net-positive live rounds,
+  // reset to 0 on a loss or after a 5-win streak reward is issued.
+  liveWinStreak Int @default(0)
+
   @@index([role])
   @@index([status])
   @@index([referredById])
@@ -329,6 +333,7 @@ enum TransactionType {
   ADJUSTMENT // manual admin correction (+ or - per sign of `amount` if you relax the rule)
   PROMO_BONUS // first-topup tier bonus credited to PROMO wallet
   REFERRAL_BONUS // 10k credit to a referrer's REAL wallet when their referee's first topup is approved
+  SYSTEM_REWARD  // automated promotion bonus (win streak, triple, etc.) credited to REAL wallet
 }
 
 enum TransactionStatus {

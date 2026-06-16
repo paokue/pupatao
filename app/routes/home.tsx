@@ -22,6 +22,7 @@ import {
   type CompetitionToggledPayload,
   type LiveEndedPayload,
   type LiveScheduledPayload,
+  type RewardCreditedPayload,
   type RoundDicePayload,
   type RoundResolvedPayload,
   type RoundSettledPayload,
@@ -1275,6 +1276,7 @@ export default function FishPrawnCrabGame() {
 
   // Settlement modal — populated from the per-user `round:settled` event.
   const [liveSettleModal, setLiveSettleModal] = useState<RoundSettledPayload | null>(null)
+  const [rewardModal, setRewardModal] = useState<RewardCreditedPayload | null>(null)
 
   // Tick a "now" clock every second while in LIVE mode so the countdown
   // re-renders without jitter. Stays still in RANDOM mode.
@@ -1386,6 +1388,22 @@ export default function FishPrawnCrabGame() {
     'round:settled',
     payload => {
       setLiveSettleModal(payload)
+    },
+  )
+
+  usePusherEvent<RewardCreditedPayload>(
+    authUser ? userChannel(authUser.id) : null,
+    'reward:credited',
+    payload => {
+      setRewardModal(payload)
+      confetti({ particleCount: 160, spread: 80, angle: 60, origin: { x: 0, y: 0.6 } })
+      confetti({ particleCount: 160, spread: 80, angle: 120, origin: { x: 1, y: 0.6 } })
+      setTimeout(() => {
+        confetti({ particleCount: 80, spread: 100, angle: 90, origin: { x: 0.5, y: 0.35 }, startVelocity: 50 })
+      }, 300)
+      // Revalidate after a short delay so the loader re-fetches the wallet
+      // balance that now includes the bonus credit.
+      setTimeout(() => revalidator.revalidate(), 600)
     },
   )
 
@@ -4038,6 +4056,42 @@ export default function FishPrawnCrabGame() {
           </div>
         )
       })()}
+
+      {/* Win-streak / promotion reward modal */}
+      {rewardModal && (
+        <div
+          className="fixed inset-0 z-[110] flex items-center justify-center p-4"
+          style={{ background: 'rgba(10,0,20,0.88)' }}
+          onClick={() => setRewardModal(null)}
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            className="w-full max-w-xs rounded-2xl p-6 text-center"
+            style={{
+              background: 'linear-gradient(160deg, #1a0a00 0%, #0f1a00 100%)',
+              border: '2px solid #f59e0b',
+              boxShadow: '0 0 40px rgba(245,158,11,0.35)',
+            }}
+          >
+            <div className="text-5xl mb-3">🎁</div>
+            <div className="text-xl font-bold" style={{ color: '#fbbf24' }}>ຂອງຂວັນພິເສດ!</div>
+            <div className="mt-1 text-sm font-semibold" style={{ color: '#fde68a' }}>{rewardModal.note}</div>
+            <div className="mt-5 text-5xl font-bold" style={{ color: '#4ade80' }}>
+              +{rewardModal.amount.toLocaleString()} ₭
+            </div>
+            <div className="mt-3 text-xs" style={{ color: '#94a3b8' }}>
+              ຍອດເງິນ REAL: {rewardModal.newBalance.toLocaleString()} ₭
+            </div>
+            <button
+              onClick={() => setRewardModal(null)}
+              className="mt-6 w-full rounded-xl py-3 text-sm font-bold transition-opacity hover:opacity-90"
+              style={{ background: 'linear-gradient(135deg, #f59e0b, #d97706)', color: '#000' }}
+            >
+              ຂອບໃຈ! 🎉
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Sign-in overlay — opened from the Anonymous pill or when anonymous users try to switch to REAL */}
       <LoginModal

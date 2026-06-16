@@ -115,6 +115,7 @@ export const STRINGS = {
   "wallet.tab.deposit": { lo: "ຝາກ", en: "Deposit" },
   "wallet.tab.withdraw": { lo: "ຖອນ", en: "Withdraw" },
   "wallet.tab.transfer": { lo: "ໂອນ", en: "Transfer" },
+  "wallet.tab.reward": { lo: "🎁 ລາງວັນ", en: "🎁 Rewards" },
   "wallet.depositCoins": { lo: "ຝາກເງິນ", en: "Deposit Coins" },
   "wallet.withdrawCoins": { lo: "ຖອນເງິນ", en: "Withdraw Coins" },
   "wallet.customAmount": { lo: "ຈຳນວນກຳນົດເອງ", en: "Custom amount" },
@@ -126,6 +127,7 @@ export const STRINGS = {
   "wallet.history.deposit": { lo: "ປະຫວັດການຝາກ", en: "DEPOSIT HISTORY" },
   "wallet.history.withdraw": { lo: "ປະຫວັດການຖອນ", en: "WITHDRAW HISTORY" },
   "wallet.history.transfer": { lo: "ປະຫວັດການໂອນ", en: "TRANSFER HISTORY" },
+  "wallet.history.reward": { lo: "ປະຫວັດລາງວັນ", en: "REWARD HISTORY" },
   "wallet.noTx.deposit": {
     lo: "ຍັງບໍ່ມີລາຍການຝາກ.",
     en: "No deposit transactions yet.",
@@ -137,6 +139,10 @@ export const STRINGS = {
   "wallet.noTx.transfer": {
     lo: "ຍັງບໍ່ມີລາຍການໂອນ.",
     en: "No transfer transactions yet.",
+  },
+  "wallet.noTx.reward": {
+    lo: "ຍັງບໍ່ມີລາງວັນ.",
+    en: "No rewards yet.",
   },
   "wallet.viewSlip": { lo: "ເບິ່ງໃບໂອນ", en: "View slip" },
   "wallet.errEnterAmount": {

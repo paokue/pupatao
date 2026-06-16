@@ -15,6 +15,7 @@ import {
   ADMIN_CHANNEL,
   PRESENCE_LIVE,
   type BetPlacedPayload,
+  type RewardCreditedPayload,
   type RoundDicePayload,
   type RoundResolvedPayload,
 } from '~/lib/pusher-channels'
@@ -29,20 +30,37 @@ const RANGE_BOUNDS: Record<'LOW' | 'MIDDLE' | 'HIGH', { min: number; max: number
   HIGH: { min: 11, max: 18 },
 }
 
+// Symbols that earn the premium triple bonus (×16 total return on all-3-match).
+// Fish, Rooster, Frog earn the standard triple bonus (×10 total return).
+const TRIPLE_PREMIUM = new Set<string>(['CRAB', 'PRAWN', 'GOURD'])
+// SUM numbers that earn the special bonus payout (×5 total return) in live mode.
+const SPECIAL_SUMS = new Set([3, 7, 11, 15])
+
+type LivePromo = { triple: boolean; sum: boolean }
+
 // Mirrors the per-bet payout math in api.play-round.tsx so server-side resolve
 // produces the same numbers as a client-rolled RANDOM round would.
 // Multipliers come from getPayoutConfig() so a single env change tunes both.
+// `livePromo` is only passed for LIVE-mode settlements to apply promotion bonuses.
 function computeBetPayout(
   b: { kind: string; amount: number; symbol: string | null; range: string | null; pairA: string | null; pairB: string | null; exactSum?: number | null },
   dice: DiceSymbol[],
   diceSum: number,
   cfg: PayoutConfig,
+  livePromo?: LivePromo,
 ): number {
   if (b.kind === 'SYMBOL' && b.symbol) {
     const matches = dice.filter(d => d === b.symbol).length
     if (matches === 1) return b.amount * cfg.symbol1
     if (matches === 2) return b.amount * cfg.symbol2
-    if (matches === 3) return b.amount * cfg.symbol3
+    if (matches === 3) {
+      if (livePromo?.triple) {
+        // Premium symbols (Crab/Prawn/Gourd): ×5 per die × 3 + stake = ×16 total
+        // Standard symbols (Fish/Rooster/Frog): ×3 per die × 3 + stake = ×10 total
+        return b.amount * (TRIPLE_PREMIUM.has(b.symbol) ? 16 : 10)
+      }
+      return b.amount * cfg.symbol3
+    }
     return 0
   }
   if (b.kind === 'RANGE' && b.range) {
@@ -58,7 +76,12 @@ function computeBetPayout(
       : 0
   }
   if (b.kind === 'SUM' && b.exactSum != null) {
-    return diceSum === b.exactSum ? b.amount * cfg.sumNumber : 0
+    if (diceSum === b.exactSum) {
+      // Special SUM numbers (3, 7, 11, 15) pay ×5 net profit = ×6 total return; others keep cfg.sumNumber
+      if (livePromo?.sum && SPECIAL_SUMS.has(b.exactSum)) return b.amount * 6
+      return b.amount * cfg.sumNumber
+    }
+    return 0
   }
   return 0
 }
@@ -407,9 +430,15 @@ export async function action({ request }: Route.ActionArgs) {
       })
 
       const cfg = getPayoutConfig()
+      const livePromo: LivePromo = {
+        triple: process.env.PROMO_TRIPLE === 'true',
+        sum:    process.env.PROMO_SUM    === 'true',
+      }
+      const promoStreak = process.env.PROMO_STREAK === 'true'
+
       type Resolved = { id: string; payout: number; result: 'WIN' | 'LOSS' }
       const betUpdates: Resolved[] = bets.map(b => {
-        const payout = computeBetPayout(b, dice, diceSum, cfg)
+        const payout = computeBetPayout(b, dice, diceSum, cfg, livePromo)
         return { id: b.id, payout, result: payout > 0 ? 'WIN' : 'LOSS' }
       })
 
@@ -585,6 +614,74 @@ export async function action({ request }: Route.ActionArgs) {
           balanceAfter: newBalance,
           note: grp.payout > 0 ? 'Live round payout' : 'Live round settled',
         })
+      }
+
+      // ── Win-streak promotion ──────────────────────────────────────────────
+      // For each non-DEMO bettor: tally net across all their wallets, update
+      // liveWinStreak, and credit a bonus if they hit streak 4 or 5.
+      if (promoStreak) {
+        const userNet = new Map<string, { stake: number; payout: number }>()
+        for (const grp of playerGroups.values()) {
+          if (grp.walletType === 'DEMO') continue
+          const cur = userNet.get(grp.userId) ?? { stake: 0, payout: 0 }
+          cur.stake  += grp.stake
+          cur.payout += grp.payout
+          userNet.set(grp.userId, cur)
+        }
+        for (const [userId, net] of userNet) {
+          const won = net.payout > net.stake
+          const user = await prisma.user.findUnique({ where: { id: userId }, select: { liveWinStreak: true } })
+          if (!user) continue
+          const oldStreak = user.liveWinStreak
+          let newStreak = won ? oldStreak + 1 : 0
+          let bonusAmount = 0
+          let bonusNote = ''
+          if (won && newStreak === 4) {
+            bonusAmount = 5000
+            bonusNote = 'ຂອງຂວັນຊະນະ 4 ຕາຊ້ອນ'
+          } else if (won && newStreak === 5) {
+            bonusAmount = 10000
+            bonusNote = 'ຂອງຂວັນຊະນະ 5 ຕາຊ້ອນ'
+            newStreak = 0  // reset — next win starts fresh at 1
+          }
+          await prisma.user.update({ where: { id: userId }, data: { liveWinStreak: newStreak } })
+          if (bonusAmount > 0) {
+            try {
+              // Re-fetch the REAL wallet so balance reflects post-settlement payout.
+              const realWallet = await prisma.wallet.findUnique({
+                where: { userId_type: { userId, type: 'REAL' } },
+              })
+              if (!realWallet) throw new Error(`REAL wallet not found for user ${userId}`)
+              const balanceBefore = realWallet.balance
+              const newRealBalance = balanceBefore + bonusAmount
+              await prisma.$transaction([
+                prisma.wallet.update({
+                  where: { id: realWallet.id },
+                  data: { balance: newRealBalance, version: { increment: 1 } },
+                }),
+                prisma.transaction.create({
+                  data: {
+                    userId, walletId: realWallet.id, type: 'SYSTEM_REWARD',
+                    amount: bonusAmount,
+                    balanceBefore,
+                    balanceAfter: newRealBalance,
+                    status: 'COMPLETED',
+                    idempotencyKey: crypto.randomUUID(),
+                    note: bonusNote,
+                  },
+                }),
+              ])
+              notifyUser(userId, 'reward:credited', {
+                amount: bonusAmount,
+                note: bonusNote,
+                newBalance: newRealBalance,
+                streak: oldStreak + 1,
+              } satisfies RewardCreditedPayload)
+            } catch (err) {
+              console.error('[promo] streak bonus credit failed for user', userId, err)
+            }
+          }
+        }
       }
 
       // Build the summary payload that the admin's UI panel renders.

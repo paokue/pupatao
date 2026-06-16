@@ -37,7 +37,7 @@ const DEPOSIT_AMOUNTS = [5_000, 10_000, 50_000, 100_000, 500_000, 1_000_000]
 const WITHDRAW_AMOUNTS = [30_000, 50_000, 100_000, 200_000, 500_000, 1_000_000]
 const TRANSFER_AMOUNTS = [20_000, 50_000, 100_000, 200_000, 500_000, 1_000_000]
 
-type Tab = 'deposit' | 'withdraw' | 'transfer'
+type Tab = 'deposit' | 'withdraw' | 'transfer' | 'reward'
 
 function formatDate(ts: string | number): string {
   return new Date(ts).toLocaleString()
@@ -92,6 +92,7 @@ export async function loader({ request }: Route.LoaderArgs) {
     deposits,
     withdraws,
     transfers,
+    rewards,
     bank,
     pendingReceived,
     pendingSent,
@@ -120,6 +121,11 @@ export async function loader({ request }: Route.LoaderArgs) {
     }),
     prisma.transaction.findMany({
       where: { walletId: wallet.id, type: { in: ['TRANSFER_OUT', 'TRANSFER_IN'] } },
+      orderBy: { createdAt: 'desc' },
+      take: PAGE_SIZE,
+    }),
+    prisma.transaction.findMany({
+      where: { walletId: wallet.id, type: 'SYSTEM_REWARD' },
       orderBy: { createdAt: 'desc' },
       take: PAGE_SIZE,
     }),
@@ -166,6 +172,7 @@ export async function loader({ request }: Route.LoaderArgs) {
     deposits: deposits.map(serialize),
     withdraws: withdraws.map(serialize),
     transfers: transfers.map(serialize),
+    rewards: rewards.map(serialize),
     bankQrUrl: bank?.qrUrl ?? null,
     pendingReceived: pendingReceived.map(t => ({
       id: t.id,
@@ -731,11 +738,13 @@ export default function WalletPage() {
     deposit: VISIBLE_INITIAL,
     withdraw: VISIBLE_INITIAL,
     transfer: VISIBLE_INITIAL,
+    reward: VISIBLE_INITIAL,
   })
 
   const allTabTxs = useMemo(() => {
     if (tab === 'deposit') return loaderData.deposits
     if (tab === 'withdraw') return loaderData.withdraws
+    if (tab === 'reward') return loaderData.rewards
     return loaderData.transfers
   }, [tab, loaderData])
 
@@ -902,7 +911,7 @@ export default function WalletPage() {
 
         {/* ─── Tabs ────────────────────────────────────────────────────── */}
         <div className="flex rounded-xl overflow-hidden" style={{ border: '1px solid #6d28d9' }}>
-          {(['deposit', 'withdraw', 'transfer'] as Tab[]).map(tabKey => (
+          {(['deposit', 'withdraw', 'transfer', 'reward'] as Tab[]).map(tabKey => (
             <button
               key={tabKey}
               onClick={() => { playClick(); setTab(tabKey); setAmount('') }}
@@ -912,7 +921,10 @@ export default function WalletPage() {
                 color: tab === tabKey ? '#fff' : '#a78bfa',
               }}
             >
-              {tabKey === 'deposit' ? t('wallet.tab.deposit') : tabKey === 'withdraw' ? t('wallet.tab.withdraw') : t('wallet.tab.transfer')}
+              {tabKey === 'deposit' ? t('wallet.tab.deposit')
+                : tabKey === 'withdraw' ? t('wallet.tab.withdraw')
+                : tabKey === 'transfer' ? t('wallet.tab.transfer')
+                : t('wallet.tab.reward')}
             </button>
           ))}
         </div>
@@ -1021,7 +1033,10 @@ export default function WalletPage() {
         <section>
           <div className="mb-2 flex items-center justify-between">
             <div className="text-sm font-bold " style={{ color: '#a78bfa' }}>
-              {tab === 'deposit' ? t('wallet.history.deposit') : tab === 'withdraw' ? t('wallet.history.withdraw') : t('wallet.history.transfer')}
+              {tab === 'deposit' ? t('wallet.history.deposit')
+                : tab === 'withdraw' ? t('wallet.history.withdraw')
+                : tab === 'reward' ? t('wallet.history.reward')
+                : t('wallet.history.transfer')}
             </div>
             {isRevalidating && <Loader size={14} className="animate-spin" style={{ color: '#c4b5fd' }} />}
           </div>
@@ -1029,7 +1044,10 @@ export default function WalletPage() {
           <div className="flex flex-col gap-2">
             {tabTxs.length === 0 && (
               <p className="rounded-xl py-8 text-center text-sm" style={{ background: '#1e0040', color: '#a78bfa', border: '1px solid #4c1d95' }}>
-                {tab === 'deposit' ? t('wallet.noTx.deposit') : tab === 'withdraw' ? t('wallet.noTx.withdraw') : t('wallet.noTx.transfer')}
+                {tab === 'deposit' ? t('wallet.noTx.deposit')
+                  : tab === 'withdraw' ? t('wallet.noTx.withdraw')
+                  : tab === 'reward' ? t('wallet.noTx.reward')
+                  : t('wallet.noTx.transfer')}
               </p>
             )}
             {tabTxs.map(tx => (
@@ -1227,7 +1245,7 @@ type TxRowTx = Awaited<ReturnType<typeof loader>>['deposits'][number]
 
 function TxRow({ tx }: { tx: TxRowTx }) {
   const t = useT()
-  const isCredit = tx.type === 'DEPOSIT' || tx.type === 'TRANSFER_IN'
+  const isCredit = tx.type === 'DEPOSIT' || tx.type === 'TRANSFER_IN' || tx.type === 'SYSTEM_REWARD'
   const sign = isCredit ? '+' : '-'
   const amountColor = isCredit ? '#4ade80' : '#f87171'
 

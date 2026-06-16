@@ -148,6 +148,15 @@ export interface SettledBet {
   payout: number   // 0 if lost
   result: 'WIN' | 'LOSS'
 }
+// Fired after admin settles a live round when a promotion bonus is credited
+// to the user's REAL wallet (win streak, triple bonus, etc.).
+export interface RewardCreditedPayload {
+  amount: number    // bonus amount in ₭
+  note: string      // display note in Lao (e.g. "ຂອງຂວັນຊະນະ 4 ຕາຊ້ອນ")
+  newBalance: number
+  streak: number    // the streak count that triggered this bonus
+}
+
 export interface RoundSettledPayload {
   roundId: string
   dice: string[]
