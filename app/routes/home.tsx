@@ -2748,7 +2748,7 @@ export default function FishPrawnCrabGame() {
               {mode === 'live' ? (
                 <div className="pb-2">
                   <div className="mb-1 flex items-center justify-between text-[9px]" style={{ color: '#c4b5fd' }}>
-                    <span>ສູງສຸດ 3 ເລກ · ×3 ກຳໄລ</span>
+                    <span>ສູງສຸດ 3 ເລກ · ×3 ກຳໄລ (<span style={{ color: '#fca5a5' }}>3,7,11,15 = ×5</span>)</span>
                     <span>{currentSumBets.length}/3</span>
                   </div>
                   <div className="grid grid-cols-6 gap-1">
@@ -2757,17 +2757,18 @@ export default function FishPrawnCrabGame() {
                       const isWinner = !isRolling && diceResults.length > 0 && diceSum === n
                       const isSelected = currentSumBets.some(b => b.sum === n)
                       const maxReached = currentSumBets.length >= 3 && !isSelected
+                      const isSpecial = [3, 7, 11, 15].includes(n)
                       return (
                         <button key={n} onClick={() => placeSumBet(n)}
                           disabled={bettingLocked || balance < selectedChip || maxReached}
                           className="relative flex flex-col items-center justify-center rounded py-1 font-bold disabled:opacity-40"
                           style={{
-                            background: isWinner ? 'rgba(250,204,21,0.3)' : isSelected ? 'rgba(124,58,237,0.5)' : 'rgba(30,0,64,0.6)',
-                            border: `1px solid ${isWinner ? '#facc15' : isSelected ? '#a78bfa' : '#4c1d95'}`,
-                            color: isWinner ? '#facc15' : '#e9d5ff',
+                            background: isWinner ? 'rgba(250,204,21,0.3)' : isSelected ? 'rgba(124,58,237,0.5)' : isSpecial ? 'rgba(185,28,28,0.85)' : 'rgba(30,0,64,0.6)',
+                            border: `1px solid ${isWinner ? '#facc15' : isSelected ? '#a78bfa' : isSpecial ? '#ef4444' : '#4c1d95'}`,
+                            color: isWinner ? '#facc15' : '#fff',
                           }}>
                           <div className="text-[10px]">{n}</div>
-                          <div className="text-[7px] opacity-70">×3</div>
+                          <div className="text-[7px] opacity-70">{isSpecial ? '×5' : '×3'}</div>
                           {bet > 0 && (
                             <div className="absolute -top-1 -right-1 rounded-full px-0.5 text-[6px] font-bold"
                               style={{ background: '#dc2626', color: '#fff' }}>
@@ -3535,7 +3536,7 @@ export default function FishPrawnCrabGame() {
               {mode === 'live' ? (
                 <div className="mx-auto mt-3" style={{ maxWidth: 560 }}>
                   <div className="mb-1 flex items-center justify-between text-[10px]" style={{ color: '#c4b5fd' }}>
-                    <span>ເລືອກໄດ້ສູງສຸດ 3 ເລກ · ຈ່າຍ ×3 (ກຳໄລ)</span>
+                    <span>ເລືອກໄດ້ສູງສຸດ 3 ເລກ · ຈ່າຍ ×3 (<span style={{ color: '#fca5a5' }}>3,7,11,15 = ×5</span>)</span>
                     <span>{currentSumBets.length}/3</span>
                   </div>
                   <div className="grid grid-cols-6 gap-1.5">
@@ -3544,6 +3545,7 @@ export default function FishPrawnCrabGame() {
                       const isWinner = winnerHighlight && !isRolling && diceResults.length > 0 && diceSum === n
                       const isSelected = currentSumBets.some(b => b.sum === n)
                       const maxReached = currentSumBets.length >= 3 && !isSelected
+                      const isSpecial = [3, 7, 11, 15].includes(n)
                       return (
                         <button
                           key={n}
@@ -3551,14 +3553,14 @@ export default function FishPrawnCrabGame() {
                           disabled={bettingLocked || balance < selectedChip || maxReached}
                           className="relative flex flex-col items-center justify-center rounded py-1 transition-all disabled:opacity-40"
                           style={{
-                            background: isWinner ? 'rgba(250,204,21,0.35)' : isSelected ? 'rgba(124,58,237,0.5)' : 'rgba(30,0,64,0.7)',
-                            border: `1px solid ${isWinner ? '#facc15' : isSelected ? '#a78bfa' : '#4c1d95'}`,
-                            boxShadow: isWinner ? '0 0 16px rgba(250,204,21,0.55)' : isSelected ? '0 0 10px rgba(167,139,250,0.4)' : 'none',
-                            color: isWinner ? '#facc15' : '#e9d5ff',
+                            background: isWinner ? 'rgba(250,204,21,0.35)' : isSelected ? 'rgba(124,58,237,0.5)' : isSpecial ? 'rgba(185,28,28,0.85)' : 'rgba(30,0,64,0.7)',
+                            border: `1px solid ${isWinner ? '#facc15' : isSelected ? '#a78bfa' : isSpecial ? '#ef4444' : '#4c1d95'}`,
+                            boxShadow: isWinner ? '0 0 16px rgba(250,204,21,0.55)' : isSelected ? '0 0 10px rgba(167,139,250,0.4)' : isSpecial ? '0 0 6px rgba(239,68,68,0.4)' : 'none',
+                            color: isWinner ? '#facc15' : '#fff',
                           }}
                         >
                           <div className="text-xs font-bold">{n}</div>
-                          <div className="text-[8px] opacity-70">×3</div>
+                          <div className="text-[8px] opacity-70">{isSpecial ? '×5' : '×3'}</div>
                           {bet > 0 && (
                             <div className="absolute -top-1.5 -right-1.5 flex h-5 min-w-[28px] items-center justify-center rounded-full px-1 font-bold text-[8px] whitespace-nowrap"
                               style={{ background: 'linear-gradient(135deg,#dc2626,#991b1b)', color: '#fff', border: '1px solid #fca5a5' }}>
