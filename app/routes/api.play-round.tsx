@@ -386,7 +386,7 @@ async function handleLiveBets(args: {
   pairBets: PairBetIn[]
   sumBets: SumBetIn[]
 }) {
-  const { user, wallet, totalStake, symbolBets, rangeBets, pairBets, sumBets } = args
+  const { user, wallet, walletKey, totalStake, symbolBets, rangeBets, pairBets, sumBets } = args
 
   const openRound = await prisma.gameRound.findFirst({
     where: { mode: 'LIVE', status: 'BETTING' },
@@ -456,7 +456,7 @@ async function handleLiveBets(args: {
       event: 'bet:placed',
       payload: {
         roundId: result.roundId, mode: 'LIVE',
-        userId: user.id, userTel: user.tel, userName,
+        userId: user.id, userTel: user.tel, userName, walletType: walletKey,
         kind: b.kind, amount: b.amount,
         symbol: b.symbol, range: b.range, pairA: b.pairA, pairB: b.pairB,
         exactSum: b.exactSum,

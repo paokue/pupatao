@@ -114,10 +114,13 @@ export async function loader({ request }: Route.LoaderArgs) {
   // Bets already placed in the current round — seeds the realtime feed.
   const currentBets = current
     ? await prisma.bet.findMany({
-      where: { roundId: current.id },
+      where: { roundId: current.id, wallet: { type: { in: ['REAL', 'PROMO'] } } },
       orderBy: { createdAt: 'desc' },
       take: 100,
-      include: { user: { select: { tel: true, firstName: true, lastName: true } } },
+      include: {
+        user: { select: { tel: true, firstName: true, lastName: true } },
+        wallet: { select: { type: true } },
+      },
     })
     : []
 
@@ -188,6 +191,7 @@ export async function loader({ request }: Route.LoaderArgs) {
       userId: b.userId,
       userTel: b.user.tel,
       userName: [b.user.firstName, b.user.lastName].filter(Boolean).join(' ') || null,
+      walletType: b.wallet.type as 'REAL' | 'PROMO',
     })),
     history: history.map(serialize),
     historyHasMore,
@@ -212,6 +216,7 @@ type LiveBet = {
   userId: string
   userTel: string
   userName: string | null
+  walletType: 'DEMO' | 'REAL' | 'PROMO'
 }
 
 // Facebook "share" URLs (facebook.com/share/v/<shortcode>/ and fb.watch/<x>)
@@ -868,6 +873,7 @@ export default function AdminLive() {
   usePusherEvent<BetPlacedPayload>(ADMIN_CHANNEL, 'bet:placed', payload => {
     if (payload.mode !== 'LIVE') return
     if (!current || payload.roundId !== current.id) return
+    if (payload.walletType === 'DEMO') return
     setBets(prev => [
       {
         id: `${payload.roundId}:${payload.userId}:${payload.createdAt}:${payload.kind}:${payload.amount}`,
@@ -881,6 +887,7 @@ export default function AdminLive() {
         userId: payload.userId,
         userTel: payload.userTel,
         userName: payload.userName,
+        walletType: payload.walletType,
       },
       ...prev,
     ])

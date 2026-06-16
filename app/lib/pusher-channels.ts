@@ -44,6 +44,7 @@ export interface BetPlacedPayload {
   userId: string
   userTel: string
   userName: string | null
+  walletType: 'DEMO' | 'REAL' | 'PROMO'
   kind: 'SYMBOL' | 'RANGE' | 'PAIR' | 'SUM'
   amount: number
   symbol: string | null
