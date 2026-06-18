@@ -22,6 +22,7 @@ export default [
   route("api/pusher-auth", "routes/api.pusher-auth.tsx"),
   route("api/cancel-live-bet", "routes/api.cancel-live-bet.tsx"),
   route("api/reset-demo", "routes/api.reset-demo.tsx"),
+  route("api/mark-tour-seen", "routes/api.mark-tour-seen.tsx"),
   route("api/admin/live-history", "routes/api.admin.live-history.tsx"),
   route("api/admin/wallet-summary", "routes/api.admin.wallet-summary.tsx"),
 

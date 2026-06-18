@@ -5,6 +5,7 @@ import { toast } from 'sonner'
 import type { Route } from './+types/home'
 import { LoginModal } from '~/components/LoginModal'
 import { RegisterModal } from '~/components/RegisterModal'
+import { FeatureTour, type TourStep } from '~/components/FeatureTour'
 import { useUser } from '~/hooks/use-user'
 import type { SessionUser, SessionWallets } from '~/root'
 import { useT } from '~/lib/use-t'
@@ -722,6 +723,22 @@ const MAX_BET_MIDDLE = 200_000    // Max total bet on MIDDLE range (×6 payout �
 const MAX_BET_RANGE  = 1_000_000  // Max total bet on LOW / HIGH range (×2 payout → 2,000,000)
 const MAX_BET_SUM    = 200_000    // Max total bet per number 3-18 (×4 payout → 800,000)
 
+const TOUR_STORAGE_KEY = 'fpc_tour_completed_v1'
+
+// First-run feature discovery tour. Runs in self-play mode so every target
+// (board cells, LOW/MIDDLE/HIGH range buttons) is reliably in the DOM —
+// FeatureTour itself picks the first *visible* match per selector, so the
+// same data-tour value can point at both the mobile and desktop variant of
+// chip-selector / bet-confirm without extra branching here.
+const TOUR_STEPS: TourStep[] = [
+  { id: 'mode', selector: '[data-tour="mode-switcher"]', titleKey: 'tour.step1Title', bodyKey: 'tour.step1Body' },
+  { id: 'account', selector: '[data-tour="account-switcher"]', titleKey: 'tour.step2Title', bodyKey: 'tour.step2Body' },
+  { id: 'board', selector: '[data-tour="bet-board"]', titleKey: 'tour.step3Title', bodyKey: 'tour.step3Body' },
+  { id: 'range', selector: '[data-tour="range-bets"]', titleKey: 'tour.step4Title', bodyKey: 'tour.step4Body' },
+  { id: 'chips', selector: '[data-tour="chip-selector"]', titleKey: 'tour.step5Title', bodyKey: 'tour.step5Body' },
+  { id: 'confirm', selector: '[data-tour="bet-confirm"]', titleKey: 'tour.step6Title', bodyKey: 'tour.step6Body' },
+]
+
 const CHIP_CONFIG = [
   { value: 5000, label: '5,000', colors: 'from-gray-600 to-gray-800', border: '#9CA3AF' },
   { value: 10000, label: '10,000', colors: 'from-blue-500 to-blue-700', border: '#60A5FA' },
@@ -1056,6 +1073,7 @@ export async function loader({ request }: Route.LoaderArgs) {
       isCompetitionParticipant: false,
       myLiveBets: [] as MyLiveBet[],
       payoutConfig,
+      hasSeenTour: false,
     }
   }
 
@@ -1114,6 +1132,7 @@ export async function loader({ request }: Route.LoaderArgs) {
       : false,
     myLiveBets,
     payoutConfig,
+    hasSeenTour: user.hasSeenTour,
   }
 }
 
@@ -1217,6 +1236,11 @@ export default function FishPrawnCrabGame() {
   // restored from localStorage in a mount effect below so we don't break
   // hydration.
   const [mode, setMode] = useState<'random' | 'live'>('random')
+  // Feature discovery tour — runs in self-play mode so every target element
+  // is reliably present. modeBeforeTourRef remembers what the player was on
+  // so we can switch them back once the tour ends.
+  const [tourOpen, setTourOpen] = useState(false)
+  const modeBeforeTourRef = useRef<'random' | 'live'>('random')
   const [betSheetOpen, setBetSheetOpen] = useState(false)
   const sheetGridRef = useRef<HTMLDivElement>(null)
   const [sheetGridSize, setSheetGridSize] = useState({ w: 0, h: 0 })
@@ -2188,6 +2212,47 @@ export default function FishPrawnCrabGame() {
     setPendingCell(null)
   }, [revalidator])
 
+  const startTour = useCallback(() => {
+    modeBeforeTourRef.current = mode
+    if (mode !== 'random') selectMode('random')
+    setTourOpen(true)
+  }, [mode, selectMode])
+
+  const endTour = useCallback((completed: boolean) => {
+    setTourOpen(false)
+    // Local flag for anonymous visitors (no account to persist to) and as a
+    // fast local cache for authed users so a quick re-mount doesn't re-show
+    // it before the server round-trip below resolves.
+    try { localStorage.setItem(TOUR_STORAGE_KEY, 'true') } catch { /* ignore */ }
+    // Server-side flag for authed users — durable across devices/browsers,
+    // survives clearing local storage. "Seen" applies whether they finished
+    // or skipped; either way it shouldn't auto-play again for this account.
+    if (authUser) {
+      fetch('/api/mark-tour-seen', { method: 'POST' }).catch(() => { /* best-effort */ })
+    }
+    if (modeBeforeTourRef.current !== 'random') selectMode(modeBeforeTourRef.current)
+    if (completed) {
+      confetti({ particleCount: 100, spread: 90, angle: 90, origin: { x: 0.5, y: 0.3 }, startVelocity: 40 })
+    }
+  }, [authUser, selectMode])
+
+  // Auto-launch exactly once per account (server-side `hasSeenTour`), or once
+  // per browser for anonymous visitors (localStorage — there's no account to
+  // tie it to). Runs after mount only, so SSR/hydration stay in sync.
+  useEffect(() => {
+    const alreadySeen = authUser
+      ? loaderData.hasSeenTour
+      : (() => {
+        try { return localStorage.getItem(TOUR_STORAGE_KEY) === 'true' } catch { return true }
+      })()
+    if (alreadySeen) return
+    const id = setTimeout(() => startTour(), 600)
+    return () => clearTimeout(id)
+    // Mount-only — checks the server flag (authed) or localStorage
+    // (anonymous) once; startTour/authUser/loaderData are stable enough here.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   // Auto-open the bet sheet when a new round starts; auto-close + clear state when it ends.
   useEffect(() => {
     if (livePhase === 'betting') {
@@ -2979,10 +3044,22 @@ export default function FishPrawnCrabGame() {
           </div>
 
           <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() => { playClick(); startTour() }}
+              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-bold transition-opacity hover:opacity-80"
+              style={{ background: '#4c1d95', border: '1px solid #7c3aed', color: '#fde68a' }}
+              title={t('tour.replay')}
+              aria-label={t('tour.replay')}
+            >
+              ?
+            </button>
+
             {/* Mode dropdown — Self-play / Live, with the same accent colors
                 the old toggle button used. */}
             <div className="relative">
               <button
+                data-tour="mode-switcher"
                 onClick={() => { playClick(); setModeOpen(v => !v) }}
                 className="flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-bold"
                 style={{
@@ -3075,6 +3152,7 @@ export default function FishPrawnCrabGame() {
               REAL, so tapping the trigger opens the login modal instead. */}
           <div className="relative">
             <button
+              data-tour="account-switcher"
               onClick={() => {
                 soundEnabled && playClick()
                 ensureBgMusic()
@@ -3393,6 +3471,7 @@ export default function FishPrawnCrabGame() {
             {mode === 'live' && livePhase !== 'betting' ? null : (<>
               <div
                 ref={gridRef}
+                data-tour="bet-board"
                 className="relative mx-auto grid grid-cols-4 gap-1.5"
                 style={{ maxWidth: 420 }}
               >
@@ -3652,7 +3731,7 @@ export default function FishPrawnCrabGame() {
                   </div>
                 </div>
               ) : (
-                <div className="mx-auto mt-3 grid grid-cols-3 gap-2" style={{ maxWidth: 560 }}>
+                <div data-tour="range-bets" className="mx-auto mt-3 grid grid-cols-3 gap-2" style={{ maxWidth: 560 }}>
                   {RANGE_CONFIG.map(r => {
                     const bet = getRangeBetAmount(r.key)
                     const isWinner = winnerHighlight && !isRolling && diceResults.length > 0 && diceSum >= r.min && diceSum <= r.max
@@ -3696,7 +3775,7 @@ export default function FishPrawnCrabGame() {
             style={{ background: '#1e0040', borderTop: '1px solid #a78bfa' }}
           >
             {/* LEFT: chip / price input */}
-            <div className="flex items-center gap-1.5">
+            <div data-tour="chip-selector" className="flex items-center gap-1.5">
               {CHIP_CONFIG.map(chip => (
                 <button
                   key={chip.value}
@@ -3767,6 +3846,7 @@ export default function FishPrawnCrabGame() {
             </div>
           ) : !resultModal && !isRevealingResult ? (
             <button
+              data-tour="bet-confirm"
               onClick={openRound}
               className="fixed bottom-4 right-4 z-40 flex h-14 items-center justify-center rounded-xl px-5 font-bold text-sm transition-all md:hidden"
               style={{
@@ -3820,7 +3900,7 @@ export default function FishPrawnCrabGame() {
           {(mode === 'random' || livePhase === 'betting') && (
             <div className="flex w-full flex-col items-center gap-3">
               <div className="h-px w-full" style={{ background: '#6d28d9' }} />
-              <div className="grid w-full grid-cols-2 justify-items-center gap-2">
+              <div data-tour="chip-selector" className="grid w-full grid-cols-2 justify-items-center gap-2">
                 {CHIP_CONFIG.map(chip => (
                   <button
                     key={chip.value}
@@ -3883,6 +3963,7 @@ export default function FishPrawnCrabGame() {
                 </div>
               ) : !resultModal && !isRevealingResult ? (
                 <button
+                  data-tour="bet-confirm"
                   onClick={openRound}
                   className="flex w-full items-center justify-center rounded-xl px-4 py-4 font-bold text-sm transition-all"
                   style={{
@@ -4191,6 +4272,13 @@ export default function FishPrawnCrabGame() {
           setRegisterOpen(false)
           setLoginOpen(true)
         }}
+      />
+
+      <FeatureTour
+        steps={TOUR_STEPS}
+        open={tourOpen}
+        onClose={() => endTour(false)}
+        onFinish={() => endTour(true)}
       />
     </div>
   )

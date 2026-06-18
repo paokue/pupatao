@@ -313,6 +313,44 @@ export const STRINGS = {
     en: "🔴 A live round is open right now — tap to join!",
   },
   "game.watchLive": { lo: "ໄປໄລສົດ", en: "Watch Live" },
+
+  // ─── Feature discovery tour ──────────────────────────────────────────
+  "tour.replay": { lo: "ວິທີຫຼິ້ນ", en: "How to Play" },
+  "tour.stepOf": { lo: "ບາດກ້າວ {current}/{total}", en: "Step {current} of {total}" },
+  "tour.next": { lo: "ຕໍ່ໄປ", en: "Next" },
+  "tour.skip": { lo: "ຂ້າມ", en: "Skip" },
+  "tour.finish": { lo: "ເລີ່ມຫຼິ້ນ! 🎉", en: "Let's Play! 🎉" },
+  "tour.step1Title": { lo: "🎮 ໂໝດການຫຼິ້ນ", en: "🎮 Play Modes" },
+  "tour.step1Body": {
+    lo: "ມີ 2 ໂໝດ: 🎲 ຫຼິ້ນດ່ຽວ — ຜົນອອກອັດຕະໂນມັດ. 🔴 ໄລສົດ — ຫຼິ້ນພ້ອມຄົນອື່ນ ມີແອດມິນເປີດໄຂດ້ວຍກ້ອງສົດ. ກົດທີ່ນີ້ເພື່ອສະຫຼັບໂໝດໄດ້ທຸກເວລາ.",
+    en: "Two modes: 🎲 Self-Play — dice resolve automatically. 🔴 Live — play together in real time with an admin-hosted stream. Tap here anytime to switch.",
+  },
+  "tour.step2Title": { lo: "💰 ບັນຊີເງິນ", en: "💰 Wallets" },
+  "tour.step2Body": {
+    lo: "ທ່ານມີ 3 ບັນຊີ: REAL (ເງິນຈິງ), PROMO (ໂປຣໂມຊັ່ນ), ແລະ DEMO (ສຳລັບລອງຫຼິ້ນ). ບັນຊີ DEMO ມີໄອຄອນ 🔄 ສຳລັບເຕີມຍອດເງິນຄືນໄດ້ບໍ່ຈຳກັດ — ລອງຫຼິ້ນແບບບໍ່ມີຄວາມສ່ຽງ!",
+    en: "You have 3 wallets: REAL money, PROMO bonus credit, and DEMO for practice. DEMO has a 🔄 refresh button that tops up your balance unlimited times — practice risk-free!",
+  },
+  "tour.step3Title": { lo: "🎯 ການວາງເດີມພັນ", en: "🎯 Placing Bets" },
+  "tour.step3Body": {
+    lo: "ກົດຮູບສັດເທື່ອທີ 1 ເພື່ອເລືອກ (ຈະກະພິບ), ແລ້ວກົດຮູບດຽວກັນອີກຄັ້ງເພື່ອວາງເດີມພັນດ່ຽວ. ຫຼື ກົດຕໍ່ໄປຫາຮູບທີ່ຢູ່ຂ້າງກັນເພື່ອວາງເດີມພັນຄູ່ — ຊະນະຖ້າທັງສອງຮູບອອກພ້ອມກັນ, ໄດ້ກຳໄລສູງກວ່າ!",
+    en: "Tap a symbol once to select it (it'll pulse), then tap it again for a SINGLE bet. Or tap an adjacent symbol next for a PAIR bet — wins big if BOTH symbols land!",
+  },
+  "tour.step4Title": { lo: "📊 ເດີມພັນຍອດລວມ", en: "📊 Sum Range Bets" },
+  "tour.step4Body": {
+    lo: "ນອກຈາກຮູບສັດ, ທ່ານຍັງວາງເດີມພັນຍອດລວມໝາກລູກເຕົ໋າໄດ້: ຕໍ່າ, ກາງ, ສູງ — ເລືອກຊ່ວງຍອດລວມທີ່ທ່ານຄາດວ່າຈະອອກ.",
+    en: "Beyond symbols, you can also bet on the total dice sum: LOW, MIDDLE, or HIGH — pick the range you think the roll will land in.",
+  },
+  "tour.step5Title": { lo: "🪙 ເລືອກຈຳນວນເງິນ", en: "🪙 Choose Your Bet Amount" },
+  "tour.step5Body": {
+    lo: "ກົດເລືອກຈຳນວນຊິບກ່ອນວາງເດີມພັນ. ບໍ່ມີຈຳນວນທີ່ທ່ານຕ້ອງການ? ກົດໄອຄອນດິນສໍເພື່ອປ້ອນຈຳນວນເອງໄດ້ເລີຍ!",
+    en: "Pick a chip amount before placing bets. Don't see the amount you want? Tap the pencil icon to enter a custom amount!",
+  },
+  "tour.step6Title": { lo: "✅ ຢືນຢັນການວາງເດີມພັນ", en: "✅ Confirm Your Bet" },
+  "tour.step6Body": {
+    lo: "ໂໝດຫຼິ້ນດ່ຽວ: ກົດ 'ວາງເດີມພັນ' ເພື່ອເລີ່ມຮອບ — ຜົນຈະອອກອັດຕະໂນມັດຫຼັງໝົດເວລາ. ໂໝດໄລສົດ: ປຸ່ມຈະເປັນ 'ແທງເລີຍ' — ສຳຄັນ! ເດີມພັນຂອງທ່ານຈະບໍ່ຖືກບັນທຶກຈົນກວ່າທ່ານຈະກົດປຸ່ມນີ້.",
+    en: "In Self-Play, tap 'BET' to start a round — it resolves automatically when the timer ends. In LIVE mode, this button reads 'ແທງເລີຍ' instead — important: your bets aren't submitted until you tap it!",
+  },
+
   "game.low": { lo: "ຕໍ່າ", en: "LOW" },
   "game.middle": { lo: "ກາງ", en: "MIDDLE" },
   "game.high": { lo: "ສູງ", en: "HIGH" },

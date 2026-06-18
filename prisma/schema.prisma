@@ -107,6 +107,12 @@ model User {
   // reset to 0 on a loss or after a 5-win streak reward is issued.
   liveWinStreak Int @default(0)
 
+  // Set once the feature-discovery tour auto-plays to completion (or is
+  // skipped) for this account. Server-side so it stays "seen" across
+  // devices/browsers — unlike a localStorage flag, clearing the browser or
+  // logging in elsewhere won't bring the tour back.
+  hasSeenTour Boolean @default(false)
+
   @@index([role])
   @@index([status])
   @@index([referredById])
