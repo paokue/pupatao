@@ -5,7 +5,7 @@ import type { DiceSymbol } from '@prisma/client'
 import type { Route } from './+types/admin.live'
 import { requireAdmin } from '~/lib/admin-auth.server'
 import { prisma } from '~/lib/prisma.server'
-import { notifyAdmin, notifyPresenceLive, notifyUser } from '~/lib/pusher.server'
+import { notifyAdmin, notifyGame, notifyPresenceLive, notifyUser } from '~/lib/pusher.server'
 import { getPayoutConfig, type PayoutConfig } from '~/lib/payouts.server'
 import {
   getLiveSchedule, getLiveStreamUrl, setLiveSchedule, setLiveStreamUrl,
@@ -301,10 +301,12 @@ export async function action({ request }: Route.ActionArgs) {
         streamUrl: streamUrl,
         bettingClosesAt: bettingClosesAt.toISOString(),
       }
-      // Broadcast to BOTH channels so every open customer page (presence-live)
-      // and every admin tab (private-admin) revalidates without a manual refresh.
+      // Broadcast to every channel so every open customer page (presence-live,
+      // plus the public game channel for self-play players) and every admin
+      // tab (private-admin) revalidates without a manual refresh.
       notifyPresenceLive('round:started', startedPayload)
       notifyAdmin('round:started', startedPayload)
+      notifyGame('round:started', startedPayload)
       return { ok: true }
     }
 
@@ -313,6 +315,7 @@ export async function action({ request }: Route.ActionArgs) {
       await setLiveStreamUrl(null, admin.id)
       notifyPresenceLive('live:ended', {})
       notifyAdmin('live:ended', {})
+      notifyGame('live:ended', {})
       return { ok: true }
     }
 

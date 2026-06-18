@@ -209,6 +209,7 @@ export const STRINGS = {
     lo: "ເບິ່ງຕົວຢ່າງໃບໂອນ",
     en: "View example payment slip full screen",
   },
+  "deposit.downloadQr": { lo: "ດາວໂຫຼດ QR", en: "Download QR" },
 
   // ─── Withdraw modal ──────────────────────────────────────────────────
   "withdraw.step1": { lo: "ຂັ້ນຕອນ 1 · QR ທະນາຄານ", en: "STEP 1 · BANK QR" },
@@ -307,6 +308,11 @@ export const STRINGS = {
   "game.history": { lo: "ປະຫວັດ", en: "HISTORY" },
   "game.noRolls": { lo: "ຍັງບໍ່ມີການໂຍນ", en: "No rolls yet" },
   "game.noLiveRolls": { lo: "ຍັງບໍ່ມີການໂຍນສົດ", en: "No live rolls yet" },
+  "game.liveRoundBanner": {
+    lo: "🔴 ກຳລັງມີຮອບໄລສົດ — ກົດເພື່ອເຂົ້າຮ່ວມ!",
+    en: "🔴 A live round is open right now — tap to join!",
+  },
+  "game.watchLive": { lo: "ໄປໄລສົດ", en: "Watch Live" },
   "game.low": { lo: "ຕໍ່າ", en: "LOW" },
   "game.middle": { lo: "ກາງ", en: "MIDDLE" },
   "game.high": { lo: "ສູງ", en: "HIGH" },

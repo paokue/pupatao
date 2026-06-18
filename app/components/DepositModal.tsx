@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useFetcher } from 'react-router'
-import { ArrowLeft, ArrowRight, Camera, CheckCircle2, Loader, Upload, X } from 'lucide-react'
+import { ArrowLeft, ArrowRight, Camera, CheckCircle2, Download, Loader, Upload, X } from 'lucide-react'
 import { useT } from '~/lib/use-t'
 
 interface DepositModalProps {
@@ -211,6 +211,18 @@ export function DepositModal({ open, onClose, amount, onSuccess }: DepositModalP
                 >
                   <img src={QR_SRC} alt="Payment QR code" className="block h-auto w-full object-contain" />
                 </button>
+              </div>
+
+              <div className="mb-4 flex items-center justify-center">
+                <a
+                  href={QR_SRC}
+                  download="pupatao-qr-code.png"
+                  className="flex items-center justify-center gap-2 rounded-lg px-4 py-2 text-xs font-bold transition-opacity hover:opacity-90"
+                  style={{ background: '#4c1d95', color: '#fde68a', border: '1.5px solid #7c3aed' }}
+                >
+                  <Download size={14} />
+                  {t('deposit.downloadQr')}
+                </a>
               </div>
 
               <div className="w-full flex items-center justify-end">

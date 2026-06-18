@@ -93,6 +93,13 @@ export interface RoundStreamUpdatedPayload {
 // Public channel for competition ranking updates — no auth needed.
 export const COMPETITION_CHANNEL = 'competition'
 
+// Public channel broadcasting LIVE round lifecycle to every customer
+// regardless of which mode (self-play/live) they're currently on. Unlike
+// PRESENCE_LIVE, subscribing here does NOT count as a "viewer" — it just lets
+// self-play players get nudged ("a live round just opened") without joining
+// the presence list. No auth needed.
+export const GAME_CHANNEL = 'game'
+
 // Fired whenever any user's demo balance changes so all open ranking pages
 // can re-fetch and animate the position change.
 export interface RankingUpdatedPayload {

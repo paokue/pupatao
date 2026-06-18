@@ -2,6 +2,7 @@ import Pusher from 'pusher'
 import {
   ADMIN_CHANNEL,
   COMPETITION_CHANNEL,
+  GAME_CHANNEL,
   PRESENCE_LIVE,
   userChannel,
   type BetPlacedPayload,
@@ -14,6 +15,7 @@ import {
   type LiveEndedPayload,
   type LiveScheduledPayload,
   type RankingUpdatedPayload,
+  type RewardCreditedPayload,
   type RoundDicePayload,
   type RoundResolvedPayload,
   type RoundSettledPayload,
@@ -104,6 +106,15 @@ export function notifyPresenceLive(event: string, payload: unknown): Promise<voi
   return triggerSafe(PRESENCE_LIVE, event, payload)
 }
 
+// Broadcast to every client regardless of mode — used to nudge self-play
+// players that a LIVE round just opened/ended without inflating the
+// presence-live viewer count.
+export function notifyGame(event: 'round:started', payload: RoundStartedPayload): Promise<void>
+export function notifyGame(event: 'live:ended', payload: LiveEndedPayload): Promise<void>
+export function notifyGame(event: string, payload: unknown): Promise<void> {
+  return triggerSafe(GAME_CHANNEL, event, payload)
+}
+
 export function notifyCompetition(event: 'ranking:updated', payload: RankingUpdatedPayload): Promise<void>
 export function notifyCompetition(event: 'competition:reset', payload: CompetitionResetPayload): Promise<void>
 export function notifyCompetition(event: 'competition:toggled', payload: CompetitionToggledPayload): Promise<void>
@@ -117,6 +128,7 @@ export function notifyCompetition(event: string, payload: unknown): Promise<void
 export function notifyUser(userId: string, event: 'transaction:updated', payload: TxUpdatedPayload): Promise<void>
 export function notifyUser(userId: string, event: 'round:resolved', payload: RoundResolvedPayload): Promise<void>
 export function notifyUser(userId: string, event: 'round:settled', payload: RoundSettledPayload): Promise<void>
+export function notifyUser(userId: string, event: 'reward:credited', payload: RewardCreditedPayload): Promise<void>
 export function notifyUser(userId: string, event: string, payload: unknown): Promise<void> {
   return triggerSafe(userChannel(userId), event, payload)
 }
