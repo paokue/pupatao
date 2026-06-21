@@ -8,6 +8,9 @@ import { requireAdmin } from '~/lib/admin-auth.server'
 import { prisma } from '~/lib/prisma.server'
 import { ADMIN_CHANNEL } from '~/lib/pusher-channels'
 import { usePusherEvent } from '~/hooks/use-pusher'
+import { useT, useLocale } from '~/lib/use-t'
+import { LanguageSwitch } from '~/components/LanguageSwitch'
+import type { StringKey, Locale } from '~/lib/i18n'
 import type {
   BetPlacedPayload,
   CustomerRegisteredPayload,
@@ -50,13 +53,13 @@ export async function loader({ request }: Route.LoaderArgs) {
 type AdminRole = 'SUPPORT' | 'ADMIN' | 'SUPERADMIN'
 
 // Exported so child routes can type the outlet context.
-export type AdminOutletContext = { adminRole: AdminRole }
+export type AdminOutletContext = { adminRole: AdminRole; locale: Locale }
 
 type NavItem = {
   to: string
   end?: boolean
-  label: string
-  mobileLabel?: string
+  labelKey: StringKey
+  mobileLabelKey?: StringKey
   Icon: typeof LayoutDashboard
   badgeKey?: 'pendingTx' | 'pendingBets'
   // Roles that can see this item. Omit = visible to all.
@@ -64,17 +67,19 @@ type NavItem = {
 }
 
 const NAV: NavItem[] = [
-  { to: '/admin', end: true, label: 'Dashboard', mobileLabel: 'Home', Icon: LayoutDashboard },
-  { to: '/admin/customers', label: 'Customers', mobileLabel: 'Users', Icon: Users },
-  { to: '/admin/live', label: 'Live Play', mobileLabel: 'Live', Icon: Radio },
-  { to: '/admin/wallet', label: 'Wallet', Icon: Wallet, roles: ['ADMIN', 'SUPERADMIN'] },
-  { to: '/admin/transactions', label: 'Transactions', mobileLabel: 'Trans', Icon: Banknote, badgeKey: 'pendingTx', roles: ['ADMIN', 'SUPERADMIN'] },
-  { to: '/admin/play-history', label: 'Play History', mobileLabel: 'Plays', Icon: Dices, badgeKey: 'pendingBets', roles: ['ADMIN', 'SUPERADMIN'] },
-  { to: '/admin/competition', label: 'Competition', mobileLabel: 'Contest', Icon: Trophy, roles: ['ADMIN', 'SUPERADMIN'] },
-  { to: '/admin/financial', label: 'Financial', mobileLabel: 'Finance', Icon: BarChart2, roles: ['SUPERADMIN'] },
+  { to: '/admin', end: true, labelKey: 'admin.shell.dashboard', mobileLabelKey: 'admin.shell.dashboardMobile', Icon: LayoutDashboard },
+  { to: '/admin/customers', labelKey: 'admin.shell.customers', mobileLabelKey: 'admin.shell.customersMobile', Icon: Users },
+  { to: '/admin/live', labelKey: 'admin.shell.livePlay', mobileLabelKey: 'admin.shell.livePlayMobile', Icon: Radio },
+  { to: '/admin/wallet', labelKey: 'admin.shell.wallet', Icon: Wallet, roles: ['ADMIN', 'SUPERADMIN'] },
+  { to: '/admin/transactions', labelKey: 'admin.shell.transactions', mobileLabelKey: 'admin.shell.transactionsMobile', Icon: Banknote, badgeKey: 'pendingTx', roles: ['ADMIN', 'SUPERADMIN'] },
+  { to: '/admin/play-history', labelKey: 'admin.shell.playHistory', mobileLabelKey: 'admin.shell.playHistoryMobile', Icon: Dices, badgeKey: 'pendingBets', roles: ['ADMIN', 'SUPERADMIN'] },
+  { to: '/admin/competition', labelKey: 'admin.shell.competition', mobileLabelKey: 'admin.shell.competitionMobile', Icon: Trophy, roles: ['ADMIN', 'SUPERADMIN'] },
+  { to: '/admin/financial', labelKey: 'admin.shell.financial', mobileLabelKey: 'admin.shell.financialMobile', Icon: BarChart2, roles: ['SUPERADMIN'] },
 ]
 
 export default function AdminLayout() {
+  const t = useT()
+  const locale = useLocale()
   const { admin, counts } = useLoaderData<typeof loader>()
   const fullName = [admin.firstName, admin.lastName].filter(Boolean).join(' ') || admin.email
   const visibleNav = NAV.filter(item => !item.roles || item.roles.includes(admin.role as AdminRole))
@@ -126,7 +131,7 @@ export default function AdminLayout() {
   })
 
   usePusherEvent<CustomerRegisteredPayload>(ADMIN_CHANNEL, 'customer:registered', payload => {
-    toast.success('New customer registered', { description: payload.tel })
+    toast.success(t('admin.shell.newCustomerRegistered'), { description: payload.tel })
     revalidator.revalidate()
   })
 
@@ -157,7 +162,7 @@ export default function AdminLayout() {
             style={{ background: '#1e1b4b', color: '#fde68a', border: '1px solid #4338ca' }}
           >
             <Loader size={14} className="animate-spin" />
-            Loading...
+            {t('admin.shell.loading')}
           </div>
         </div>
       )}
@@ -174,6 +179,7 @@ export default function AdminLayout() {
               <span className="text-xs font-semibold" style={{ color: '#e9d5ff' }}>{fullName}</span>
               <span className="text-[10px] font-bold " style={{ color: '#a5b4fc' }}>{admin.role}</span>
             </div>
+            <LanguageSwitch variant="pill" />
             <Form method="post" action="/admin/logout">
               <button
                 type="submit"
@@ -181,7 +187,7 @@ export default function AdminLayout() {
                 style={{ background: '#1e1b4b', color: '#e9d5ff', border: '1px solid #4338ca' }}
               >
                 <LogOut size={12} />
-                Sign out
+                {t('admin.shell.signOut')}
               </button>
             </Form>
           </div>
@@ -211,7 +217,7 @@ export default function AdminLayout() {
                 })}
               >
                 <item.Icon size={14} />
-                <span className="flex-1">{item.label}</span>
+                <span className="flex-1">{t(item.labelKey)}</span>
                 {item.badgeKey && counters[item.badgeKey] > 0 && (
                   <Badge n={counters[item.badgeKey]} />
                 )}
@@ -227,7 +233,7 @@ export default function AdminLayout() {
             skelType === 'live'      ? <LiveSkeleton />      :
                                        <TableSkeleton />
           ) : (
-            <Outlet context={{ adminRole: admin.role as AdminRole } satisfies AdminOutletContext} />
+            <Outlet context={{ adminRole: admin.role as AdminRole, locale } satisfies AdminOutletContext} />
           )}
         </main>
       </div>
@@ -253,7 +259,7 @@ export default function AdminLayout() {
             })}
           >
             <item.Icon size={18} />
-            <span>{item.mobileLabel ?? item.label}</span>
+            <span>{t(item.mobileLabelKey ?? item.labelKey)}</span>
             {item.badgeKey && counters[item.badgeKey] > 0 && (
               <span className="absolute right-1/4 top-1">
                 <Badge n={counters[item.badgeKey]} />

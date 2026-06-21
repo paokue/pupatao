@@ -16,6 +16,8 @@ import {
 import { notifyCompetition } from '~/lib/pusher.server'
 import { COMPETITION_CHANNEL, type RankingUpdatedPayload } from '~/lib/pusher-channels'
 import { usePusherEvent } from '~/hooks/use-pusher'
+import { useT } from '~/lib/use-t'
+import { t as translate, parseLocaleCookie, type StringKey } from '~/lib/i18n'
 
 function isoToDatetimeLocal(iso: string) {
   const local = new Date(new Date(iso).getTime() + 7 * 60 * 60_000)
@@ -28,10 +30,11 @@ function fmtGMT7(iso: string) {
   })
 }
 
-const TYPE_LABELS: Record<CompetitionType, { label: string; desc: string; color: string }> = {
-  DEMO_LIVE: { label: '🎮 Demo → Live only',   color: '#a5b4fc', desc: 'Ranks by Demo balance. Demo hidden from self-play.' },
-  REAL_LIVE: { label: '💰 Real → Live only',   color: '#fbbf24', desc: 'Ranks by Real balance. Real hidden from self-play.' },
-  REAL_ALL:  { label: '💰 Real → Live + Self', color: '#fb923c', desc: 'Ranks by Real balance. Real available everywhere.' },
+// Translation keys per competition type; resolved at render via t().
+const TYPE_LABELS: Record<CompetitionType, { labelKey: StringKey; descKey: StringKey; color: string }> = {
+  DEMO_LIVE: { labelKey: 'admin.competition.type.demoLive.label', color: '#a5b4fc', descKey: 'admin.competition.type.demoLive.desc' },
+  REAL_LIVE: { labelKey: 'admin.competition.type.realLive.label', color: '#fbbf24', descKey: 'admin.competition.type.realLive.desc' },
+  REAL_ALL:  { labelKey: 'admin.competition.type.realAll.label', color: '#fb923c', descKey: 'admin.competition.type.realAll.desc' },
 }
 
 // ─── LOADER ──────────────────────────────────────────────────────────
@@ -102,7 +105,9 @@ export async function loader({ request }: Route.LoaderArgs) {
 // ─── ACTION ──────────────────────────────────────────────────────────
 export async function action({ request }: Route.ActionArgs) {
   const admin = await requireAdmin(request)
-  if (admin.role === 'SUPPORT') return { error: 'Insufficient permissions' }
+  // Errors translated server-side from the locale cookie (actions can't use the hook).
+  const locale = parseLocaleCookie(request.headers.get('cookie'))
+  if (admin.role === 'SUPPORT') return { error: translate(locale, 'admin.competition.err.insufficientPermissions') }
   const fd = await request.formData()
   const op = String(fd.get('op') ?? '')
 
@@ -184,7 +189,7 @@ export async function action({ request }: Route.ActionArgs) {
 
   if (op === 'removeParticipant') {
     const userId = String(fd.get('userId') ?? '')
-    if (!userId) return { error: 'userId required' }
+    if (!userId) return { error: translate(locale, 'admin.competition.err.userIdRequired') }
     await prisma.competitionParticipant.deleteMany({ where: { userId } })
     const total = await prisma.competitionParticipant.count()
     notifyCompetition('competition:participantChanged', { totalParticipants: total })
@@ -232,11 +237,12 @@ export async function action({ request }: Route.ActionArgs) {
     return { ok: true }
   }
 
-  return { error: 'Unknown op' }
+  return { error: translate(locale, 'admin.competition.err.unknownOp') }
 }
 
 // ─── PAGE ─────────────────────────────────────────────────────────────
 export default function AdminCompetition() {
+  const t = useT()
   const { competition, ranked: initialRanked, historyList, participants: initialParticipants } = useLoaderData<typeof loader>()
   const revalidator = useRevalidator()
   const [ranked, setRanked] = useState(initialRanked)
@@ -284,16 +290,16 @@ export default function AdminCompetition() {
       <input type="hidden" name="op" value="saveCompetitionConfig" />
 
       <div className="flex flex-col gap-1">
-        <label className="text-[10px] font-bold" style={{ color: '#a5b4fc' }}>COMPETITION TYPE</label>
+        <label className="text-[10px] font-bold" style={{ color: '#a5b4fc' }}>{t('admin.competition.form.typeLabel')}</label>
         <div className="flex flex-col gap-1.5">
-          {(Object.keys(TYPE_LABELS) as CompetitionType[]).map(t => (
-            <label key={t} className="flex items-start gap-2 cursor-pointer rounded-lg px-3 py-2"
+          {(Object.keys(TYPE_LABELS) as CompetitionType[]).map(ct => (
+            <label key={ct} className="flex items-start gap-2 cursor-pointer rounded-lg px-3 py-2"
               style={{ background: '#1e1b4b', border: '1px solid #4338ca' }}>
-              <input type="radio" name="type" value={t} defaultChecked={competition.type === t || (isNew && t === 'DEMO_LIVE')}
+              <input type="radio" name="type" value={ct} defaultChecked={competition.type === ct || (isNew && ct === 'DEMO_LIVE')}
                 className="mt-0.5 shrink-0" />
               <div>
-                <div className="text-xs font-bold" style={{ color: TYPE_LABELS[t].color }}>{TYPE_LABELS[t].label}</div>
-                <div className="text-[10px]" style={{ color: '#64748b' }}>{TYPE_LABELS[t].desc}</div>
+                <div className="text-xs font-bold" style={{ color: TYPE_LABELS[ct].color }}>{t(TYPE_LABELS[ct].labelKey)}</div>
+                <div className="text-[10px]" style={{ color: '#64748b' }}>{t(TYPE_LABELS[ct].descKey)}</div>
               </div>
             </label>
           ))}
@@ -301,22 +307,22 @@ export default function AdminCompetition() {
       </div>
 
       <div className="flex flex-col gap-1">
-        <label className="text-[10px] font-bold" style={{ color: '#a5b4fc' }}>RULES / DESCRIPTION</label>
+        <label className="text-[10px] font-bold" style={{ color: '#a5b4fc' }}>{t('admin.competition.form.rulesLabel')}</label>
         <textarea name="rules" defaultValue={isNew ? '' : (competition.rules ?? '')} rows={3}
-          placeholder="Enter competition rules…"
+          placeholder={t('admin.competition.form.rulesPlaceholder')}
           className="rounded-lg px-3 py-2 text-xs outline-none resize-none"
           style={{ background: '#1e1b4b', color: '#fde68a', border: '1px solid #4338ca' }} />
       </div>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <div className="flex flex-col gap-1">
-          <label className="text-[10px] font-bold" style={{ color: '#a5b4fc' }}>START (GMT+7)</label>
+          <label className="text-[10px] font-bold" style={{ color: '#a5b4fc' }}>{t('admin.competition.form.startLabel')}</label>
           <input name="start" type="datetime-local"
             defaultValue={(!isNew && competition.start) ? isoToDatetimeLocal(competition.start) : ''}
             className="rounded-lg px-3 py-2 text-xs outline-none"
             style={{ background: '#1e1b4b', color: '#fde68a', border: '1px solid #4338ca' }} />
         </div>
         <div className="flex flex-col gap-1">
-          <label className="text-[10px] font-bold" style={{ color: '#a5b4fc' }}>END (GMT+7)</label>
+          <label className="text-[10px] font-bold" style={{ color: '#a5b4fc' }}>{t('admin.competition.form.endLabel')}</label>
           <input name="end" type="datetime-local"
             defaultValue={(!isNew && competition.end) ? isoToDatetimeLocal(competition.end) : ''}
             className="rounded-lg px-3 py-2 text-xs outline-none"
@@ -327,13 +333,13 @@ export default function AdminCompetition() {
         <button type="button" onClick={() => isNew ? setShowNewForm(false) : setShowConfig(false)}
           className="rounded-lg px-3 py-2 text-xs font-bold"
           style={{ background: '#1e1b4b', color: '#a5b4fc', border: '1px solid #4338ca' }}>
-          <X size={12} className="inline mr-1" />Cancel
+          <X size={12} className="inline mr-1" />{t('admin.competition.form.cancel')}
         </button>
         <button type="submit" disabled={configFetcher.state !== 'idle'}
           className="inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-xs font-bold disabled:opacity-50"
           style={{ background: 'linear-gradient(135deg,#4338ca,#312e81)', color: '#fff', border: '1px solid #818cf8' }}>
           {configFetcher.state !== 'idle' ? <Loader size={12} className="animate-spin" /> : <Check size={12} />}
-          {isNew ? 'Create Competition' : 'Save Changes'}
+          {isNew ? t('admin.competition.form.create') : t('admin.competition.form.saveChanges')}
         </button>
       </div>
     </configFetcher.Form>
@@ -343,9 +349,9 @@ export default function AdminCompetition() {
     <div className="flex flex-col gap-4">
       <div className="flex items-center justify-between flex-wrap gap-2">
         <h1 className="flex items-center gap-2 text-xl font-bold" style={{ color: '#fbbf24' }}>
-          <Trophy size={20} /> Demo Competition
+          <Trophy size={20} /> {t('admin.competition.title')}
         </h1>
-        <span className="text-xs" style={{ color: '#a5b4fc' }}>{ranked.length} players</span>
+        <span className="text-xs" style={{ color: '#a5b4fc' }}>{t('admin.competition.playersCount', { n: ranked.length })}</span>
       </div>
 
       {/* ── NEW COMPETITION (blank slate) ── */}
@@ -355,19 +361,19 @@ export default function AdminCompetition() {
             <div className="flex flex-col items-center gap-3 py-4 text-center">
               <Trophy size={32} style={{ color: '#4338ca' }} />
               <div>
-                <div className="text-sm font-bold" style={{ color: '#fde68a' }}>No active competition</div>
-                <div className="mt-0.5 text-xs" style={{ color: '#64748b' }}>Create a new competition to get started.</div>
+                <div className="text-sm font-bold" style={{ color: '#fde68a' }}>{t('admin.competition.blank.title')}</div>
+                <div className="mt-0.5 text-xs" style={{ color: '#64748b' }}>{t('admin.competition.blank.subtitle')}</div>
               </div>
               <button type="button" onClick={() => setShowNewForm(true)}
                 className="inline-flex items-center gap-1.5 rounded-xl px-4 py-2 text-sm font-bold"
                 style={{ background: 'linear-gradient(135deg,#4338ca,#312e81)', color: '#fff', border: '1px solid #818cf8' }}>
-                <Plus size={14} /> New Competition
+                <Plus size={14} /> {t('admin.competition.blank.newButton')}
               </button>
             </div>
           ) : (
             <div className="flex flex-col gap-3">
               <div className="flex items-center gap-2 text-sm font-bold" style={{ color: '#fbbf24' }}>
-                <Plus size={14} /> New Competition
+                <Plus size={14} /> {t('admin.competition.blank.newButton')}
               </div>
               <ConfigForm isNew />
             </div>
@@ -379,27 +385,27 @@ export default function AdminCompetition() {
       {historyList.length > 0 && (
         <div className="rounded-xl overflow-hidden" style={{ background: '#0f172a', border: '1px solid #1e1b4b' }}>
           <div className="px-4 py-3 text-[10px] font-bold" style={{ background: '#1e1b4b', color: '#a5b4fc' }}>
-            PAST COMPETITIONS ({historyList.length})
+            {t('admin.competition.history.heading', { n: historyList.length })}
           </div>
           <table className="w-full text-left text-xs hidden md:table">
             <thead>
               <tr className="text-[10px] font-bold" style={{ background: '#0f172a', color: '#64748b' }}>
                 <th className="w-8 px-3 py-2 text-right">#</th>
-                <th className="px-3 py-2">CAMPAIGN DETAIL</th>
-                <th className="px-3 py-2">TYPE</th>
-                <th className="px-3 py-2">START DATE</th>
-                <th className="px-3 py-2">END DATE</th>
-                <th className="px-3 py-2 text-right">APPLICANTS</th>
-                <th className="px-3 py-2">STATUS</th>
+                <th className="px-3 py-2">{t('admin.competition.history.col.detail')}</th>
+                <th className="px-3 py-2">{t('admin.competition.history.col.type')}</th>
+                <th className="px-3 py-2">{t('admin.competition.history.col.startDate')}</th>
+                <th className="px-3 py-2">{t('admin.competition.history.col.endDate')}</th>
+                <th className="px-3 py-2 text-right">{t('admin.competition.history.col.applicants')}</th>
+                <th className="px-3 py-2">{t('admin.competition.history.col.status')}</th>
                 <th className="px-3 py-2"></th>
               </tr>
             </thead>
             <tbody>
               {historyList.map((h, i) => {
-                const detail = h.rules ?? `Competition #${historyList.length - i}`
+                const detail = h.rules ?? t('admin.competition.history.fallbackDetail', { n: historyList.length - i })
                 const shortDetail = detail.length > 30 ? detail.slice(0, 30) + '…' : detail
                 const typeColor = h.type === 'DEMO_LIVE' ? '#a5b4fc' : '#fbbf24'
-                const typeLabel = h.type === 'DEMO_LIVE' ? 'Demo' : h.type === 'REAL_LIVE' ? 'Real Live' : 'Real All'
+                const typeLabel = h.type === 'DEMO_LIVE' ? t('admin.competition.type.short.demoLive') : h.type === 'REAL_LIVE' ? t('admin.competition.type.short.realLive') : t('admin.competition.type.short.realAll')
                 return (
                   <tr key={h.id} className="cursor-pointer hover:opacity-80 transition-opacity"
                     style={{ borderTop: '1px solid #1e1b4b', color: '#e9d5ff' }}
@@ -425,7 +431,7 @@ export default function AdminCompetition() {
                     <td className="px-3 py-2.5">
                       <span className="rounded-full px-2 py-0.5 text-[9px] font-bold"
                         style={{ background: 'rgba(22,163,74,0.15)', color: '#4ade80', border: '1px solid #16a34a' }}>
-                        Completed
+                        {t('admin.competition.history.completed')}
                       </span>
                     </td>
                     <td className="px-3 py-2.5 text-right">
@@ -433,7 +439,7 @@ export default function AdminCompetition() {
                         onClick={e => e.stopPropagation()}
                         className="rounded-md px-2 py-1 text-[10px] font-bold hover:opacity-80"
                         style={{ background: '#1e1b4b', color: '#a5b4fc', border: '1px solid #4338ca' }}>
-                        View →
+                        {t('admin.competition.history.view')}
                       </a>
                     </td>
                   </tr>
@@ -447,7 +453,7 @@ export default function AdminCompetition() {
             {historyList.map((h, i) => {
               const detail = h.rules ?? `Competition #${historyList.length - i}`
               const shortDetail = detail.length > 30 ? detail.slice(0, 30) + '…' : detail
-              const typeLabel = h.type === 'DEMO_LIVE' ? 'Demo' : h.type === 'REAL_LIVE' ? 'Real Live' : 'Real All'
+              const typeLabel = h.type === 'DEMO_LIVE' ? t('admin.competition.type.short.demoLive') : h.type === 'REAL_LIVE' ? t('admin.competition.type.short.realLive') : t('admin.competition.type.short.realAll')
               return (
                 <a key={h.id} href={`/admin/competition/${h.id}`}
                   className="flex items-center gap-3 px-4 py-3 hover:opacity-80 transition-opacity"
@@ -458,12 +464,12 @@ export default function AdminCompetition() {
                   <div className="min-w-0 flex-1">
                     <div className="truncate text-xs font-semibold" style={{ color: '#fde68a' }}>{shortDetail}</div>
                     <div className="text-[10px]" style={{ color: '#818cf8' }}>
-                      {typeLabel} · {h.totalParticipants} participants · {fmtGMT7(h.endDate)}
+                      {t('admin.competition.history.mobileSummary', { type: typeLabel, n: h.totalParticipants, date: fmtGMT7(h.endDate) })}
                     </div>
                   </div>
                   <span className="rounded-full px-2 py-0.5 text-[9px] font-bold shrink-0"
                     style={{ background: 'rgba(22,163,74,0.15)', color: '#4ade80', border: '1px solid #16a34a' }}>
-                    Completed
+                    {t('admin.competition.history.completed')}
                   </span>
                 </a>
               )
@@ -485,7 +491,7 @@ export default function AdminCompetition() {
               <div>
                 <div className="flex items-center gap-2">
                   <span className="text-sm font-bold" style={{ color: isRunning ? '#fbbf24' : '#fde68a' }}>
-                    {typeInfo.label}
+                    {t(typeInfo.labelKey)}
                   </span>
                   <span className="rounded-full px-2 py-0.5 text-[10px] font-bold"
                     style={{
@@ -493,7 +499,7 @@ export default function AdminCompetition() {
                       color: isRunning ? '#fbbf24' : hasSummary ? '#4ade80' : '#94a3b8',
                       border: `1px solid ${isRunning ? '#ca8a04' : hasSummary ? '#4ade80' : '#334155'}`,
                     }}>
-                    {isRunning ? 'STARTED' : hasSummary ? 'SUMMARIZED ✓' : 'STOPPED'}
+                    {isRunning ? t('admin.competition.status.running') : hasSummary ? t('admin.competition.status.summarized') : t('admin.competition.status.stopped')}
                   </span>
                 </div>
                 {competition.start && (
@@ -510,7 +516,7 @@ export default function AdminCompetition() {
                 <button type="button" onClick={() => setShowResetConfirm(true)}
                   className="inline-flex items-center gap-1 rounded-lg px-3 py-1.5 text-[10px] font-bold"
                   style={{ background: 'rgba(30,27,75,0.8)', color: '#a5b4fc', border: '1px solid #4338ca' }}>
-                  <RotateCcw size={10} /> Reset All Demo
+                  <RotateCcw size={10} /> {t('admin.competition.resetAllDemo')}
                 </button>
               )}
 
@@ -518,14 +524,14 @@ export default function AdminCompetition() {
               <button type="button" onClick={() => setShowConfig(v => !v)} disabled={configDisabled}
                 className="inline-flex items-center gap-1 rounded-lg px-3 py-1.5 text-[10px] font-bold disabled:opacity-40 disabled:cursor-not-allowed"
                 style={{ background: 'rgba(30,27,75,0.8)', color: '#a5b4fc', border: '1px solid #4338ca' }}>
-                <CalendarClock size={10} /> Configure
+                <CalendarClock size={10} /> {t('admin.competition.configure')}
               </button>
 
               {/* Summary — disabled when running */}
               <summaryFetcher.Form method="post">
                 <input type="hidden" name="op" value="summarize" />
                 <button type="submit" disabled={summaryDisabled || summaryFetcher.state !== 'idle'}
-                  title={isRunning ? 'Stop the competition first' : !competition.wasStarted ? 'Start the competition first' : 'Snapshot current top 3 as final winners'}
+                  title={isRunning ? t('admin.competition.summary.title.stopFirst') : !competition.wasStarted ? t('admin.competition.summary.title.startFirst') : t('admin.competition.summary.title.snapshot')}
                   className="inline-flex items-center gap-1 rounded-lg px-3 py-1.5 text-[10px] font-bold disabled:opacity-40 disabled:cursor-not-allowed"
                   style={{
                     background: (!summaryDisabled && hasSummary) ? 'rgba(22,163,74,0.2)' : 'rgba(30,27,75,0.8)',
@@ -533,21 +539,21 @@ export default function AdminCompetition() {
                     border: `1px solid ${(!summaryDisabled && hasSummary) ? '#16a34a' : '#4338ca'}`,
                   }}>
                   {summaryFetcher.state !== 'idle' ? <Loader size={10} className="animate-spin" /> : hasSummary ? <Check size={10} /> : <Trophy size={10} />}
-                  {hasSummary ? 'Re-summarize' : 'Summary'}
+                  {hasSummary ? t('admin.competition.summary.resummarize') : t('admin.competition.summary.button')}
                 </button>
               </summaryFetcher.Form>
 
               {/* End Competition — disabled when running OR no summary */}
               <button type="button" onClick={() => setShowEndConfirm(true)}
                 disabled={endDisabled}
-                title={isRunning ? 'Stop the competition first' : !hasSummary ? 'Take a summary first' : 'End and save to history'}
+                title={isRunning ? t('admin.competition.summary.title.stopFirst') : !hasSummary ? t('admin.competition.end.title.summarizeFirst') : t('admin.competition.end.title.endAndSave')}
                 className="inline-flex items-center gap-1 rounded-lg px-3 py-1.5 text-[10px] font-bold disabled:opacity-40 disabled:cursor-not-allowed"
                 style={{
                   background: endDisabled ? 'rgba(100,116,139,0.2)' : 'rgba(127,29,29,0.4)',
                   color: endDisabled ? '#64748b' : '#fca5a5',
                   border: `1px solid ${endDisabled ? '#334155' : '#ef4444'}`,
                 }}>
-                <Flag size={10} /> End Competition
+                <Flag size={10} /> {t('admin.competition.end.button')}
               </button>
 
               {/* Start / Stop */}
@@ -559,7 +565,7 @@ export default function AdminCompetition() {
                     background: isRunning ? 'linear-gradient(135deg,#7f1d1d,#450a0a)' : 'linear-gradient(135deg,#14532d,#052e16)',
                     color: '#fff', border: `1px solid ${isRunning ? '#fca5a5' : '#4ade80'}`,
                   }}>
-                  {isRunning ? '⏹ Stop' : '▶ Start'}
+                  {isRunning ? t('admin.competition.stop') : t('admin.competition.start')}
                 </button>
               </toggleFetcher.Form>
             </div>
@@ -568,7 +574,7 @@ export default function AdminCompetition() {
           {/* Summary snapshot */}
           {hasSummary && competition.summary && (
             <div className="mt-4 border-t pt-4" style={{ borderColor: '#1e1b4b' }}>
-              <div className="mb-2 text-[10px] font-bold" style={{ color: '#4ade80' }}>FINAL TOP 3 SNAPSHOT</div>
+              <div className="mb-2 text-[10px] font-bold" style={{ color: '#4ade80' }}>{t('admin.competition.finalSnapshot.heading')}</div>
               <div className="flex gap-3 flex-wrap">
                 {competition.summary.map(w => (
                   <div key={w.userId} className="flex items-center gap-2 rounded-lg px-3 py-2"
@@ -599,15 +605,15 @@ export default function AdminCompetition() {
         <div className="rounded-xl overflow-hidden" style={{ background: '#0f172a', border: '1px solid #1e1b4b' }}>
           <div className="flex items-center justify-between px-4 py-3" style={{ background: '#1e1b4b' }}>
             <span className="text-[10px] font-bold" style={{ color: '#a5b4fc' }}>
-              PARTICIPANTS ({participants.length})
+              {t('admin.competition.participants.heading', { n: participants.length })}
             </span>
             <span className="text-[10px]" style={{ color: '#64748b' }}>
-              Users who joined this competition
+              {t('admin.competition.participants.subheading')}
             </span>
           </div>
           {participants.length === 0 ? (
             <div className="px-4 py-4 text-xs text-center" style={{ color: '#475569' }}>
-              No participants yet. Users join from the /competition page.
+              {t('admin.competition.participants.empty')}
             </div>
           ) : (
             <div className="divide-y" style={{ borderColor: '#1e1b4b' }}>
@@ -628,8 +634,8 @@ export default function AdminCompetition() {
                     <button type="submit" disabled={removeFetcher.state !== 'idle'}
                       className="rounded-md px-2 py-1 text-[10px] font-bold disabled:opacity-50"
                       style={{ background: 'rgba(127,29,29,0.4)', color: '#fca5a5', border: '1px solid #ef444440' }}
-                      title="Remove from competition">
-                      Remove
+                      title={t('admin.competition.participants.removeTitle')}>
+                      {t('admin.competition.participants.remove')}
                     </button>
                   </removeFetcher.Form>
                 </div>
@@ -645,12 +651,12 @@ export default function AdminCompetition() {
           <table className="w-full text-left text-sm">
             <thead>
               <tr className="text-[10px] font-bold" style={{ background: '#1e1b4b', color: '#a5b4fc' }}>
-                <th className="w-12 px-3 py-2 text-center">RANK</th>
-                <th className="px-3 py-2">PLAYER</th>
-                <th className="px-3 py-2">PHONE</th>
-                <th className="px-3 py-2 text-right">JOINED</th>
-                <th className="px-3 py-2 text-right">TOTAL BETS</th>
-                <th className="px-3 py-2 text-right">{isDemo ? 'DEMO' : 'REAL'} BALANCE</th>
+                <th className="w-12 px-3 py-2 text-center">{t('admin.competition.ranking.col.rank')}</th>
+                <th className="px-3 py-2">{t('admin.competition.ranking.col.player')}</th>
+                <th className="px-3 py-2">{t('admin.competition.ranking.col.phone')}</th>
+                <th className="px-3 py-2 text-right">{t('admin.competition.ranking.col.joined')}</th>
+                <th className="px-3 py-2 text-right">{t('admin.competition.ranking.col.totalBets')}</th>
+                <th className="px-3 py-2 text-right">{t('admin.competition.ranking.col.balance', { wallet: isDemo ? 'DEMO' : 'REAL' })}</th>
               </tr>
             </thead>
             <tbody>
@@ -682,7 +688,7 @@ export default function AdminCompetition() {
                 </tr>
               ))}
               {ranked.length === 0 && (
-                <tr><td colSpan={6} className="px-3 py-8 text-center text-xs" style={{ color: '#64748b' }}>No players yet.</td></tr>
+                <tr><td colSpan={6} className="px-3 py-8 text-center text-xs" style={{ color: '#64748b' }}>{t('admin.competition.ranking.empty')}</td></tr>
               )}
             </tbody>
           </table>
@@ -706,7 +712,7 @@ export default function AdminCompetition() {
               </div>
               <div className="text-right">
                 <div className="text-sm font-bold" style={{ color: rankColor(u.rank) }}>{fmt(u.balance)} ₭</div>
-                <div className="text-[10px]" style={{ color: '#64748b' }}>bets {fmt(u.totalBets)}</div>
+                <div className="text-[10px]" style={{ color: '#64748b' }}>{t('admin.competition.ranking.betsShort', { amount: fmt(u.totalBets) })}</div>
               </div>
             </div>
           ))}
@@ -721,21 +727,21 @@ export default function AdminCompetition() {
             style={{ background: '#1e0040', border: '2px solid #ca8a04' }}
             onClick={e => e.stopPropagation()}>
             <h2 className="mb-1 flex items-center gap-2 text-base font-bold" style={{ color: '#fbbf24' }}>
-              <RotateCcw size={16} /> Reset All Demo Wallets?
+              <RotateCcw size={16} /> {t('admin.competition.resetConfirm.title')}
             </h2>
             <p className="mt-3 text-sm" style={{ color: '#e9d5ff' }}>
-              Every user's demo balance will be set to <strong style={{ color: '#fbbf24' }}>1,000,000 ₭</strong> in real-time.
+              {t('admin.competition.resetConfirm.body', { amount: '1,000,000' })}
             </p>
             <div className="mt-5 flex gap-3">
               <button type="button" onClick={() => setShowResetConfirm(false)}
                 className="flex-1 rounded-xl py-2.5 text-sm font-bold"
-                style={{ background: '#2d1b4e', color: '#a78bfa', border: '1px solid #4c1d95' }}>Cancel</button>
+                style={{ background: '#2d1b4e', color: '#a78bfa', border: '1px solid #4c1d95' }}>{t('admin.competition.form.cancel')}</button>
               <resetFetcher.Form method="post" className="flex-1">
                 <input type="hidden" name="op" value="resetAllDemo" />
                 <button type="submit" disabled={resetFetcher.state !== 'idle'}
                   className="w-full rounded-xl py-2.5 text-sm font-bold disabled:opacity-50"
                   style={{ background: 'linear-gradient(135deg,#b45309,#78350f)', color: '#fff', border: '1px solid #fcd34d' }}>
-                  {resetFetcher.state !== 'idle' ? 'Resetting…' : 'Yes, Reset All'}
+                  {resetFetcher.state !== 'idle' ? t('admin.competition.resetConfirm.confirming') : t('admin.competition.resetConfirm.confirm')}
                 </button>
               </resetFetcher.Form>
             </div>
@@ -751,22 +757,21 @@ export default function AdminCompetition() {
             style={{ background: '#1e0040', border: '2px solid #ef4444' }}
             onClick={e => e.stopPropagation()}>
             <h2 className="mb-1 flex items-center gap-2 text-base font-bold" style={{ color: '#f87171' }}>
-              <Flag size={16} /> End Competition?
+              <Flag size={16} /> {t('admin.competition.endConfirm.title')}
             </h2>
             <p className="mt-3 text-sm" style={{ color: '#e9d5ff' }}>
-              The top 3 snapshot will be <strong style={{ color: '#4ade80' }}>saved to history</strong>.
-              All competition settings will be cleared and users will see the results page.
+              {t('admin.competition.endConfirm.body', { saved: t('admin.competition.endConfirm.savedToHistory') })}
             </p>
             <div className="mt-5 flex gap-3">
               <button type="button" onClick={() => setShowEndConfirm(false)}
                 className="flex-1 rounded-xl py-2.5 text-sm font-bold"
-                style={{ background: '#2d1b4e', color: '#a78bfa', border: '1px solid #4c1d95' }}>Cancel</button>
+                style={{ background: '#2d1b4e', color: '#a78bfa', border: '1px solid #4c1d95' }}>{t('admin.competition.form.cancel')}</button>
               <endFetcher.Form method="post" className="flex-1">
                 <input type="hidden" name="op" value="endCompetition" />
                 <button type="submit" disabled={endFetcher.state !== 'idle'}
                   className="w-full rounded-xl py-2.5 text-sm font-bold disabled:opacity-50"
                   style={{ background: 'linear-gradient(135deg,#7f1d1d,#450a0a)', color: '#fff', border: '1px solid #fca5a5' }}>
-                  {endFetcher.state !== 'idle' ? 'Ending…' : 'Yes, End Competition'}
+                  {endFetcher.state !== 'idle' ? t('admin.competition.endConfirm.confirming') : t('admin.competition.endConfirm.confirm')}
                 </button>
               </endFetcher.Form>
             </div>

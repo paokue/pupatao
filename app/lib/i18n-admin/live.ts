@@ -1,0 +1,109 @@
+// Admin Live Play page (admin.live.tsx) translation strings.
+// Shaped like entries in `app/lib/i18n.ts`'s STRINGS — spread into it there.
+// Keys all live under the `admin.live.*` namespace.
+export const ADMIN_LIVE_STRINGS = {
+  // ─── action() server-side errors ────────────────────────────────────
+  "admin.live.action.roundInFlight": { lo: "ມີຮອບ LIVE ກຳລັງດຳເນີນຢູ່ແລ້ວ. ກະລຸນາສະຫຼຸບ ຫຼື ຍົກເລີກກ່ອນ.", en: "A LIVE round is already in flight. Resolve or cancel it first." },
+  "admin.live.action.scheduleFieldsRequired": { lo: "ກະລຸນາລະບຸວັນທີ, ເວລາເລີ່ມ ແລະ ເວລາສິ້ນສຸດ.", en: "Date, start time and end time are required." },
+  "admin.live.action.invalidDateTime": { lo: "ຄ່າວັນທີ/ເວລາບໍ່ຖືກຕ້ອງ.", en: "Invalid date/time values." },
+  "admin.live.action.endAfterStart": { lo: "ເວລາສິ້ນສຸດຕ້ອງຫຼັງເວລາເລີ່ມ.", en: "End time must be after start time." },
+  "admin.live.action.roundIdRequired": { lo: "ຕ້ອງມີ roundId", en: "roundId required" },
+  "admin.live.action.roundNotFound": { lo: "ບໍ່ພົບຮອບ.", en: "Round not found." },
+  "admin.live.action.onlyOpenLockable": { lo: "ສາມາດປິດການແທງໄດ້ສະເພາະຮອບທີ່ກຳລັງເປີດຢູ່.", en: "Only an open round can be locked." },
+  "admin.live.action.roundFinalised": { lo: "ຮອບນີ້ສະຫຼຸບໄປແລ້ວ.", en: "Round already finalised." },
+  "admin.live.action.invalidDieIndex": { lo: "dieIndex ບໍ່ຖືກຕ້ອງ.", en: "Invalid dieIndex." },
+  "admin.live.action.invalidSymbol": { lo: "ສັນຍາລັກບໍ່ຖືກຕ້ອງ.", en: "Invalid symbol." },
+  "admin.live.action.pickAllDice": { lo: "ກະລຸນາເລືອກສັນຍາລັກໃຫ້ຄົບທັງ 3 ໝາກ ກ່ອນສະຫຼຸບ.", en: "Pick a symbol for all 3 dice before settling." },
+  "admin.live.action.unknownOp": { lo: "ບໍ່ຮູ້ຈັກການດຳເນີນການນີ້", en: "Unknown op" },
+  "admin.live.action.actionFailed": { lo: "ດຳເນີນການລົ້ມເຫລວ.", en: "Action failed." },
+
+  // ─── Header / tabs ──────────────────────────────────────────────────
+  "admin.live.title": { lo: "ຄວບຄຸມ LIVE", en: "Live play" },
+  "admin.live.roundInFlightBadge": { lo: "ກຳລັງມີຮອບ", en: "ROUND IN FLIGHT" },
+  "admin.live.tab.livePlay": { lo: "ຫຼິ້ນ LIVE", en: "LIVE PLAY" },
+  "admin.live.tab.roundHistory": { lo: "ປະຫວັດຮອບ", en: "ROUND HISTORY" },
+  "admin.live.noPreviousRounds": { lo: "ບໍ່ມີຮອບກ່ອນໜ້າ.", en: "No previous rounds." },
+  "admin.live.loadingMore": { lo: "ກຳລັງໂຫຼດ…", en: "LOADING…" },
+  "admin.live.loadMore": { lo: "ໂຫຼດເພີ່ມ", en: "LOAD MORE" },
+
+  // ─── Settled summary panel ──────────────────────────────────────────
+  "admin.live.settled.title": { lo: "ສະຫຼຸບຮອບແລ້ວ", en: "ROUND SETTLED" },
+  "admin.live.settled.close": { lo: "ປິດ", en: "CLOSE" },
+  "admin.live.settled.sum": { lo: "ລວມ {n}", en: "SUM {n}" },
+  "admin.live.settled.players": { lo: "ຜູ້ຫຼິ້ນ", en: "PLAYERS" },
+  "admin.live.settled.totalStake": { lo: "ເງິນລົງທັງໝົດ", en: "TOTAL STAKE" },
+  "admin.live.settled.totalPayout": { lo: "ຈ່າຍອອກທັງໝົດ", en: "TOTAL PAYOUT" },
+  "admin.live.settled.houseNet": { lo: "ກຳໄລເຮືອນ", en: "HOUSE NET" },
+  "admin.live.settled.noBets": { lo: "ບໍ່ມີການແທງໃນຮອບນີ້.", en: "No bets were placed in this round." },
+  "admin.live.settled.bal": { lo: "ຍອດ {n}", en: "bal {n}" },
+  "admin.live.startNextRound": { lo: "ເລີ່ມຮອບຕໍ່ໄປ", en: "START NEXT ROUND" },
+
+  // ─── Stream / betting-window labels ─────────────────────────────────
+  "admin.live.streamUrlLabel": { lo: "ລິ້ງສະຕຣີມ", en: "STREAM URL" },
+  "admin.live.bettingWindowLabel": { lo: "ໄລຍະເວລາແທງ (ວິນາທີ)", en: "BETTING WINDOW (SECONDS)" },
+  "admin.live.noViewers": { lo: "ຍັງບໍ່ມີລູກຄ້າເບິ່ງ live.", en: "No customers watching yet." },
+
+  // ─── Live bets panel ────────────────────────────────────────────────
+  "admin.live.betsStake": { lo: "{n} ການແທງ · {stake} ₭", en: "{n} bets · {stake} ₭" },
+  "admin.live.startLiveRoundHint": { lo: "ເລີ່ມຮອບ LIVE ເພື່ອເບິ່ງການແທງໄຫຼເຂົ້າມາ.", en: "Start a LIVE round to see bets stream in." },
+  "admin.live.noBetsThisRound": { lo: "ຍັງບໍ່ມີການແທງໃນຮອບນີ້.", en: "No bets in this round yet." },
+  "admin.live.sumExact": { lo: "ເລກ {n}", en: "Number {n}" },
+  "admin.live.betsShort": { lo: "{n} ການແທງ", en: "{n} bets" },
+
+  // ─── Active round / result entry ────────────────────────────────────
+  "admin.live.roundResult": { lo: "ຜົນຮອບ", en: "ROUND RESULT" },
+  "admin.live.lockBetting": { lo: "ປິດການແທງ", en: "LOCK BETTING" },
+  "admin.live.openResultBoard": { lo: "ເປີດກະດານຜົນ", en: "OPEN RESULT BOARD" },
+  "admin.live.sumInline": { lo: "ລວມ:", en: "Sum:" },
+  "admin.live.cancel": { lo: "ຍົກເລີກ", en: "CANCEL" },
+  "admin.live.roundResultHash": { lo: "ຜົນຮອບ · #{id}", en: "ROUND RESULT · #{id}" },
+  "admin.live.closeAria": { lo: "ປິດ", en: "Close" },
+  "admin.live.bettingWindowOpen": { lo: "ກຳລັງເປີດໃຫ້ແທງ", en: "Betting window open" },
+  "admin.live.remainingSeconds": { lo: " · ເຫຼືອ {n} ວິນາທີ", en: " · {n}s remaining" },
+  "admin.live.diceLabel": { lo: "ໝາກ {n}", en: "Dice {n}" },
+  "admin.live.settleTitleReady": { lo: "ສະຫຼຸບຮອບ ແລະ ໂອນເງິນໃຫ້ຜູ້ຊະນະ", en: "Settle the round and credit winners" },
+  "admin.live.settleTitleNotReady": { lo: "ກະລຸນາເລືອກໝາກໃຫ້ຄົບ 3 ໝາກກ່ອນ", en: "Pick all 3 dice first" },
+  "admin.live.summaryBtn": { lo: "ສະຫຼຸບ", en: "SUMMARY" },
+
+  // ─── Live stream panel / offline / schedule ─────────────────────────
+  "admin.live.liveStream": { lo: "ສະຕຣີມສົດ", en: "LIVE STREAM" },
+  "admin.live.bettingClosed": { lo: "🔒 ປິດການແທງແລ້ວ", en: "🔒 BETTING CLOSED" },
+  "admin.live.endLiveTitleActive": { lo: "ປິດສະຕຣີມສົດສຳລັບລູກຄ້າ", en: "Stop the live stream for customers" },
+  "admin.live.endLiveTitleInactive": { lo: "ບໍ່ມີສະຕຣີມສົດກຳລັງເຮັດວຽກຢູ່", en: "No live stream is currently active" },
+  "admin.live.endLive": { lo: "ປິດ LIVE", en: "END LIVE" },
+  "admin.live.scheduleSet": { lo: "ກຳນົດການ ✓", en: "SCHEDULE ✓" },
+  "admin.live.schedule": { lo: "ກຳນົດການ", en: "SCHEDULE" },
+  "admin.live.noActiveRound": { lo: "ບໍ່ມີຮອບກຳລັງດຳເນີນ", en: "NO ACTIVE ROUND" },
+  "admin.live.streamUrlPlaceholder": { lo: "ລິ້ງສະຕຣີມ (YouTube, MP4, HLS, …)", en: "Stream URL (YouTube, MP4, HLS, …)" },
+  "admin.live.updateStream": { lo: "ອັບເດດສະຕຣີມ", en: "UPDATE STREAM" },
+  "admin.live.liveEndedNoSchedule": { lo: "Live ສິ້ນສຸດແລ້ວ — ບໍ່ມີກຳນົດການ", en: "Live ended — no schedule set" },
+  "admin.live.offlineHint": { lo: "ລູກຄ້າຈະເຫັນໜ້າຈໍ offline. ໃຊ້ປຸ່ມກຳນົດການເພື່ອຕັ້ງເວລາຖັດໄປ.", en: "Customers see an offline screen. Use SCHEDULE to set a time." },
+  "admin.live.unit.days": { lo: "ມື້", en: "Days" },
+  "admin.live.unit.hours": { lo: "ຊມ", en: "Hrs" },
+  "admin.live.unit.mins": { lo: "ນທ", en: "Min" },
+  "admin.live.unit.secs": { lo: "ວິ", en: "Sec" },
+  "admin.live.broadcastEnded": { lo: "ການອອກອາກາດສິ້ນສຸດແລ້ວ", en: "Broadcast ended" },
+  "admin.live.broadcastWindow": { lo: "ໄລຍະອອກອາກາດ — ເລີ່ມຮອບໄດ້ເລີຍ!", en: "Broadcast window — start the round!" },
+  "admin.live.nextBroadcast": { lo: "ການອອກອາກາດ LIVE ຄັ້ງຕໍ່ໄປ", en: "Next live broadcast" },
+  "admin.live.countdownHint": { lo: "ລູກຄ້າຈະເຫັນການນັບຖອຍຫຼັງນີ້. ເລີ່ມຮອບເພື່ອຂຶ້ນ live.", en: "Customers see this countdown. Start a round when ready." },
+  "admin.live.nextLiveSchedule": { lo: "ກຳນົດການ LIVE ຄັ້ງຕໍ່ໄປ", en: "NEXT LIVE SCHEDULE" },
+  "admin.live.current": { lo: "ປັດຈຸບັນ", en: "CURRENT" },
+  "admin.live.gmt7Laos": { lo: "GMT+7 (ລາວ)", en: "GMT+7 (Laos)" },
+  "admin.live.dateLabel": { lo: "ວັນທີ (GMT+7)", en: "DATE (GMT+7)" },
+  "admin.live.startLabel": { lo: "ເລີ່ມ (GMT+7)", en: "START (GMT+7)" },
+  "admin.live.endLabel": { lo: "ສິ້ນສຸດ (GMT+7)", en: "END (GMT+7)" },
+  "admin.live.noticeLabel": { lo: "ປະກາດ (ບໍ່ບັງຄັບ)", en: "NOTICE (optional)" },
+  "admin.live.noticePlaceholder": { lo: "ຕົວຢ່າງ: ກິດຈະກຳພິເສດຄືນນີ້! ລາງວັນ 2 ເທົ່າ.", en: "e.g. Special event tonight! Double prizes." },
+  "admin.live.clear": { lo: "ລ້າງ", en: "CLEAR" },
+  "admin.live.save": { lo: "ບັນທຶກ", en: "SAVE" },
+
+  // ─── Start round panel ──────────────────────────────────────────────
+  "admin.live.startNewLiveRound": { lo: "ເລີ່ມຮອບ LIVE ໃໝ່", en: "START NEW LIVE ROUND" },
+  "admin.live.startRound": { lo: "ເລີ່ມຮອບ", en: "START ROUND" },
+  "admin.live.noStreamUrl": { lo: "ຍັງບໍ່ໄດ້ກຳນົດລິ້ງສະຕຣີມ.", en: "No stream URL set yet." },
+  "admin.live.liveStreamTitle": { lo: "ສະຕຣີມ LIVE", en: "LIVE stream" },
+
+  // ─── History rows ───────────────────────────────────────────────────
+  "admin.live.host": { lo: "ຜູ້ດຳເນີນ:", en: "Host:" },
+  "admin.live.noResult": { lo: "ບໍ່ມີຜົນ", en: "no result" },
+} as const

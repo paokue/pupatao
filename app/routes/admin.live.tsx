@@ -7,6 +7,8 @@ import { requireAdmin } from '~/lib/admin-auth.server'
 import { prisma } from '~/lib/prisma.server'
 import { notifyAdmin, notifyGame, notifyPresenceLive, notifyUser } from '~/lib/pusher.server'
 import { getPayoutConfig, type PayoutConfig } from '~/lib/payouts.server'
+import { useT } from '~/lib/use-t'
+import { t as translate, parseLocaleCookie } from '~/lib/i18n'
 import {
   getLiveSchedule, getLiveStreamUrl, setLiveSchedule, setLiveStreamUrl,
   LIVE_BETTING_SECONDS_KEY,
@@ -255,6 +257,8 @@ async function normalizeStreamUrl(raw: string | null): Promise<string | null> {
 
 export async function action({ request }: Route.ActionArgs) {
   const admin = await requireAdmin(request)
+  // Errors translated server-side from the locale cookie (actions can't use the hook).
+  const locale = parseLocaleCookie(request.headers.get('cookie'))
   const fd = await request.formData()
   const op = String(fd.get('op') ?? '')
 
@@ -265,7 +269,7 @@ export async function action({ request }: Route.ActionArgs) {
         where: { mode: 'LIVE', status: { in: ['BETTING', 'LOCKED', 'AWAITING_RESULT'] } },
         select: { id: true },
       })
-      if (existing) return { error: 'A LIVE round is already in flight. Resolve or cancel it first.' }
+      if (existing) return { error: translate(locale, 'admin.live.action.roundInFlight') }
 
       const rawStreamUrl = String(fd.get('streamUrl') ?? '').trim() || null
       const streamUrl = await normalizeStreamUrl(rawStreamUrl)
@@ -324,11 +328,11 @@ export async function action({ request }: Route.ActionArgs) {
       const startStr = String(fd.get('scheduleStart') ?? '').trim()
       const endStr   = String(fd.get('scheduleEnd')   ?? '').trim()
       const notice   = String(fd.get('scheduleNotice') ?? '').trim() || null
-      if (!dateStr || !startStr || !endStr) return { error: 'Date, start time and end time are required.' }
+      if (!dateStr || !startStr || !endStr) return { error: translate(locale, 'admin.live.action.scheduleFieldsRequired') }
       const start = new Date(`${dateStr}T${startStr}:00+07:00`)
       const end   = new Date(`${dateStr}T${endStr}:00+07:00`)
-      if (isNaN(start.getTime()) || isNaN(end.getTime())) return { error: 'Invalid date/time values.' }
-      if (end <= start) return { error: 'End time must be after start time.' }
+      if (isNaN(start.getTime()) || isNaN(end.getTime())) return { error: translate(locale, 'admin.live.action.invalidDateTime') }
+      if (end <= start) return { error: translate(locale, 'admin.live.action.endAfterStart') }
       const startIso = start.toISOString()
       const endIso   = end.toISOString()
       await setLiveSchedule(startIso, endIso, admin.id, notice)
@@ -347,10 +351,10 @@ export async function action({ request }: Route.ActionArgs) {
     }
 
     const roundId = String(fd.get('roundId') ?? '')
-    if (!roundId) return { error: 'roundId required' }
+    if (!roundId) return { error: translate(locale, 'admin.live.action.roundIdRequired') }
 
     const round = await prisma.gameRound.findUnique({ where: { id: roundId } })
-    if (!round) return { error: 'Round not found.' }
+    if (!round) return { error: translate(locale, 'admin.live.action.roundNotFound') }
 
     if (op === 'updateStream') {
       const rawStreamUrl = String(fd.get('streamUrl') ?? '').trim() || null
@@ -368,7 +372,7 @@ export async function action({ request }: Route.ActionArgs) {
     }
 
     if (op === 'lock') {
-      if (round.status !== 'BETTING') return { error: 'Only an open round can be locked.' }
+      if (round.status !== 'BETTING') return { error: translate(locale, 'admin.live.action.onlyOpenLockable') }
       await prisma.$transaction([
         prisma.gameRound.update({
           where: { id: roundId },
@@ -385,14 +389,14 @@ export async function action({ request }: Route.ActionArgs) {
     // one slot at a time. Admin can re-click to change a die before SUMMARY.
     if (op === 'revealDie') {
       if (round.status === 'RESOLVED' || round.status === 'CANCELLED') {
-        return { error: 'Round already finalised.' }
+        return { error: translate(locale, 'admin.live.action.roundFinalised') }
       }
       const dieIndexRaw = String(fd.get('dieIndex') ?? '')
       const symbol = String(fd.get('symbol') ?? '') as DiceSymbol
       if (dieIndexRaw !== '1' && dieIndexRaw !== '2' && dieIndexRaw !== '3') {
-        return { error: 'Invalid dieIndex.' }
+        return { error: translate(locale, 'admin.live.action.invalidDieIndex') }
       }
-      if (!SYMBOLS.includes(symbol)) return { error: 'Invalid symbol.' }
+      if (!SYMBOLS.includes(symbol)) return { error: translate(locale, 'admin.live.action.invalidSymbol') }
       const field = (`dice${dieIndexRaw}` as 'dice1' | 'dice2' | 'dice3')
       await prisma.gameRound.update({ where: { id: roundId }, data: { [field]: symbol } })
       const payload = {
@@ -407,7 +411,7 @@ export async function action({ request }: Route.ActionArgs) {
 
     if (op === 'resolve') {
       if (round.status === 'RESOLVED' || round.status === 'CANCELLED') {
-        return { error: 'Round already finalised.' }
+        return { error: translate(locale, 'admin.live.action.roundFinalised') }
       }
       // Dice come from the DB now (set incrementally via `revealDie`), so the
       // settlement payload no longer carries them. Refresh the round to pick
@@ -417,7 +421,7 @@ export async function action({ request }: Route.ActionArgs) {
       const dice2 = fresh?.dice2 as DiceSymbol | null
       const dice3 = fresh?.dice3 as DiceSymbol | null
       if (!dice1 || !dice2 || !dice3 || !SYMBOLS.includes(dice1) || !SYMBOLS.includes(dice2) || !SYMBOLS.includes(dice3)) {
-        return { error: 'Pick a symbol for all 3 dice before settling.' }
+        return { error: translate(locale, 'admin.live.action.pickAllDice') }
       }
       const diceSum = SYMBOL_VALUE[dice1] + SYMBOL_VALUE[dice2] + SYMBOL_VALUE[dice3]
       const dice = [dice1, dice2, dice3] as DiceSymbol[]
@@ -491,17 +495,17 @@ export async function action({ request }: Route.ActionArgs) {
       })
 
       const resolvedAt = new Date()
+      // Keep ONLY money-critical work inside the interactive transaction: the
+      // round-status flip (the double-settle guard) plus the wallet credits and
+      // their WIN ledger rows. The per-bet result writes and the audit log are
+      // independent of the money math and are applied in parallel AFTER commit —
+      // this keeps the transaction short so it doesn't hit the 30s timeout on a
+      // busy round (many bets/players × Atlas round-trip latency).
       const newBalances = await prisma.$transaction(async db => {
         await db.gameRound.update({
           where: { id: roundId },
           data: { status: 'RESOLVED', dice1, dice2, dice3, diceSum, resolvedAt },
         })
-        for (const u of betUpdates) {
-          await db.bet.update({
-            where: { id: u.id },
-            data: { payout: u.payout, result: u.result, resolvedAt },
-          })
-        }
         const balances: Record<string, number> = {}
         for (const grp of playerGroups.values()) {
           const w = await db.wallet.findUnique({ where: { id: grp.walletId } })
@@ -567,16 +571,29 @@ export async function action({ request }: Route.ActionArgs) {
             balances[grp.userId] = newBalance
           }
         }
-        await db.auditLog.create({
+        return balances
+      }, { timeout: 60000, maxWait: 15000 })
+
+      // Non-money-critical follow-ups, run in parallel outside the transaction.
+      // The round is already RESOLVED (settle is idempotent via the status
+      // guard), so a failure here can't double-credit — it would only leave a
+      // bet row's result unset, which doesn't affect balances.
+      await Promise.all([
+        ...betUpdates.map(u =>
+          prisma.bet.update({
+            where: { id: u.id },
+            data: { payout: u.payout, result: u.result, resolvedAt },
+          })
+        ),
+        prisma.auditLog.create({
           data: {
             actorId: admin.id,
             action: 'round.resolve',
             target: `round:${roundId}`,
             metadata: { dice1, dice2, dice3, diceSum, bets: bets.length, players: playerGroups.size },
           },
-        })
-        return balances
-      }, { timeout: 30000, maxWait: 10000 })
+        }),
+      ])
 
       // Build per-user bet lists for the round:settled events. The customer's
       // result modal renders one row per bet so they see exactly what they
@@ -723,7 +740,7 @@ export async function action({ request }: Route.ActionArgs) {
 
     if (op === 'cancel') {
       if (round.status === 'RESOLVED' || round.status === 'CANCELLED') {
-        return { error: 'Round already finalised.' }
+        return { error: translate(locale, 'admin.live.action.roundFinalised') }
       }
       // Refund every bet's stake back to the bettor's wallet.
       // (No `result: null` filter — see the resolve action above for why.)
@@ -771,11 +788,13 @@ export async function action({ request }: Route.ActionArgs) {
           })
           balances[grp.userId] = newBalance
         }
-        await db.auditLog.create({
-          data: { actorId: admin.id, action: 'round.cancel', target: `round:${roundId}`, metadata: { refundedBets: bets.length, refundedWallets: refundGroups.size } },
-        })
         return balances
-      }, { timeout: 30000, maxWait: 10000 })
+      }, { timeout: 60000, maxWait: 15000 })
+
+      // Audit log is non-money-critical — write it outside the transaction.
+      await prisma.auditLog.create({
+        data: { actorId: admin.id, action: 'round.cancel', target: `round:${roundId}`, metadata: { refundedBets: bets.length, refundedWallets: refundGroups.size } },
+      })
 
       const payload = { roundId, mode: 'LIVE' as const, dice: [] as string[], diceSum: 0 }
       notifyAdmin('round:resolved', payload)
@@ -798,14 +817,15 @@ export async function action({ request }: Route.ActionArgs) {
       return { ok: true }
     }
 
-    return { error: 'Unknown op' }
+    return { error: translate(locale, 'admin.live.action.unknownOp') }
   } catch (err) {
     console.error('[admin/live]', err)
-    return { error: err instanceof Error ? err.message : 'Action failed.' }
+    return { error: err instanceof Error ? err.message : translate(locale, 'admin.live.action.actionFailed') }
   }
 }
 
 export default function AdminLive() {
+  const t = useT()
   const { current, currentBets, history: initialHistory, historyHasMore: initialHasMore, lastStreamUrl, liveStreamUrl, schedule, savedBettingSeconds } = useLoaderData<typeof loader>()
   const navigation = useNavigation()
   const revalidator = useRevalidator()
@@ -906,13 +926,13 @@ export default function AdminLive() {
     <div className="flex flex-col gap-4">
       {/* ─── Header ──────────────────────────────────────────────────── */}
       <div className="flex items-center justify-between">
-        <h1 className="text-xl font-bold" style={{ color: '#fde68a' }}>Live play</h1>
+        <h1 className="text-xl font-bold" style={{ color: '#fde68a' }}>{t('admin.live.title')}</h1>
         {current && (
           <span
             className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold"
             style={{ background: 'rgba(220,38,38,0.2)', color: '#f87171', border: '1px solid #fca5a5' }}
           >
-            <Radio size={10} className="animate-pulse" /> ROUND IN FLIGHT
+            <Radio size={10} className="animate-pulse" /> {t('admin.live.roundInFlightBadge')}
           </span>
         )}
       </div>
@@ -925,7 +945,7 @@ export default function AdminLive() {
           className="flex flex-1 items-center justify-center gap-1.5 py-2 text-xs font-bold transition-all"
           style={{ background: activeTab === 'live' ? '#4338ca' : '#0f172a', color: activeTab === 'live' ? '#fff' : '#a5b4fc' }}
         >
-          <Radio size={12} /> LIVE PLAY
+          <Radio size={12} /> {t('admin.live.tab.livePlay')}
         </button>
         <button
           type="button"
@@ -933,7 +953,7 @@ export default function AdminLive() {
           className="flex flex-1 items-center justify-center gap-1.5 py-2 text-xs font-bold transition-all"
           style={{ background: activeTab === 'history' ? '#4338ca' : '#0f172a', color: activeTab === 'history' ? '#fff' : '#a5b4fc' }}
         >
-          ROUND HISTORY
+          {t('admin.live.tab.roundHistory')}
           {historyPages.length > 0 && (
             <span
               className="rounded-full px-1.5 py-0.5 text-[9px] font-bold"
@@ -1012,7 +1032,7 @@ export default function AdminLive() {
               className="rounded-xl p-6 text-center text-xs"
               style={{ background: '#0f172a', color: '#818cf8', border: '1px solid #1e1b4b' }}
             >
-              No previous rounds.
+              {t('admin.live.noPreviousRounds')}
             </div>
           ) : (
             <div className="flex flex-col gap-2">
@@ -1028,7 +1048,7 @@ export default function AdminLive() {
                   style={{ background: '#1e1b4b', color: '#a5b4fc', border: '1px solid #4338ca' }}
                 >
                   {loadingMore ? <Loader size={12} className="animate-spin" /> : null}
-                  {loadingMore ? 'LOADING…' : 'LOAD MORE'}
+                  {loadingMore ? t('admin.live.loadingMore') : t('admin.live.loadMore')}
                 </button>
               )}
             </div>
@@ -1052,11 +1072,12 @@ function SettledSummaryPanel({
   defaultSeconds: number
   loading: boolean
 }) {
+  const t = useT()
   return (
     <div className="rounded-xl p-4" style={{ background: '#0f172a', border: '1px solid #4ade80' }}>
       <div className="mb-3 flex items-center justify-between">
         <span className="inline-flex items-center gap-2 text-[10px] font-bold " style={{ color: '#4ade80' }}>
-          <Check size={12} /> ROUND SETTLED · #{summary.roundId.slice(-6)}
+          <Check size={12} /> {t('admin.live.settled.title')} · #{summary.roundId.slice(-6)}
         </span>
         <button
           type="button"
@@ -1064,7 +1085,7 @@ function SettledSummaryPanel({
           className="rounded-md px-3 py-1 text-[10px] font-bold "
           style={{ background: '#1e1b4b', color: '#a5b4fc', border: '1px solid #4338ca' }}
         >
-          CLOSE
+          {t('admin.live.settled.close')}
         </button>
       </div>
 
@@ -1079,16 +1100,16 @@ function SettledSummaryPanel({
           />
         ))}
         <span className="ml-2 rounded-md px-3 py-1 text-[11px] font-bold " style={{ background: '#1e1b4b', color: '#fde68a', border: '1px solid #4338ca' }}>
-          SUM {summary.diceSum}
+          {t('admin.live.settled.sum', { n: summary.diceSum })}
         </span>
       </div>
 
       <div className="mb-3 grid grid-cols-2 gap-2 md:grid-cols-4">
         {[
-          { label: 'PLAYERS', value: summary.totalPlayers.toLocaleString() },
-          { label: 'TOTAL STAKE', value: summary.totalStake.toLocaleString() },
-          { label: 'TOTAL PAYOUT', value: summary.totalPayout.toLocaleString() },
-          { label: 'HOUSE NET', value: `${summary.houseNet >= 0 ? '+' : ''}${summary.houseNet.toLocaleString()}`, color: summary.houseNet >= 0 ? '#4ade80' : '#f87171' },
+          { label: t('admin.live.settled.players'), value: summary.totalPlayers.toLocaleString() },
+          { label: t('admin.live.settled.totalStake'), value: summary.totalStake.toLocaleString() },
+          { label: t('admin.live.settled.totalPayout'), value: summary.totalPayout.toLocaleString() },
+          { label: t('admin.live.settled.houseNet'), value: `${summary.houseNet >= 0 ? '+' : ''}${summary.houseNet.toLocaleString()}`, color: summary.houseNet >= 0 ? '#4ade80' : '#f87171' },
         ].map(s => (
           <div key={s.label} className="rounded-md px-2 py-2 text-center" style={{ background: '#1e1b4b' }}>
             <div className="text-[9px] font-bold " style={{ color: '#a5b4fc' }}>{s.label}</div>
@@ -1098,7 +1119,7 @@ function SettledSummaryPanel({
       </div>
 
       {summary.players.length === 0 ? (
-        <p className="text-center text-[11px]" style={{ color: '#475569' }}>No bets were placed in this round.</p>
+        <p className="text-center text-[11px]" style={{ color: '#475569' }}>{t('admin.live.settled.noBets')}</p>
       ) : (
         <ul className="mb-4 flex max-h-48 flex-col gap-1 overflow-y-auto">
           {summary.players.map(p => (
@@ -1112,7 +1133,7 @@ function SettledSummaryPanel({
                 {p.net > 0 ? '+' : ''}{p.net.toLocaleString()}
               </span>
               <span className="text-right text-[10px]" style={{ color: '#a5b4fc' }}>
-                bal {p.newBalance.toLocaleString()}
+                {t('admin.live.settled.bal', { n: p.newBalance.toLocaleString() })}
               </span>
             </li>
           ))}
@@ -1122,12 +1143,12 @@ function SettledSummaryPanel({
       {/* ── Start next round ── */}
       <div className="mt-2 rounded-lg p-3" style={{ background: '#0a1a0f', border: '1px solid #166534' }}>
         <div className="mb-3 flex items-center gap-2 text-[10px] font-bold" style={{ color: '#4ade80' }}>
-          <Radio size={11} /> START NEXT ROUND
+          <Radio size={11} /> {t('admin.live.startNextRound')}
         </div>
         <Form method="post" className="flex flex-col gap-2" onSubmit={onClose}>
           <input type="hidden" name="op" value="startRound" />
 
-          <label className="text-[10px] font-semibold" style={{ color: '#86efac' }}>STREAM URL</label>
+          <label className="text-[10px] font-semibold" style={{ color: '#86efac' }}>{t('admin.live.streamUrlLabel')}</label>
           <input
             name="streamUrl"
             defaultValue={defaultStreamUrl}
@@ -1138,7 +1159,7 @@ function SettledSummaryPanel({
 
           <div className="flex gap-3">
             <div className="flex flex-1 flex-col gap-2">
-              <label className="text-[10px] font-semibold" style={{ color: '#86efac' }}>BETTING WINDOW (SECONDS)</label>
+              <label className="text-[10px] font-semibold" style={{ color: '#86efac' }}>{t('admin.live.bettingWindowLabel')}</label>
               <input
                 name="seconds"
                 type="number"
@@ -1158,7 +1179,7 @@ function SettledSummaryPanel({
             style={{ background: 'linear-gradient(135deg, #16a34a, #15803d)', color: '#fff', border: '1.5px solid #4ade80' }}
           >
             {loading ? <Loader size={14} className="animate-spin" /> : <PlayCircle size={14} />}
-            START NEXT ROUND
+            {t('admin.live.startNextRound')}
           </button>
         </Form>
       </div>
@@ -1167,6 +1188,7 @@ function SettledSummaryPanel({
 }
 
 function ViewersPanel({ viewers }: { viewers: ReturnType<typeof usePresenceMembers> }) {
+  const t = useT()
   return (
     <div className="rounded-xl p-4" style={{ background: '#0f172a', border: '1px solid #1e1b4b' }}>
       <div className="mb-3 flex items-center justify-between">
@@ -1176,7 +1198,7 @@ function ViewersPanel({ viewers }: { viewers: ReturnType<typeof usePresenceMembe
         <span className="text-[10px] font-bold" style={{ color: '#fde68a' }}>{viewers.length}</span>
       </div>
       {viewers.length === 0 ? (
-        <p className="text-center text-[10px]" style={{ color: '#475569' }}>No customers watching live yet.</p>
+        <p className="text-center text-[10px]" style={{ color: '#475569' }}>{t('admin.live.noViewers')}</p>
       ) : (
         <ul className="flex max-h-64 flex-col gap-1 overflow-y-auto">
           {viewers.map(v => (
@@ -1243,6 +1265,7 @@ function LiveBetsPanel({
   roundId: string | null
   maxHeight?: string
 }) {
+  const t = useT()
   const totalStake = bets.reduce((sum, b) => sum + b.amount, 0)
   const grouped = useMemo(() => groupLiveBets(bets), [bets])
   return (
@@ -1252,13 +1275,13 @@ function LiveBetsPanel({
           <Radio size={12} /> LIVE BETS{roundId && <span className="text-[9px] font-mono" style={{ color: '#475569' }}>#{roundId.slice(-6)}</span>}
         </span>
         <span className="text-[10px]" style={{ color: '#fde68a' }}>
-          {bets.length} bet{bets.length === 1 ? '' : 's'} · {totalStake.toLocaleString()} ₭
+          {t('admin.live.betsStake', { n: bets.length, stake: totalStake.toLocaleString() })}
         </span>
       </div>
       {!hasOpenRound ? (
-        <p className="text-center text-[10px]" style={{ color: '#475569' }}>Start a LIVE round to see bets stream in.</p>
+        <p className="text-center text-[10px]" style={{ color: '#475569' }}>{t('admin.live.startLiveRoundHint')}</p>
       ) : grouped.length === 0 ? (
-        <p className="text-center text-[10px]" style={{ color: '#475569' }}>No bets in this round yet.</p>
+        <p className="text-center text-[10px]" style={{ color: '#475569' }}>{t('admin.live.noBetsThisRound')}</p>
       ) : (
         <ul className="flex flex-col gap-1 overflow-y-auto" style={{ maxHeight }}>
           {grouped.map(g => (
@@ -1292,6 +1315,7 @@ function LiveBetsPanel({
 //   - SYMBOL / PAIR → small symbol thumbnail(s) + uppercase name
 //   - RANGE → colored arrow icon (low=green↓, middle=yellow↕, high=red↑)
 function LiveBetDescription({ bet }: { bet: Pick<LiveBet, 'kind' | 'symbol' | 'range' | 'pairA' | 'pairB' | 'exactSum'> }) {
+  const t = useT()
   if (bet.kind === 'SYMBOL' && bet.symbol) {
     return (
       <span className="flex items-center gap-1.5 text-[10px]">
@@ -1328,7 +1352,7 @@ function LiveBetDescription({ bet }: { bet: Pick<LiveBet, 'kind' | 'symbol' | 'r
     )
   }
   if (bet.kind === 'SUM' && bet.exactSum != null) {
-    return <span className="text-[10px] font-bold" style={{ color: '#fbbf24' }}>ເລກ {bet.exactSum}</span>
+    return <span className="text-[10px] font-bold" style={{ color: '#fbbf24' }}>{t('admin.live.sumExact', { n: bet.exactSum })}</span>
   }
   return <span className="text-[10px]">{bet.kind}</span>
 }
@@ -1355,6 +1379,7 @@ function ActiveRoundPanel({
   viewers: ReturnType<typeof usePresenceMembers>
   bets: LiveBet[]
 }) {
+  const t = useT()
   // Server is the source of truth for which dice are "live" — admin clicks
   // PATCH the GameRound and re-broadcast on round:dice. We mirror the server
   // values into local state for snappy UI on click; a Pusher event from a
@@ -1430,8 +1455,8 @@ function ActiveRoundPanel({
       {/* Compact result-control bar — opens the result-entry modal */}
       <div className="rounded-xl p-4" style={{ background: '#0f172a', border: '1px solid #1e1b4b' }}>
         <div className="mb-3 flex items-center justify-between">
-          <span className="text-[10px] font-bold " style={{ color: '#a5b4fc' }}>ROUND RESULT</span>
-          <span className="text-[10px]" style={{ color: '#818cf8' }}>{round.bets} bets · #{round.id.slice(-6)}</span>
+          <span className="text-[10px] font-bold " style={{ color: '#a5b4fc' }}>{t('admin.live.roundResult')}</span>
+          <span className="text-[10px]" style={{ color: '#818cf8' }}>{t('admin.live.betsShort', { n: round.bets })} · #{round.id.slice(-6)}</span>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {round.status === 'BETTING' && (
@@ -1445,7 +1470,7 @@ function ActiveRoundPanel({
                 style={{ background: '#1e1b4b', color: '#fdba74', border: '1px solid #fb923c' }}
               >
                 {loading ? <Loader size={10} className="animate-spin" /> : <Lock size={10} />}
-                LOCK BETTING
+                {t('admin.live.lockBetting')}
               </button>
             </Form>
           )}
@@ -1455,11 +1480,11 @@ function ActiveRoundPanel({
             className="inline-flex items-center gap-1 rounded-md px-3 py-1.5 text-[10px] font-bold "
             style={{ background: '#4338ca', color: '#fff', border: '1px solid #818cf8' }}
           >
-            OPEN RESULT BOARD
+            {t('admin.live.openResultBoard')}
           </button>
           {allPicked && (
             <span className="text-[10px]" style={{ color: '#a5b4fc' }}>
-              Sum: <span className="font-bold" style={{ color: '#fde68a' }}>{liveSum}</span>
+              {t('admin.live.sumInline')} <span className="font-bold" style={{ color: '#fde68a' }}>{liveSum}</span>
             </span>
           )}
           <Form method="post" className="ml-auto inline">
@@ -1472,7 +1497,7 @@ function ActiveRoundPanel({
               style={{ background: '#7f1d1d', color: '#fff', border: '1px solid #fca5a5' }}
             >
               {loading ? <Loader size={10} className="animate-spin" /> : <X size={10} />}
-              CANCEL
+              {t('admin.live.cancel')}
             </button>
           </Form>
         </div>
@@ -1528,6 +1553,7 @@ function ResultEntryModal({
   viewers: ReturnType<typeof usePresenceMembers>
   bets: LiveBet[]
 }) {
+  const t = useT()
   const stillBetting = round.status === 'BETTING' && !bettingExpired
   return (
     <div
@@ -1542,14 +1568,14 @@ function ResultEntryModal({
       >
         <div className="mb-3 flex items-center justify-between">
           <span className="text-sm font-bold " style={{ color: '#a5b4fc' }}>
-            ROUND RESULT · #{round.id.slice(-6)}
+            {t('admin.live.roundResultHash', { id: round.id.slice(-6) })}
           </span>
           <button
             type="button"
             onClick={onClose}
             className="rounded-full p-1"
             style={{ color: '#a5b4fc', background: '#1e1b4b' }}
-            aria-label="Close"
+            aria-label={t('admin.live.settled.close')}
           >
             <X size={16} />
           </button>
@@ -1557,9 +1583,9 @@ function ResultEntryModal({
 
         {stillBetting ? (
           <div className="mb-3 rounded-xl px-4 py-2.5 text-center text-xs" style={{ background: '#1e1b4b' }}>
-            <span style={{ color: '#cbd5e1' }}>Betting window open</span>
+            <span style={{ color: '#cbd5e1' }}>{t('admin.live.bettingWindowOpen')}</span>
             {remainingSeconds != null && (
-              <span style={{ color: '#fde68a' }}> · {remainingSeconds}s remaining</span>
+              <span style={{ color: '#fde68a' }}>{t('admin.live.remainingSeconds', { n: remainingSeconds })}</span>
             )}
           </div>
         ) : (
@@ -1568,7 +1594,7 @@ function ResultEntryModal({
               {[1, 2, 3].map(idx => (
                 <DiceSlot
                   key={idx}
-                  label={`Dice ${idx}`}
+                  label={t('admin.live.diceLabel', { n: idx })}
                   value={dice[idx - 1] ?? ''}
                   onChange={s => pickDie(idx as 1 | 2 | 3, s)}
                 />
@@ -1577,7 +1603,7 @@ function ResultEntryModal({
 
             {allPicked && (
               <div className="mt-3 text-center text-xs" style={{ color: '#a5b4fc' }}>
-                Sum: <span className="font-bold" style={{ color: '#fde68a' }}>{liveSum}</span>
+                {t('admin.live.sumInline')} <span className="font-bold" style={{ color: '#fde68a' }}>{liveSum}</span>
               </div>
             )}
 
@@ -1594,10 +1620,10 @@ function ResultEntryModal({
                 disabled={!allPicked || submitting}
                 className="inline-flex items-center gap-1 rounded-md px-3 py-1.5 text-[10px] font-bold  disabled:opacity-30"
                 style={{ background: '#14532d', color: '#fff', border: '1px solid #4ade80' }}
-                title={allPicked ? 'Settle the round and credit winners' : 'Pick all 3 dice first'}
+                title={allPicked ? t('admin.live.settleTitleReady') : t('admin.live.settleTitleNotReady')}
               >
                 {submitting ? <Loader size={10} className="animate-spin" /> : <Check size={10} />}
-                SUMMARY
+                {t('admin.live.summaryBtn')}
               </button>
             </div>
           </>
@@ -1655,6 +1681,7 @@ function LiveStreamPanel({
   schedule: { start: string | null; end: string | null; notice: string | null }
   loading: boolean
 }) {
+  const t = useT()
   const [showScheduleModal, setShowScheduleModal] = useState(false)
 
   // Live countdown for the active round's betting window.
@@ -1677,7 +1704,7 @@ function LiveStreamPanel({
   return (
     <div className="rounded-xl p-4" style={{ background: '#0f172a', border: '1px solid #1e1b4b' }}>
       <div className="mb-2 flex items-center justify-between gap-2">
-        <span className="text-[10px] font-bold shrink-0" style={{ color: '#a5b4fc' }}>LIVE STREAM</span>
+        <span className="text-[10px] font-bold shrink-0" style={{ color: '#a5b4fc' }}>{t('admin.live.liveStreamTitle')}</span>
         <div className="flex flex-wrap items-center justify-end gap-2">
           {round && remainingSeconds != null && (
             <span
@@ -1688,7 +1715,7 @@ function LiveStreamPanel({
                 border: `1px solid ${bettingExpired ? '#fb923c' : remainingSeconds <= 10 ? '#fca5a5' : '#4ade80'}`,
               }}
             >
-              {bettingExpired ? '🔒 BETTING CLOSED' : `⏱ ${remainingSeconds}s`}
+              {bettingExpired ? t('admin.live.bettingClosed') : `⏱ ${remainingSeconds}s`}
             </span>
           )}
           {round && <StatusPill status={round.status} />}
@@ -1702,12 +1729,12 @@ function LiveStreamPanel({
                 <button
                   type="submit"
                   disabled={loading || !liveStreamUrl}
-                  title={liveStreamUrl ? 'Stop the live stream for customers' : 'No live stream is currently active'}
+                  title={liveStreamUrl ? t('admin.live.endLiveTitleActive') : t('admin.live.endLiveTitleInactive')}
                   className="inline-flex items-center gap-1 rounded-md px-3 py-1 text-[10px] font-bold transition-opacity disabled:opacity-30"
                   style={{ background: 'linear-gradient(135deg,#7f1d1d,#450a0a)', color: '#fca5a5', border: '1px solid #ef4444' }}
                 >
                   {loading ? <Loader size={10} className="animate-spin" /> : <Square size={10} />}
-                  END LIVE
+                  {t('admin.live.endLive')}
                 </button>
               </Form>
               <button
@@ -1721,12 +1748,12 @@ function LiveStreamPanel({
                 }}
               >
                 <CalendarClock size={10} />
-                {hasSchedule ? 'SCHEDULE ✓' : 'SCHEDULE'}
+                {hasSchedule ? t('admin.live.scheduleSet') : t('admin.live.schedule')}
               </button>
               {!liveStreamUrl && (
                 <span className="rounded-full px-2.5 py-0.5 text-[10px] font-bold"
                   style={{ background: 'rgba(76,29,149,0.4)', color: '#c4b5fd', border: '1px solid #6d28d9' }}>
-                  NO ACTIVE ROUND
+                  {t('admin.live.noActiveRound')}
                 </span>
               )}
             </>
@@ -1743,7 +1770,7 @@ function LiveStreamPanel({
           <input
             name="streamUrl"
             defaultValue={round.streamUrl ?? ''}
-            placeholder="Stream URL (YouTube, MP4, HLS, …)"
+            placeholder={t('admin.live.streamUrlPlaceholder')}
             className="min-w-0 flex-1 rounded-lg px-3 py-1.5 text-xs outline-none"
             style={{ background: '#1e1b4b', color: '#fde68a', border: '1px solid #4338ca' }}
           />
@@ -1753,7 +1780,7 @@ function LiveStreamPanel({
             className="rounded-md px-3 py-1.5 text-[10px] font-bold disabled:opacity-50"
             style={{ background: '#4338ca', color: '#fff', border: '1px solid #818cf8' }}
           >
-            UPDATE STREAM
+            {t('admin.live.updateStream')}
           </button>
         </Form>
       )}
@@ -1773,6 +1800,7 @@ function LiveStreamPanel({
 // Shown in the stream area when END LIVE has been clicked (liveStreamUrl = null).
 // Mirrors what customers see: schedule + countdown, or an offline placeholder.
 function AdminOfflineCard({ schedule }: { schedule: { start: string | null; end: string | null; notice: string | null } }) {
+  const t = useT()
   const [now, setNow] = useState(() => Date.now())
   useEffect(() => {
     const id = setInterval(() => setNow(Date.now()), 1000)
@@ -1784,8 +1812,8 @@ function AdminOfflineCard({ schedule }: { schedule: { start: string | null; end:
       <div className="flex aspect-video flex-col items-center justify-center gap-3 rounded-lg"
         style={{ background: '#0a0014', border: '1px dashed #4338ca' }}>
         <span style={{ fontSize: 40 }}>📴</span>
-        <p className="text-xs font-semibold" style={{ color: '#6d28d9' }}>Live ended — no schedule set</p>
-        <p className="text-[10px]" style={{ color: '#475569' }}>Customers see an offline screen. Use SCHEDULE to set the next broadcast time.</p>
+        <p className="text-xs font-semibold" style={{ color: '#6d28d9' }}>{t('admin.live.liveEndedNoSchedule')}</p>
+        <p className="text-[10px]" style={{ color: '#475569' }}>{t('admin.live.offlineHint')}</p>
       </div>
     )
   }
@@ -1799,7 +1827,7 @@ function AdminOfflineCard({ schedule }: { schedule: { start: string | null; end:
   const hours = Math.floor((totalSec % 86400) / 3600)
   const mins  = Math.floor((totalSec % 3600) / 60)
   const secs  = totalSec % 60
-  const units = [{ l: 'Days', v: days }, { l: 'Hrs', v: hours }, { l: 'Min', v: mins }, { l: 'Sec', v: secs }]
+  const units = [{ l: t('admin.live.unit.days'), v: days }, { l: t('admin.live.unit.hours'), v: hours }, { l: t('admin.live.unit.mins'), v: mins }, { l: t('admin.live.unit.secs'), v: secs }]
 
   const isPast    = endMs !== null && now > endMs
   const isLive    = diffMs <= 0 && !isPast
@@ -1810,7 +1838,7 @@ function AdminOfflineCard({ schedule }: { schedule: { start: string | null; end:
       <span style={{ fontSize: 36 }}>{isPast ? '📴' : isLive ? '🔴' : '📅'}</span>
       <div className="text-center">
         <p className="text-xs font-bold" style={{ color: '#fde68a' }}>
-          {isPast ? 'Broadcast ended' : isLive ? 'Broadcast window — start the round!' : 'Next live broadcast'}
+          {isPast ? t('admin.live.broadcastEnded') : isLive ? t('admin.live.broadcastWindow') : t('admin.live.nextBroadcast')}
         </p>
         <p className="mt-0.5 text-[10px]" style={{ color: '#818cf8' }}>
           {fmtGMT7(schedule.start!)}{schedule.end ? ` — ${fmtGMT7(schedule.end, { hour: '2-digit', minute: '2-digit', hour12: false })}` : ''} (GMT+7)
@@ -1832,7 +1860,7 @@ function AdminOfflineCard({ schedule }: { schedule: { start: string | null; end:
           ))}
         </div>
       )}
-      <p className="text-[10px]" style={{ color: '#475569' }}>Customers see this countdown. Start a round to go live.</p>
+      <p className="text-[10px]" style={{ color: '#475569' }}>{t('admin.live.countdownHint')}</p>
     </div>
   )
 }
@@ -1846,6 +1874,7 @@ function ScheduleModal({
   loading: boolean
   onClose: () => void
 }) {
+  const t = useT()
   const hasSchedule = !!schedule.start
   return (
     <div
@@ -1860,7 +1889,7 @@ function ScheduleModal({
       >
         <div className="mb-4 flex items-center justify-between">
           <span className="inline-flex items-center gap-2 text-sm font-bold" style={{ color: '#a5b4fc' }}>
-            <CalendarClock size={14} /> NEXT LIVE SCHEDULE
+            <CalendarClock size={14} /> {t('admin.live.nextLiveSchedule')}
           </span>
           <button
             type="button"
@@ -1875,11 +1904,11 @@ function ScheduleModal({
         {/* Current schedule */}
         {hasSchedule && (
           <div className="mb-4 rounded-lg px-3 py-2.5" style={{ background: '#1e1b4b', border: '1px solid #312e81' }}>
-            <div className="text-[10px] font-bold mb-1" style={{ color: '#818cf8' }}>CURRENT</div>
+            <div className="text-[10px] font-bold mb-1" style={{ color: '#818cf8' }}>{t('admin.live.current')}</div>
             <div className="text-xs font-semibold" style={{ color: '#fde68a' }}>
               {fmtGMT7(schedule.start!)} — {schedule.end ? fmtGMT7(schedule.end, { hour: '2-digit', minute: '2-digit', hour12: false }) : '?'}
             </div>
-            <div className="text-[10px] mt-0.5" style={{ color: '#818cf8' }}>GMT+7 (Laos)</div>
+            <div className="text-[10px] mt-0.5" style={{ color: '#818cf8' }}>{t('admin.live.gmt7Laos')}</div>
           </div>
         )}
 
@@ -1888,7 +1917,7 @@ function ScheduleModal({
           <input type="hidden" name="op" value="setSchedule" />
 
           <div className="flex flex-col gap-1">
-            <label className="text-[10px] font-semibold" style={{ color: '#a5b4fc' }}>DATE (GMT+7)</label>
+            <label className="text-[10px] font-semibold" style={{ color: '#a5b4fc' }}>{t('admin.live.dateLabel')}</label>
             <input
               name="scheduleDate"
               type="date"
@@ -1901,7 +1930,7 @@ function ScheduleModal({
 
           <div className="grid grid-cols-2 gap-2">
             <div className="flex flex-col gap-1">
-              <label className="text-[10px] font-semibold" style={{ color: '#a5b4fc' }}>START (GMT+7)</label>
+              <label className="text-[10px] font-semibold" style={{ color: '#a5b4fc' }}>{t('admin.live.startLabel')}</label>
               <input
                 name="scheduleStart"
                 type="time"
@@ -1912,7 +1941,7 @@ function ScheduleModal({
               />
             </div>
             <div className="flex flex-col gap-1">
-              <label className="text-[10px] font-semibold" style={{ color: '#a5b4fc' }}>END (GMT+7)</label>
+              <label className="text-[10px] font-semibold" style={{ color: '#a5b4fc' }}>{t('admin.live.endLabel')}</label>
               <input
                 name="scheduleEnd"
                 type="time"
@@ -1925,11 +1954,11 @@ function ScheduleModal({
           </div>
 
           <div className="flex flex-col gap-1">
-            <label className="text-[10px] font-semibold" style={{ color: '#a5b4fc' }}>NOTICE (optional)</label>
+            <label className="text-[10px] font-semibold" style={{ color: '#a5b4fc' }}>{t('admin.live.noticeLabel')}</label>
             <textarea
               name="scheduleNotice"
               defaultValue={schedule.notice ?? ''}
-              placeholder="e.g. Special event tonight! Double prizes."
+              placeholder={t('admin.live.noticePlaceholder')}
               rows={2}
               className="rounded-lg px-3 py-2 text-xs outline-none resize-none"
               style={{ background: '#1e1b4b', color: '#fde68a', border: '1px solid #4338ca' }}
@@ -1946,7 +1975,7 @@ function ScheduleModal({
                   className="w-full rounded-xl py-2.5 text-xs font-bold disabled:opacity-50"
                   style={{ background: 'rgba(127,29,29,0.4)', color: '#fca5a5', border: '1px solid rgba(239,68,68,0.4)' }}
                 >
-                  CLEAR
+                  {t('admin.live.clear')}
                 </button>
               </Form>
             )}
@@ -1958,7 +1987,7 @@ function ScheduleModal({
               style={{ background: 'linear-gradient(135deg,#4338ca,#312e81)', color: '#fff', border: '1px solid #818cf8' }}
             >
               {loading ? <Loader size={12} className="animate-spin" /> : <Check size={12} />}
-              SAVE
+              {t('admin.live.save')}
             </button>
           </div>
         </Form>
@@ -1968,15 +1997,16 @@ function ScheduleModal({
 }
 
 function StartRoundPanel({ defaultStreamUrl, defaultSeconds, loading }: { defaultStreamUrl: string; defaultSeconds: number; loading: boolean }) {
+  const t = useT()
   return (
     <div className="rounded-xl p-4" style={{ background: '#0f172a', border: '1px solid #1e1b4b' }}>
       <div className="mb-3 flex items-center gap-2 text-[10px] font-bold " style={{ color: '#a5b4fc' }}>
-        <Radio size={12} /> START NEW LIVE ROUND
+        <Radio size={12} /> {t('admin.live.startNewLiveRound')}
       </div>
       <Form method="post" className="flex flex-col gap-3">
         <input type="hidden" name="op" value="startRound" />
 
-        <label className="text-[10px] font-semibold " style={{ color: '#a5b4fc' }}>STREAM URL</label>
+        <label className="text-[10px] font-semibold " style={{ color: '#a5b4fc' }}>{t('admin.live.streamUrlLabel')}</label>
         <input
           name="streamUrl"
           defaultValue={defaultStreamUrl}
@@ -1985,7 +2015,7 @@ function StartRoundPanel({ defaultStreamUrl, defaultSeconds, loading }: { defaul
           style={{ background: '#1e1b4b', color: '#fde68a', border: '1px solid #4338ca' }}
         />
 
-        <label className="text-[10px] font-semibold " style={{ color: '#a5b4fc' }}>BETTING WINDOW (SECONDS)</label>
+        <label className="text-[10px] font-semibold " style={{ color: '#a5b4fc' }}>{t('admin.live.bettingWindowLabel')}</label>
         <input
           name="seconds"
           type="number"
@@ -2003,7 +2033,7 @@ function StartRoundPanel({ defaultStreamUrl, defaultSeconds, loading }: { defaul
           style={{ background: 'linear-gradient(135deg, #16a34a, #15803d)', color: '#fff', border: '1.5px solid #4ade80' }}
         >
           {loading ? <Loader size={14} className="animate-spin" /> : <PlayCircle size={14} />}
-          START ROUND
+          {t('admin.live.startRound')}
         </button>
       </Form>
     </div>
@@ -2019,6 +2049,7 @@ function DiceSlot({
   value: DiceSymbol | ''
   onChange: (v: DiceSymbol) => void
 }) {
+  const t = useT()
   return (
     <div
       className="flex flex-col gap-2 rounded-lg p-2"
@@ -2089,6 +2120,7 @@ function HlsVideo({ src, className }: { src: string; className?: string }) {
 }
 
 function StreamEmbed({ url }: { url: string | null }) {
+  const t = useT()
   const containerRef = useRef<HTMLDivElement>(null)
   // Facebook's video plugin renders at a fixed pixel width — we measure the
   // container once after mount and pass it as the `width` URL param so the
@@ -2108,7 +2140,7 @@ function StreamEmbed({ url }: { url: string | null }) {
         className="flex aspect-video items-center justify-center rounded-lg text-xs"
         style={{ background: '#1e1b4b', color: '#818cf8', border: '1px dashed #4338ca' }}
       >
-        No stream URL set yet.
+        {t('admin.live.noStreamUrl')}
       </div>
     )
   }
@@ -2143,7 +2175,7 @@ function StreamEmbed({ url }: { url: string | null }) {
       {isCf ? (
         <iframe
           src={cfSrc(url)}
-          title="LIVE stream"
+          title={t('admin.live.liveStreamTitle')}
           allow="accelerometer; gyroscope; autoplay; encrypted-media; picture-in-picture"
           allowFullScreen
           className="aspect-video w-full bg-black"
@@ -2156,7 +2188,7 @@ function StreamEmbed({ url }: { url: string | null }) {
       ) : (
         <iframe
           src={embedUrl}
-          title="LIVE stream"
+          title={t('admin.live.liveStreamTitle')}
           allow="autoplay; encrypted-media; picture-in-picture"
           allowFullScreen
           className={`${isFb ? 'h-full w-full' : 'aspect-video w-full'} bg-black`}
@@ -2168,6 +2200,7 @@ function StreamEmbed({ url }: { url: string | null }) {
 }
 
 function HistoryRow({ r }: { r: HistoryRound }) {
+  const t = useT()
   const dice = [r.dice1, r.dice2, r.dice3].filter(Boolean) as DiceSymbol[]
   return (
     <div
@@ -2178,11 +2211,11 @@ function HistoryRow({ r }: { r: HistoryRound }) {
         <div className="flex flex-wrap items-center gap-2">
           <StatusPill status={r.status} />
           <span className="text-xs" style={{ color: '#818cf8' }}>{new Date(r.bettingOpensAt).toLocaleString()}</span>
-          <span className="text-xs" style={{ color: '#a5b4fc' }}>· {r.bets} bets</span>
+          <span className="text-xs" style={{ color: '#a5b4fc' }}>· {t('admin.live.betsShort', { n: r.bets })}</span>
           <span className="text-[10px]" style={{ color: '#475569' }}>#{r.id.slice(-6)}</span>
         </div>
         <div className="mt-0.5 text-xs" style={{ color: '#e9d5ff' }}>
-          Host: {r.host ?? <span style={{ color: '#64748b' }}>—</span>}
+          {t('admin.live.host')} {r.host ?? <span style={{ color: '#64748b' }}>—</span>}
         </div>
       </div>
       {dice.length > 0 ? (
@@ -2199,11 +2232,11 @@ function HistoryRow({ r }: { r: HistoryRound }) {
             ))}
           </div>
           <span className="rounded-md px-2 py-0.5 text-[10px] font-bold " style={{ background: '#1e1b4b', color: '#fde68a', border: '1px solid #4338ca' }}>
-            SUM {r.diceSum ?? '—'}
+            {t('admin.live.settled.sum', { n: r.diceSum ?? '—' })}
           </span>
         </div>
       ) : (
-        <span className="text-[10px]" style={{ color: '#64748b' }}>no result</span>
+        <span className="text-[10px]" style={{ color: '#64748b' }}>{t('admin.live.noResult')}</span>
       )}
     </div>
   )

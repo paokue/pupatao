@@ -5,6 +5,8 @@ import { ArrowDownCircle, ArrowUpCircle, Loader, MoreVertical, Search, Wallet, X
 import type { Route } from './+types/admin.wallet'
 import { requireRole } from '~/lib/admin-auth.server'
 import { prisma } from '~/lib/prisma.server'
+import { useT } from '~/lib/use-t'
+import type { StringKey } from '~/lib/i18n'
 
 const PAGE_SIZES = [10, 30, 50, 100, 200, 500] as const
 
@@ -147,20 +149,27 @@ function formatAmount(n: number): string {
   return n.toString()
 }
 
-const TYPE_LABEL: Record<string, string> = {
-  DEPOSIT: 'Deposit',
-  WIN: 'Earnings (Win)',
-  TRANSFER_IN: 'Transfer received',
-  PROMO_BONUS: 'Promo bonus',
-  REFERRAL_BONUS: 'Referral bonus',
-  WITHDRAW: 'Withdraw',
-  LOSS: 'Loss (lost bets)',
-  TRANSFER_OUT: 'Transfer sent',
-  DEMO_RESET: 'Demo reset',
-  ADJUSTMENT: 'Adjustment',
+// Maps a transaction type to its translation key; resolved at render via t().
+const TYPE_LABEL_KEYS: Record<string, StringKey> = {
+  DEPOSIT: 'admin.wallet.type.deposit',
+  WIN: 'admin.wallet.type.win',
+  TRANSFER_IN: 'admin.wallet.type.transferIn',
+  PROMO_BONUS: 'admin.wallet.type.promoBonus',
+  REFERRAL_BONUS: 'admin.wallet.type.referralBonus',
+  WITHDRAW: 'admin.wallet.type.withdraw',
+  LOSS: 'admin.wallet.type.loss',
+  TRANSFER_OUT: 'admin.wallet.type.transferOut',
+  DEMO_RESET: 'admin.wallet.type.demoReset',
+  ADJUSTMENT: 'admin.wallet.type.adjustment',
+}
+
+function typeLabel(t: ReturnType<typeof useT>, type: string): string {
+  const k = TYPE_LABEL_KEYS[type]
+  return k ? t(k) : type
 }
 
 export default function AdminWallet() {
+  const t = useT()
   const data = useLoaderData<typeof loader>()
   const [params] = useSearchParams()
   const navigation = useNavigation()
@@ -186,8 +195,8 @@ export default function AdminWallet() {
   return (
     <div className="flex flex-col gap-4">
       <div className="flex items-center justify-between">
-        <h1 className="text-xl font-bold" style={{ color: '#fde68a' }}>Customer Wallets</h1>
-        <span className="text-xs" style={{ color: '#a5b4fc' }}>{data.total.toLocaleString()} customers</span>
+        <h1 className="text-xl font-bold" style={{ color: '#fde68a' }}>{t('admin.wallet.title')}</h1>
+        <span className="text-xs" style={{ color: '#a5b4fc' }}>{t('admin.wallet.customerCount', { n: data.total.toLocaleString() })}</span>
       </div>
 
       <div className="flex items-center gap-2">
@@ -197,7 +206,7 @@ export default function AdminWallet() {
           className="rounded-lg px-2 py-2 text-xs font-bold outline-none"
           style={{ background: '#0f172a', color: '#a5b4fc', border: '1.5px solid #4338ca' }}
         >
-          {PAGE_SIZES.map(s => <option key={s} value={s}>{s} / page</option>)}
+          {PAGE_SIZES.map(s => <option key={s} value={s}>{t('admin.wallet.pageSizeOption', { n: s })}</option>)}
         </select>
         <Form method="get" className="flex flex-1 items-center gap-2">
           <input type="hidden" name="page" value="1" />
@@ -206,7 +215,7 @@ export default function AdminWallet() {
             <input
               name="q"
               defaultValue={data.q}
-              placeholder="Search by phone or first name…"
+              placeholder={t('admin.wallet.searchPlaceholder')}
               className="w-full rounded-lg py-2 pl-9 pr-3 text-sm outline-none"
               style={{ background: '#0f172a', color: '#fde68a', border: '1.5px solid #4338ca' }}
             />
@@ -216,7 +225,7 @@ export default function AdminWallet() {
             className="rounded-lg px-3 py-2 text-xs font-bold"
             style={{ background: '#4338ca', color: '#fff', border: '1.5px solid #818cf8' }}
           >
-            {loading ? <Loader size={14} className="animate-spin" /> : 'SEARCH'}
+            {loading ? <Loader size={14} className="animate-spin" /> : t('admin.wallet.search')}
           </button>
         </Form>
       </div>
@@ -238,14 +247,14 @@ export default function AdminWallet() {
           <thead style={{ color: '#a5b4fc' }}>
             <tr className="text-[10px] font-bold" style={{ background: '#1e1b4b' }}>
               <th className="w-8 px-3 py-2 text-right" style={{ color: '#64748b' }}>#</th>
-              <th className="px-3 py-2">PHONE</th>
-              <th className="px-3 py-2">NAME</th>
-              <th className="px-3 py-2 text-right">TOTAL DEPOSIT</th>
-              <th className="px-3 py-2 text-right">TOTAL WITHDRAW</th>
-              <th className="px-3 py-2 text-right">AVAILABLE</th>
+              <th className="px-3 py-2">{t('admin.wallet.col.phone')}</th>
+              <th className="px-3 py-2">{t('admin.wallet.col.name')}</th>
+              <th className="px-3 py-2 text-right">{t('admin.wallet.col.totalDeposit')}</th>
+              <th className="px-3 py-2 text-right">{t('admin.wallet.col.totalWithdraw')}</th>
+              <th className="px-3 py-2 text-right">{t('admin.wallet.col.available')}</th>
               <th className="px-3 py-2 text-right">DEMO</th>
               <th className="px-3 py-2 text-right">PROMO</th>
-              <th className="px-3 py-2">STATUS</th>
+              <th className="px-3 py-2">{t('admin.wallet.col.status')}</th>
               <th className="px-3 py-2"></th>
             </tr>
           </thead>
@@ -253,7 +262,7 @@ export default function AdminWallet() {
             {data.users.length === 0 && (
               <tr>
                 <td colSpan={10} className="px-3 py-6 text-center text-xs" style={{ color: '#818cf8' }}>
-                  No customers match.
+                  {t('admin.wallet.noCustomersMatch')}
                 </td>
               </tr>
             )}
@@ -296,17 +305,23 @@ export default function AdminWallet() {
               disabled={data.page <= 1 || loading}
               className="rounded-md px-3 py-1.5 text-xs font-bold disabled:opacity-30"
               style={{ background: '#1e1b4b', color: '#a5b4fc', border: '1px solid #4338ca' }}>
-              ← Prev
+              {t('admin.wallet.pagination.prev')}
             </button>
             <button type="button" onClick={() => gotoPage(data.page + 1)}
               disabled={data.page >= totalPages || loading}
               className="rounded-md px-3 py-1.5 text-xs font-bold disabled:opacity-30"
               style={{ background: '#1e1b4b', color: '#a5b4fc', border: '1px solid #4338ca' }}>
-              Next →
+              {t('admin.wallet.pagination.next')}
             </button>
           </div>
           <span className="text-xs tabular-nums" style={{ color: '#a5b4fc' }}>
-            Showing {Math.min((data.page - 1) * data.pageSize + 1, data.total)}–{Math.min(data.page * data.pageSize, data.total).toLocaleString()} of {data.total.toLocaleString()} customers · Page {data.page}/{totalPages}
+            {t('admin.wallet.pagination.summary', {
+              from: Math.min((data.page - 1) * data.pageSize + 1, data.total),
+              to: Math.min(data.page * data.pageSize, data.total).toLocaleString(),
+              total: data.total.toLocaleString(),
+              page: data.page,
+              totalPages,
+            })}
           </span>
         </div>
       )}
@@ -334,6 +349,7 @@ function WalletModal({
   user: Row
   onClose: () => void
 }) {
+  const t = useT()
   const [kind, setKind] = useState<'detail' | 'summary'>('detail')
   const detailFetcher = useFetcher<DetailData | { error: string }>()
   const summaryFetcher = useFetcher<SummaryData | { error: string }>()
@@ -358,7 +374,7 @@ function WalletModal({
     return () => window.removeEventListener('keydown', onKey)
   }, [onClose])
 
-  const walletLabel: Record<string, string> = { REAL: 'Real Account', DEMO: 'Demo Account', PROMO: 'Promo Account' }
+  const walletLabel: Record<string, string> = { REAL: t('admin.wallet.account.real'), DEMO: t('admin.wallet.account.demo'), PROMO: t('admin.wallet.account.promo') }
   const walletColor: Record<string, string> = { REAL: '#fde68a', DEMO: '#a5b4fc', PROMO: '#fcd34d' }
 
   return (
@@ -398,7 +414,7 @@ function WalletModal({
                 className="px-2.5 py-1 transition-colors"
                 style={{ background: kind === 'detail' ? '#4338ca' : 'transparent', color: kind === 'detail' ? '#fff' : '#a5b4fc' }}
               >
-                DETAIL
+                {t('admin.wallet.modal.detailTab')}
               </button>
               <button
                 type="button"
@@ -406,7 +422,7 @@ function WalletModal({
                 className="px-2.5 py-1 transition-colors"
                 style={{ background: kind === 'summary' ? '#4338ca' : 'transparent', color: kind === 'summary' ? '#fff' : '#a5b4fc' }}
               >
-                SUMMARY
+                {t('admin.wallet.modal.summaryTab')}
               </button>
             </div>
             <button
@@ -414,7 +430,7 @@ function WalletModal({
               type="button"
               className="flex h-8 w-8 items-center justify-center rounded-full transition-opacity hover:opacity-80"
               style={{ background: '#1e1b4b', color: '#a5b4fc', border: '1px solid #4338ca' }}
-              aria-label="Close"
+              aria-label={t('admin.wallet.modal.close')}
             >
               <X size={14} />
             </button>
@@ -442,6 +458,7 @@ function WalletModal({
 }
 
 function DetailView({ data }: { data: DetailData }) {
+  const t = useT()
   const walletColor: Record<string, string> = { REAL: '#fde68a', DEMO: '#a5b4fc', PROMO: '#fcd34d' }
   const color = walletColor[data.wallet.type] ?? '#e9d5ff'
   return (
@@ -452,7 +469,7 @@ function DetailView({ data }: { data: DetailData }) {
         style={{ background: 'linear-gradient(135deg, #1e1b4b, #0f172a)', border: '1px solid #4338ca' }}
       >
         <div className="text-[10px] font-bold tracking-wider" style={{ color: '#a5b4fc' }}>
-          {data.wallet.type} BALANCE
+          {t('admin.wallet.detail.balance', { type: data.wallet.type })}
         </div>
         <div className="mt-1 text-xl font-bold md:text-3xl" style={{ color }}>
           {data.wallet.balance.toLocaleString()} ₭
@@ -462,9 +479,9 @@ function DetailView({ data }: { data: DetailData }) {
       {/* Recent transactions */}
       <div>
         <div className="mb-2 flex items-end justify-between gap-3">
-          <div className="text-[10px] font-bold" style={{ color: '#a5b4fc' }}>RECENT TRANSACTIONS</div>
+          <div className="text-[10px] font-bold" style={{ color: '#a5b4fc' }}>{t('admin.wallet.detail.recentTransactions')}</div>
           <div className="text-right">
-            <div className="text-[9px]" style={{ color: '#64748b' }}>BALANCE AFTER</div>
+            <div className="text-[9px]" style={{ color: '#64748b' }}>{t('admin.wallet.detail.balanceAfter')}</div>
             <div className="text-xs font-bold" style={{ color }}>
               {(data.recent[0]?.balanceAfter ?? data.wallet.balance).toLocaleString()} ₭
             </div>
@@ -474,32 +491,32 @@ function DetailView({ data }: { data: DetailData }) {
           <table className="w-full min-w-[480px] text-left text-xs">
             <thead style={{ color: '#a5b4fc' }}>
               <tr style={{ background: '#1e1b4b' }}>
-                <th className="px-3 py-2">WHEN</th>
-                <th className="px-3 py-2">TYPE</th>
-                <th className="px-3 py-2 text-right">AMOUNT</th>
-                <th className="px-3 py-2">STATUS</th>
+                <th className="px-3 py-2">{t('admin.wallet.detail.col.when')}</th>
+                <th className="px-3 py-2">{t('admin.wallet.detail.col.type')}</th>
+                <th className="px-3 py-2 text-right">{t('admin.wallet.detail.col.amount')}</th>
+                <th className="px-3 py-2">{t('admin.wallet.col.status')}</th>
               </tr>
             </thead>
             <tbody>
               {data.recent.length === 0 && (
                 <tr>
                   <td colSpan={4} className="px-3 py-3 text-center" style={{ color: '#64748b' }}>
-                    No transactions yet.
+                    {t('admin.wallet.detail.noTransactions')}
                   </td>
                 </tr>
               )}
-              {data.recent.map(t => {
-                const isOut = t.type === 'WITHDRAW' || t.type === 'LOSS' || t.type === 'TRANSFER_OUT'
+              {data.recent.map(tx => {
+                const isOut = tx.type === 'WITHDRAW' || tx.type === 'LOSS' || tx.type === 'TRANSFER_OUT'
                 return (
-                  <tr key={t.id} style={{ borderTop: '1px solid #1e1b4b', color: '#e9d5ff' }}>
+                  <tr key={tx.id} style={{ borderTop: '1px solid #1e1b4b', color: '#e9d5ff' }}>
                     <td className="px-3 py-2 whitespace-nowrap" style={{ color: '#a5b4fc' }}>
-                      {new Date(t.createdAt).toLocaleString()}
+                      {new Date(tx.createdAt).toLocaleString()}
                     </td>
-                    <td className="px-3 py-2">{TYPE_LABEL[t.type] ?? t.type}</td>
+                    <td className="px-3 py-2">{typeLabel(t, tx.type)}</td>
                     <td className="px-3 py-2 text-right" style={{ color: isOut ? '#f87171' : '#4ade80' }}>
-                      {isOut ? '−' : '+'}{t.amount.toLocaleString()}
+                      {isOut ? '−' : '+'}{tx.amount.toLocaleString()}
                     </td>
-                    <td className="px-3 py-2"><StatusPill status={t.status} /></td>
+                    <td className="px-3 py-2"><StatusPill status={tx.status} /></td>
                   </tr>
                 )
               })}
@@ -512,7 +529,7 @@ function DetailView({ data }: { data: DetailData }) {
             className="rounded-md px-4 py-1.5 text-xs font-bold transition-opacity hover:opacity-80"
             style={{ background: '#1e1b4b', color: '#a5b4fc', border: '1px solid #4338ca' }}
           >
-            View more →
+{t('admin.wallet.detail.viewMore')}
           </a>
         </div>
       </div>
@@ -521,6 +538,7 @@ function DetailView({ data }: { data: DetailData }) {
 }
 
 function SummaryView({ data }: { data: SummaryData }) {
+  const t = useT()
   const walletColor: Record<string, string> = { REAL: '#fde68a', DEMO: '#a5b4fc', PROMO: '#fcd34d' }
   const color = walletColor[data.wallet.type] ?? '#e9d5ff'
   return (
@@ -529,14 +547,14 @@ function SummaryView({ data }: { data: SummaryData }) {
       <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
         <LedgerColumn
           tone="in"
-          title="Deposits & Earnings"
+          title={t('admin.wallet.summary.depositsEarnings')}
           icon={<ArrowDownCircle size={14} />}
           rows={data.incoming}
           total={data.incomingTotal}
         />
         <LedgerColumn
           tone="out"
-          title="Withdrawals & Losses"
+          title={t('admin.wallet.summary.withdrawalsLosses')}
           icon={<ArrowUpCircle size={14} />}
           rows={data.outgoing}
           total={data.outgoingTotal}
@@ -549,13 +567,13 @@ function SummaryView({ data }: { data: SummaryData }) {
         style={{ background: 'linear-gradient(135deg, #1e1b4b, #0f172a)', border: '1px solid #4338ca' }}
       >
         <div className="text-[10px] font-bold tracking-wider" style={{ color: '#a5b4fc' }}>
-          CALCULATED AVAILABLE (IN − OUT)
+          {t('admin.wallet.summary.calculatedAvailable')}
         </div>
         <div className="mt-1 text-xl font-bold md:text-3xl" style={{ color: '#fde68a' }}>
           {data.calculatedAvailable.toLocaleString()} ₭
         </div>
         <div className="mt-3 flex items-center justify-between text-xs">
-          <span style={{ color: '#64748b' }}>Current {data.wallet.type} balance</span>
+          <span style={{ color: '#64748b' }}>{t('admin.wallet.summary.currentBalance', { type: data.wallet.type })}</span>
           <span className="font-bold" style={{ color }}>{data.wallet.balance.toLocaleString()} ₭</span>
         </div>
       </div>
@@ -572,6 +590,7 @@ function LedgerColumn({
   rows: { type: string; total: number; count: number }[]
   total: number
 }) {
+  const t = useT()
   const accent = tone === 'in' ? '#4ade80' : '#f87171'
   return (
     <div className="rounded-xl" style={{ background: '#0f172a', border: '1px solid #1e1b4b' }}>
@@ -595,8 +614,8 @@ function LedgerColumn({
             style={{ borderTop: '1px solid #1e1b4b' }}
           >
             <div className="flex flex-col">
-              <span style={{ color: '#e9d5ff' }}>{TYPE_LABEL[r.type] ?? r.type}</span>
-              <span className="text-[10px]" style={{ color: '#64748b' }}>{r.count} {r.count === 1 ? 'entry' : 'entries'}</span>
+              <span style={{ color: '#e9d5ff' }}>{typeLabel(t, r.type)}</span>
+              <span className="text-[10px]" style={{ color: '#64748b' }}>{t('admin.wallet.summary.entryCount', { n: r.count, unit: t(r.count === 1 ? 'admin.wallet.summary.entryUnit.one' : 'admin.wallet.summary.entryUnit.many') })}</span>
             </div>
             <span style={{ color: r.total > 0 ? accent : '#64748b' }} className="font-semibold">
               {r.total.toLocaleString()}
@@ -629,6 +648,7 @@ function Field({ label, value }: { label: string; value: React.ReactNode }) {
 }
 
 function WalletCard({ u, onAction, rowNum }: { u: Row; onAction: (wallet: 'REAL' | 'DEMO' | 'PROMO') => void; rowNum: number }) {
+  const t = useT()
   return (
     <div className="rounded-xl p-3" style={{ background: '#0f172a', border: '1px solid #1e1b4b' }}>
       <div className="flex items-start justify-between gap-2">
@@ -644,8 +664,8 @@ function WalletCard({ u, onAction, rowNum }: { u: Row; onAction: (wallet: 'REAL'
         <StatusPill status={u.status} />
       </div>
       <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
-        <CardCell label="DEPOSIT"  value={u.totalDeposit}  color="#4ade80" latest={u.latestDeposit}  latestColor="#6ee7b7" latestPrefix="↓" />
-        <CardCell label="WITHDRAW" value={u.totalWithdraw} color="#f87171" latest={u.latestWithdraw} latestColor="#fca5a5" latestPrefix="↑" />
+        <CardCell label={t('admin.wallet.card.deposit')}  value={u.totalDeposit}  color="#4ade80" latest={u.latestDeposit}  latestColor="#6ee7b7" latestPrefix="↓" />
+        <CardCell label={t('admin.wallet.card.withdraw')} value={u.totalWithdraw} color="#f87171" latest={u.latestWithdraw} latestColor="#fca5a5" latestPrefix="↑" />
         <CardCell label="REAL"     value={u.real}          color="#fde68a" />
         <CardCell label="DEMO"     value={u.demo}          color="#a5b4fc" />
         <CardCell label="PROMO"    value={u.promo}         color="#fcd34d" />
@@ -685,6 +705,7 @@ function CardCell({
 // derived from the trigger's bounding rect; we close on scroll/resize rather
 // than tracking the rect, which keeps the implementation tiny.
 function ActionMenu({ onPick }: { onPick: (wallet: 'REAL' | 'DEMO' | 'PROMO') => void }) {
+  const t = useT()
   const [open, setOpen] = useState(false)
   const [pos, setPos] = useState<{ top: number; right: number } | null>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
@@ -731,7 +752,7 @@ function ActionMenu({ onPick }: { onPick: (wallet: 'REAL' | 'DEMO' | 'PROMO') =>
         onClick={() => setOpen(v => !v)}
         aria-haspopup="menu"
         aria-expanded={open}
-        aria-label="Open actions"
+        aria-label={t('admin.wallet.actionMenu.open')}
         className="flex h-8 w-8 items-center justify-center rounded-md transition-opacity hover:opacity-90"
         style={{ background: '#1e1b4b', color: '#a5b4fc', border: '1px solid #4338ca' }}
       >
@@ -748,9 +769,9 @@ function ActionMenu({ onPick }: { onPick: (wallet: 'REAL' | 'DEMO' | 'PROMO') =>
             boxShadow: '0 8px 30px rgba(0,0,0,0.5)',
           }}
         >
-          <MenuItem icon={<Wallet size={12} />} label="Real Account" color="#fde68a" onClick={() => pick('REAL')} />
-          <MenuItem icon={<Wallet size={12} />} label="Demo Account" color="#a5b4fc" onClick={() => pick('DEMO')} />
-          <MenuItem icon={<Wallet size={12} />} label="Promo Account" color="#fcd34d" onClick={() => pick('PROMO')} />
+          <MenuItem icon={<Wallet size={12} />} label={t('admin.wallet.account.real')} color="#fde68a" onClick={() => pick('REAL')} />
+          <MenuItem icon={<Wallet size={12} />} label={t('admin.wallet.account.demo')} color="#a5b4fc" onClick={() => pick('DEMO')} />
+          <MenuItem icon={<Wallet size={12} />} label={t('admin.wallet.account.promo')} color="#fcd34d" onClick={() => pick('PROMO')} />
         </div>,
         document.body,
       )}
@@ -776,9 +797,10 @@ function MenuItem({ icon, label, color, onClick }: { icon: React.ReactNode; labe
 }
 
 function Empty() {
+  const t = useT()
   return (
     <div className="rounded-xl p-6 text-center text-xs" style={{ background: '#0f172a', color: '#818cf8', border: '1px solid #1e1b4b' }}>
-      No customers match.
+      {t('admin.wallet.noCustomersMatch')}
     </div>
   )
 }

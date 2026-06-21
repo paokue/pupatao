@@ -8,6 +8,20 @@
 //
 // Locale is persisted in a cookie (`pupatao_locale`), read by the root loader,
 // and exposed through outlet context. Switching it POSTs to /api/locale.
+//
+// Admin-page strings live in per-page modules under ./i18n-admin/ (one file per
+// admin route, each owning its own `admin.<page>.*` key namespace) and are
+// spread into STRINGS below so admin shares the exact same t()/useT() machinery.
+
+import { ADMIN_SHELL_STRINGS } from "./i18n-admin/shell";
+import { ADMIN_LOGIN_STRINGS } from "./i18n-admin/login";
+import { ADMIN_CUSTOMERS_STRINGS } from "./i18n-admin/customers";
+import { ADMIN_TRANSACTIONS_STRINGS } from "./i18n-admin/transactions";
+import { ADMIN_WALLET_STRINGS } from "./i18n-admin/wallet";
+import { ADMIN_PLAY_HISTORY_STRINGS } from "./i18n-admin/play-history";
+import { ADMIN_COMPETITION_STRINGS } from "./i18n-admin/competition";
+import { ADMIN_FINANCIAL_STRINGS } from "./i18n-admin/financial";
+import { ADMIN_LIVE_STRINGS } from "./i18n-admin/live";
 
 export type Locale = "lo" | "en";
 export const DEFAULT_LOCALE: Locale = "lo";
@@ -31,6 +45,17 @@ export const LOCALE_FLAG: Record<Locale, string> = {
 // here. Each value is a record of { lo, en }; missing translations fall back
 // to the English value, then to the key itself.
 export const STRINGS = {
+  // ─── Admin pages (per-page modules under ./i18n-admin/) ──────────────
+  ...ADMIN_SHELL_STRINGS,
+  ...ADMIN_LOGIN_STRINGS,
+  ...ADMIN_CUSTOMERS_STRINGS,
+  ...ADMIN_TRANSACTIONS_STRINGS,
+  ...ADMIN_WALLET_STRINGS,
+  ...ADMIN_PLAY_HISTORY_STRINGS,
+  ...ADMIN_COMPETITION_STRINGS,
+  ...ADMIN_FINANCIAL_STRINGS,
+  ...ADMIN_LIVE_STRINGS,
+
   // ─── Common ──────────────────────────────────────────────────────────
   "common.cancel": { lo: "ຍົກເລີກ", en: "Cancel" },
   "common.save": { lo: "ບັນທຶກ", en: "Save" },

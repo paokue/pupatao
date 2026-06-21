@@ -6,6 +6,7 @@ import { requireAdmin } from '~/lib/admin-auth.server'
 import type { AdminOutletContext } from './admin'
 import { prisma } from '~/lib/prisma.server'
 import { getSleepMode, setSleepMode } from '~/lib/system-settings.server'
+import { useT } from '~/lib/use-t'
 
 export async function loader({ request }: Route.LoaderArgs) {
   await requireAdmin(request)
@@ -54,16 +55,17 @@ export async function action({ request }: Route.ActionArgs) {
 
   if (op === 'toggleSleepMode') {
     // Sleep mode is a nuclear option — SUPERADMIN only, even via direct POST
-    if (admin.role !== 'SUPERADMIN') return { error: 'Insufficient permissions' }
+    if (admin.role !== 'SUPERADMIN') return { error: 'admin.dashboard.errInsufficientPermissions' as const }
     const current = await getSleepMode()
     await setSleepMode(!current, admin.id)
     return { ok: true, sleepMode: !current }
   }
 
-  return { error: 'Unknown op' }
+  return { error: 'admin.dashboard.errUnknownOp' as const }
 }
 
 export default function AdminDashboard() {
+  const t = useT()
   const d = useLoaderData<typeof loader>()
   const { adminRole } = useOutletContext<AdminOutletContext>()
   const isSuperAdmin = adminRole === 'SUPERADMIN'
@@ -82,21 +84,21 @@ export default function AdminDashboard() {
 
   return (
     <div className="flex flex-col gap-4">
-      <h1 className="text-xl font-bold" style={{ color: '#fde68a' }}>Dashboard</h1>
+      <h1 className="text-xl font-bold" style={{ color: '#fde68a' }}>{t('admin.dashboard.title')}</h1>
 
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <StatCard label="Customers" value={`${d.activeCustomers}/${d.customers}`}
-          hint="active / total" to="/admin/customers" Icon={Users} />
-        <StatCard label="Pending deposits" value={d.pendingDeposits.toString()}
-          hint={`${d.depositSumPending.toLocaleString()} ₭ awaiting`}
+        <StatCard label={t('admin.dashboard.statCustomers')} value={`${d.activeCustomers}/${d.customers}`}
+          hint={t('admin.dashboard.statCustomersHint')} to="/admin/customers" Icon={Users} />
+        <StatCard label={t('admin.dashboard.statPendingDeposits')} value={d.pendingDeposits.toString()}
+          hint={t('admin.dashboard.statPendingDepositsHint', { amount: d.depositSumPending.toLocaleString() })}
           to="/admin/transactions" Icon={Banknote}
           accent={d.pendingDeposits > 0 ? '#facc15' : undefined} />
-        <StatCard label="Pending withdraws" value={d.pendingWithdraws.toString()}
-          hint="awaiting review" to="/admin/transactions?tab=withdraw" Icon={Banknote} />
-        <StatCard label="Bets (24h)" value={d.bets24h.toLocaleString()}
-          hint="all modes" to="/admin/play-history" Icon={Dices} />
-        <StatCard label="Live rounds" value={d.liveRounds.toString()}
-          hint="open or awaiting result" to="/admin/live" Icon={Radio}
+        <StatCard label={t('admin.dashboard.statPendingWithdraws')} value={d.pendingWithdraws.toString()}
+          hint={t('admin.dashboard.statPendingWithdrawsHint')} to="/admin/transactions?tab=withdraw" Icon={Banknote} />
+        <StatCard label={t('admin.dashboard.statBets24h')} value={d.bets24h.toLocaleString()}
+          hint={t('admin.dashboard.statBets24hHint')} to="/admin/play-history" Icon={Dices} />
+        <StatCard label={t('admin.dashboard.statLiveRounds')} value={d.liveRounds.toString()}
+          hint={t('admin.dashboard.statLiveRoundsHint')} to="/admin/live" Icon={Radio}
           accent={d.liveRounds > 0 ? '#4ade80' : undefined} />
       </div>
 
@@ -114,7 +116,7 @@ export default function AdminDashboard() {
             <div>
               <div className="flex items-center gap-2">
                 <span className="text-sm font-bold" style={{ color: d.sleepMode ? '#f87171' : '#fde68a' }}>
-                  Sleep Mode
+                  {t('admin.dashboard.sleepMode')}
                 </span>
                 <span
                   className="rounded-full px-2 py-0.5 text-[10px] font-bold"
@@ -124,13 +126,13 @@ export default function AdminDashboard() {
                     border: `1px solid ${d.sleepMode ? '#ef4444' : '#16a34a'}`,
                   }}
                 >
-                  {d.sleepMode ? 'ON — All users losing' : 'OFF — Normal play'}
+                  {d.sleepMode ? t('admin.dashboard.sleepModeOn') : t('admin.dashboard.sleepModeOff')}
                 </span>
               </div>
               <p className="mt-1 text-xs" style={{ color: '#818cf8' }}>
                 {d.sleepMode
-                  ? 'All REAL/PROMO self-play rolls are forced to 0 payout. DEMO and LIVE mode unaffected.'
-                  : 'When enabled, every REAL/PROMO self-play roll returns 0 payout — individual phases are preserved.'}
+                  ? t('admin.dashboard.sleepModeDescOn')
+                  : t('admin.dashboard.sleepModeDescOff')}
               </p>
             </div>
           </div>
@@ -147,7 +149,7 @@ export default function AdminDashboard() {
               border: `2px solid ${d.sleepMode ? '#4ade80' : '#fca5a5'}`,
             }}
           >
-            {d.sleepMode ? '☀️ Disable Sleep Mode' : '🌙 Enable Sleep Mode'}
+            {d.sleepMode ? t('admin.dashboard.disableSleepMode') : t('admin.dashboard.enableSleepMode')}
           </button>
         </div>
       </div>}
@@ -156,8 +158,7 @@ export default function AdminDashboard() {
         className="rounded-xl p-4 text-xs"
         style={{ background: '#0f172a', color: '#a5b4fc', border: '1px solid #1e1b4b' }}
       >
-        Use the sidebar to manage customers, review deposit slips and withdrawals,
-        inspect play history, host LIVE rounds, and manage the Demo Competition.
+        {t('admin.dashboard.sidebarHint')}
       </div>
 
       {/* ── Confirmation modal — SUPERADMIN only ── */}
@@ -175,24 +176,24 @@ export default function AdminDashboard() {
             <div className="mb-1 flex items-center gap-2">
               <Moon size={20} style={{ color: d.sleepMode ? '#4ade80' : '#f87171' }} />
               <h2 className="text-base font-bold" style={{ color: d.sleepMode ? '#4ade80' : '#f87171' }}>
-                {d.sleepMode ? 'Disable Sleep Mode?' : 'Enable Sleep Mode?'}
+                {d.sleepMode ? t('admin.dashboard.confirmDisableTitle') : t('admin.dashboard.confirmEnableTitle')}
               </h2>
             </div>
 
             <p className="mt-3 text-sm" style={{ color: '#e9d5ff' }}>
               {d.sleepMode ? (
                 <>
-                  Normal play will resume. Each user will return to their <strong>individual phase</strong> (Normal / Phase A / B / C) — no resets.
+                  {t('admin.dashboard.confirmDisableBody')} <strong>{t('admin.dashboard.confirmDisableBodyStrong')}</strong> {t('admin.dashboard.confirmDisableBodyEnd')}
                 </>
               ) : (
                 <>
-                  <strong className="text-red-400">ALL REAL/PROMO self-play rolls</strong> will be forced to <strong>0 payout</strong> immediately. DEMO wallets and LIVE mode are unaffected. Individual user phases are preserved.
+                  <strong className="text-red-400">{t('admin.dashboard.confirmEnableBodyStrongRed')}</strong> {t('admin.dashboard.confirmEnableBodyMid')} <strong>{t('admin.dashboard.confirmEnableBodyStrongZero')}</strong> {t('admin.dashboard.confirmEnableBodyEnd')}
                 </>
               )}
             </p>
 
             <div className="mt-2 rounded-lg px-3 py-2 text-xs" style={{ background: 'rgba(255,255,255,0.06)', color: '#a78bfa' }}>
-              Takes effect on the very next roll — no page refresh needed.
+              {t('admin.dashboard.takesEffectNote')}
             </div>
 
             <div className="mt-5 flex gap-3">
@@ -202,7 +203,7 @@ export default function AdminDashboard() {
                 className="flex-1 rounded-xl py-2.5 text-sm font-bold"
                 style={{ background: '#2d1b4e', color: '#a78bfa', border: '1px solid #4c1d95' }}
               >
-                Cancel
+                {t('admin.dashboard.cancel')}
               </button>
               <sleepFetcher.Form method="post" className="flex-1">
                 <input type="hidden" name="op" value="toggleSleepMode" />
@@ -218,7 +219,7 @@ export default function AdminDashboard() {
                     border: `1px solid ${d.sleepMode ? '#4ade80' : '#fca5a5'}`,
                   }}
                 >
-                  {sleepFetcher.state !== 'idle' ? 'Saving…' : d.sleepMode ? 'Yes, Disable' : 'Yes, Enable'}
+                  {sleepFetcher.state !== 'idle' ? t('admin.dashboard.savingEllipsis') : d.sleepMode ? t('admin.dashboard.yesDisable') : t('admin.dashboard.yesEnable')}
                 </button>
               </sleepFetcher.Form>
             </div>

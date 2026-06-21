@@ -4,14 +4,17 @@ import type { Route } from './+types/admin.competition.$id'
 import { requireAdmin } from '~/lib/admin-auth.server'
 import { prisma } from '~/lib/prisma.server'
 import type { CompetitionWinner } from '~/lib/system-settings.server'
+import { useT } from '~/lib/use-t'
+import { t as translate, parseLocaleCookie } from '~/lib/i18n'
 
 export async function loader({ request, params }: Route.LoaderArgs) {
   await requireAdmin(request)
+  const locale = parseLocaleCookie(request.headers.get('cookie'))
   const id = params.id
-  if (!id) throw new Response('Not found', { status: 404 })
+  if (!id) throw new Response(translate(locale, 'admin.competition.detail.notFound'), { status: 404 })
 
   const record = await prisma.competitionHistory.findUnique({ where: { id } })
-  if (!record) throw new Response('Competition not found', { status: 404 })
+  if (!record) throw new Response(translate(locale, 'admin.competition.detail.competitionNotFound'), { status: 404 })
 
   // Resolve admin names for configured/started/ended by
   const adminIds = [record.configuredBy, record.startedBy, record.endedBy].filter(Boolean) as string[]
@@ -44,6 +47,7 @@ export async function loader({ request, params }: Route.LoaderArgs) {
 }
 
 export default function AdminCompetitionDetail() {
+  const t = useT()
   const record = useLoaderData<typeof loader>()
 
   function fmtGMT7(iso: string) {
@@ -58,9 +62,9 @@ export default function AdminCompetitionDetail() {
     return n.toLocaleString()
   }
 
-  const typeLabel = record.type === 'DEMO_LIVE' ? '🎮 Demo → Live only'
-    : record.type === 'REAL_LIVE' ? '💰 Real → Live only'
-    : '💰 Real → Live + Self'
+  const typeLabel = record.type === 'DEMO_LIVE' ? t('admin.competition.type.demoLive.label')
+    : record.type === 'REAL_LIVE' ? t('admin.competition.type.realLive.label')
+    : t('admin.competition.type.realAll.label')
   const typeColor = record.type === 'DEMO_LIVE' ? '#a5b4fc' : '#fbbf24'
   const rankColor = (r: number) => r === 1 ? '#fbbf24' : r === 2 ? '#94a3b8' : r === 3 ? '#fb923c' : '#a5b4fc'
   const medals = ['🥇', '🥈', '🥉']
@@ -72,10 +76,10 @@ export default function AdminCompetitionDetail() {
         <a href="/admin/competition"
           className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-bold"
           style={{ background: '#1e1b4b', color: '#a5b4fc', border: '1px solid #4338ca' }}>
-          <ArrowLeft size={12} /> Back
+          <ArrowLeft size={12} /> {t('admin.competition.detail.back')}
         </a>
         <h1 className="flex items-center gap-2 text-xl font-bold" style={{ color: '#fbbf24' }}>
-          <Trophy size={20} /> Competition Detail
+          <Trophy size={20} /> {t('admin.competition.detail.title')}
         </h1>
       </div>
 
@@ -83,19 +87,19 @@ export default function AdminCompetitionDetail() {
       <div className="rounded-xl p-4" style={{ background: '#0f172a', border: '1px solid #1e1b4b' }}>
         <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
           <div>
-            <div className="text-[10px] font-bold" style={{ color: '#a5b4fc' }}>TYPE</div>
+            <div className="text-[10px] font-bold" style={{ color: '#a5b4fc' }}>{t('admin.competition.history.col.type')}</div>
             <div className="mt-0.5 text-xs font-bold" style={{ color: typeColor }}>{typeLabel}</div>
           </div>
           <div>
-            <div className="text-[10px] font-bold" style={{ color: '#a5b4fc' }}>START</div>
+            <div className="text-[10px] font-bold" style={{ color: '#a5b4fc' }}>{t('admin.competition.detail.meta.start')}</div>
             <div className="mt-0.5 text-xs" style={{ color: '#fde68a' }}>{record.startDate ? fmtGMT7(record.startDate) : '—'}</div>
           </div>
           <div>
-            <div className="text-[10px] font-bold" style={{ color: '#a5b4fc' }}>END</div>
+            <div className="text-[10px] font-bold" style={{ color: '#a5b4fc' }}>{t('admin.competition.detail.meta.end')}</div>
             <div className="mt-0.5 text-xs" style={{ color: '#fde68a' }}>{fmtGMT7(record.endDate)}</div>
           </div>
           <div>
-            <div className="text-[10px] font-bold" style={{ color: '#a5b4fc' }}>TOTAL PARTICIPANTS</div>
+            <div className="text-[10px] font-bold" style={{ color: '#a5b4fc' }}>{t('admin.competition.detail.meta.totalParticipants')}</div>
             <div className="mt-0.5 text-sm font-bold" style={{ color: '#4ade80' }}>{record.totalParticipants.toLocaleString()}</div>
           </div>
         </div>
@@ -107,10 +111,10 @@ export default function AdminCompetitionDetail() {
         <div className="mt-3 flex items-center gap-2">
           <span className="rounded-full px-2 py-0.5 text-[9px] font-bold"
             style={{ background: 'rgba(22,163,74,0.15)', color: '#4ade80', border: '1px solid #16a34a' }}>
-            Completed
+            {t('admin.competition.history.completed')}
           </span>
           <span className="text-[10px]" style={{ color: '#64748b' }}>
-            Archived on {fmtGMT7(record.createdAt)}
+            {t('admin.competition.detail.archivedOn', { date: fmtGMT7(record.createdAt) })}
           </span>
         </div>
 
@@ -119,19 +123,19 @@ export default function AdminCompetitionDetail() {
           <div className="mt-4 flex flex-wrap gap-x-6 gap-y-2 border-t pt-3" style={{ borderColor: '#1e1b4b' }}>
             {record.configuredBy && (
               <div>
-                <div className="text-[10px] font-bold" style={{ color: '#a5b4fc' }}>CONFIGURED BY</div>
+                <div className="text-[10px] font-bold" style={{ color: '#a5b4fc' }}>{t('admin.competition.detail.trail.configuredBy')}</div>
                 <div className="mt-0.5 text-xs font-semibold" style={{ color: '#fde68a' }}>{record.configuredBy}</div>
               </div>
             )}
             {record.startedBy && (
               <div>
-                <div className="text-[10px] font-bold" style={{ color: '#a5b4fc' }}>STARTED BY</div>
+                <div className="text-[10px] font-bold" style={{ color: '#a5b4fc' }}>{t('admin.competition.detail.trail.startedBy')}</div>
                 <div className="mt-0.5 text-xs font-semibold" style={{ color: '#4ade80' }}>{record.startedBy}</div>
               </div>
             )}
             {record.endedBy && (
               <div>
-                <div className="text-[10px] font-bold" style={{ color: '#a5b4fc' }}>ENDED BY</div>
+                <div className="text-[10px] font-bold" style={{ color: '#a5b4fc' }}>{t('admin.competition.detail.trail.endedBy')}</div>
                 <div className="mt-0.5 text-xs font-semibold" style={{ color: '#f87171' }}>{record.endedBy}</div>
               </div>
             )}
@@ -142,7 +146,7 @@ export default function AdminCompetitionDetail() {
       {/* Winners podium */}
       {sorted.length > 0 ? (
         <div className="flex flex-col gap-3">
-          <div className="text-xs font-bold" style={{ color: '#a5b4fc' }}>TOP 3 WINNERS</div>
+          <div className="text-xs font-bold" style={{ color: '#a5b4fc' }}>{t('admin.competition.detail.winners.heading')}</div>
 
           {/* Podium */}
           <div className="flex items-end justify-center gap-4">
@@ -184,7 +188,7 @@ export default function AdminCompetitionDetail() {
                 </div>
                 <div className="text-right">
                   <div className="font-bold" style={{ color: rankColor(w.rank) }}>{fmt(w.demoBalance)} ₭</div>
-                  <div className="text-[10px]" style={{ color: '#64748b' }}>Rank #{w.rank}</div>
+                  <div className="text-[10px]" style={{ color: '#64748b' }}>{t('admin.competition.detail.winners.rank', { n: w.rank })}</div>
                 </div>
               </div>
             ))}
@@ -192,7 +196,7 @@ export default function AdminCompetitionDetail() {
         </div>
       ) : (
         <div className="rounded-xl p-6 text-center text-xs" style={{ background: '#0f172a', color: '#64748b', border: '1px solid #1e1b4b' }}>
-          No winners were recorded for this competition.
+          {t('admin.competition.detail.winners.empty')}
         </div>
       )}
     </div>

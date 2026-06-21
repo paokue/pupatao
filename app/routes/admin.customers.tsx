@@ -8,6 +8,9 @@ import { prisma } from '~/lib/prisma.server'
 import { ADMIN_CHANNEL, type CustomerRegisteredPayload } from '~/lib/pusher-channels'
 import { usePusherEvent } from '~/hooks/use-pusher'
 import { ConfirmDialog } from '~/components/ConfirmDialog'
+import { useT } from '~/lib/use-t'
+import { t as translate } from '~/lib/i18n'
+import { parseLocaleCookie } from '~/lib/i18n'
 
 const PAGE_SIZES = [10, 30, 50, 100, 200, 500] as const
 
@@ -97,12 +100,15 @@ export async function loader({ request }: Route.LoaderArgs) {
 
 export async function action({ request }: Route.ActionArgs) {
   const admin = await requireAdmin(request)
+  // Errors are translated server-side from the locale cookie so render sites
+  // can show `data.error` verbatim (actions can't call the useT() hook).
+  const locale = parseLocaleCookie(request.headers.get('cookie'))
   // SUPPORT role cannot perform mutations on customers
-  if (admin.role === 'SUPPORT') return { error: 'Insufficient permissions' }
+  if (admin.role === 'SUPPORT') return { error: translate(locale, 'admin.customers.err.insufficientPermissions') }
   const fd = await request.formData()
   const op = String(fd.get('op') ?? '')
   const userId = String(fd.get('userId') ?? '')
-  if (!userId) return { error: 'userId required' }
+  if (!userId) return { error: translate(locale, 'admin.customers.err.userIdRequired') }
 
   if (op === 'suspend' || op === 'activate') {
     const nextStatus = op === 'suspend' ? 'SUSPENDED' : 'ACTIVE'
@@ -145,7 +151,7 @@ export async function action({ request }: Route.ActionArgs) {
   if (op === 'resetPassword') {
     const newPassword = String(fd.get('newPassword') ?? '').trim()
     if (!newPassword || newPassword.length < 6) {
-      return { ok: false, error: 'Password must be at least 6 characters.' }
+      return { ok: false, error: translate(locale, 'admin.customers.err.passwordMinLength') }
     }
     const { hashPassword } = await import('~/lib/auth.server')
     const passwordHash = await hashPassword(newPassword)
@@ -156,12 +162,13 @@ export async function action({ request }: Route.ActionArgs) {
     return { ok: true, op: 'resetPassword' }
   }
 
-  return { error: 'Unknown op' }
+  return { error: translate(locale, 'admin.customers.err.unknownOp') }
 }
 
 type CustomerRow = ReturnType<typeof useLoaderData<typeof loader>>['users'][number]
 
 export default function AdminCustomers() {
+  const t = useT()
   const data = useLoaderData<typeof loader>()
   const { adminRole } = useOutletContext<AdminOutletContext>()
   const isSupport = adminRole === 'SUPPORT'
@@ -215,20 +222,20 @@ export default function AdminCustomers() {
   return (
     <div className="flex flex-col gap-4">
       <div className="flex items-center justify-between">
-        <h1 className="text-xl font-bold" style={{ color: '#fde68a' }}>Customers</h1>
-        <span className="text-xs" style={{ color: '#a5b4fc' }}>{data.total.toLocaleString()} total</span>
+        <h1 className="text-xl font-bold" style={{ color: '#fde68a' }}>{t('admin.customers.title')}</h1>
+        <span className="text-xs" style={{ color: '#a5b4fc' }}>{t('admin.customers.total', { count: data.total.toLocaleString() })}</span>
       </div>
 
       {/* Phase + Status filter pills — same row, phase left / status right */}
       <div className="flex items-center justify-between gap-2">
         <div className="flex flex-wrap gap-1.5">
           {([
-            { key: 'ALL',          label: 'All',      color: '#a5b4fc' },
-            { key: 'NORMAL',       label: 'Normal',   color: '#4ade80' },
-            { key: 'PHASE_A',      label: 'Phase A',  color: '#fbbf24' },
-            { key: 'PHASE_B',      label: 'Phase B',  color: '#fb923c' },
-            { key: 'PHASE_C',      label: 'Phase C',  color: '#f87171' },
-            { key: 'ADMIN_LOCKED', label: 'Locked',   color: '#fca5a5' },
+            { key: 'ALL',          label: t('admin.customers.filter.all'),   color: '#a5b4fc' },
+            { key: 'NORMAL',       label: 'NORMAL',   color: '#4ade80' },
+            { key: 'PHASE_A',      label: 'PHASE_A',  color: '#fbbf24' },
+            { key: 'PHASE_B',      label: 'PHASE_B',  color: '#fb923c' },
+            { key: 'PHASE_C',      label: 'PHASE_C',  color: '#f87171' },
+            { key: 'ADMIN_LOCKED', label: 'LOCKED',   color: '#fca5a5' },
           ] as { key: PhaseFilter; label: string; color: string }[]).map(({ key, label, color }) => {
             const active = data.phase === key
             return (
@@ -247,9 +254,9 @@ export default function AdminCustomers() {
 
         <div className="flex gap-1.5">
           {([
-            { key: 'ALL',       label: 'All',       color: '#a5b4fc' },
-            { key: 'ACTIVE',    label: 'Active',    color: '#4ade80' },
-            { key: 'SUSPENDED', label: 'Suspended', color: '#fde68a' },
+            { key: 'ALL',       label: t('admin.customers.filter.all'),     color: '#a5b4fc' },
+            { key: 'ACTIVE',    label: 'ACTIVE',    color: '#4ade80' },
+            { key: 'SUSPENDED', label: 'SUSPENDED', color: '#fde68a' },
           ] as { key: StatusFilter; label: string; color: string }[]).map(({ key, label, color }) => {
             const active = data.statusFilter === key
             return (
@@ -274,7 +281,7 @@ export default function AdminCustomers() {
           className="rounded-lg px-2 py-2 text-xs font-bold outline-none"
           style={{ background: '#0f172a', color: '#a5b4fc', border: '1.5px solid #4338ca' }}
         >
-          {PAGE_SIZES.map(s => <option key={s} value={s}>{s} / page</option>)}
+          {PAGE_SIZES.map(s => <option key={s} value={s}>{t('admin.customers.pageSizeOption', { size: s })}</option>)}
         </select>
         <Form method="get" className="flex flex-1 items-center gap-2">
           <input type="hidden" name="phase"  value={data.phase === 'ALL' ? '' : data.phase} />
@@ -284,7 +291,7 @@ export default function AdminCustomers() {
             <input
               name="q"
               defaultValue={data.q}
-              placeholder="Search by phone or name…"
+              placeholder={t('admin.customers.search.placeholder')}
               className="w-full rounded-lg py-2 pl-9 pr-3 text-sm outline-none"
               style={{ background: '#0f172a', color: '#fde68a', border: '1.5px solid #4338ca' }}
             />
@@ -294,7 +301,7 @@ export default function AdminCustomers() {
             className="rounded-lg px-3 py-2 text-xs font-bold"
             style={{ background: '#4338ca', color: '#fff', border: '1.5px solid #818cf8' }}
           >
-            {loading ? <Loader size={14} className="animate-spin" /> : 'SEARCH'}
+            {loading ? <Loader size={14} className="animate-spin" /> : t('admin.customers.search.button')}
           </button>
         </Form>
       </div>
@@ -316,12 +323,12 @@ export default function AdminCustomers() {
           <thead style={{ color: '#a5b4fc' }}>
             <tr className="text-[10px] font-bold " style={{ background: '#1e1b4b' }}>
               <th className="w-8 px-3 py-2 text-right" style={{ color: '#64748b' }}>#</th>
-              <th className="px-3 py-2">PHONE</th>
-              <th className="px-3 py-2">NAME</th>
+              <th className="px-3 py-2">{t('admin.customers.table.phone')}</th>
+              <th className="px-3 py-2">{t('admin.customers.table.name')}</th>
               <th className="px-3 py-2 text-right">REAL</th>
               <th className="px-3 py-2 text-right">DEMO</th>
-              <th className="px-3 py-2">STATUS</th>
-              <th className="px-3 py-2">GAME TIER</th>
+              <th className="px-3 py-2">{t('admin.customers.table.status')}</th>
+              <th className="px-3 py-2">{t('admin.customers.table.gameTier')}</th>
               <th className="px-3 py-2"></th>
             </tr>
           </thead>
@@ -329,7 +336,7 @@ export default function AdminCustomers() {
             {data.users.length === 0 && (
               <tr>
                 <td colSpan={7} className="px-3 py-6 text-center text-xs" style={{ color: '#818cf8' }}>
-                  No customers match.
+                  {t('admin.customers.table.noMatch')}
                 </td>
               </tr>
             )}
@@ -352,13 +359,13 @@ export default function AdminCustomers() {
                     <div className="flex items-center justify-end gap-1.5">
                       <button
                         type="button"
-                        title="Reset password"
+                        title={t('admin.customers.action.resetPasswordTitle')}
                         onClick={() => setPasswordModal(u)}
                         disabled={loading}
                         className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[10px] font-bold disabled:opacity-50"
                         style={{ background: 'rgba(67,56,202,0.25)', color: '#a5b4fc', border: '1px solid #4338ca' }}
                       >
-                        <KeyRound size={10} /> PW
+                        <KeyRound size={10} /> {t('admin.customers.action.pwShort')}
                       </button>
                       <ActionButton u={u} onClick={() => setPending(u)} disabled={loading} />
                     </div>
@@ -377,17 +384,23 @@ export default function AdminCustomers() {
               disabled={data.page <= 1 || loading}
               className="rounded-md px-3 py-1.5 text-xs font-bold disabled:opacity-30"
               style={{ background: '#1e1b4b', color: '#a5b4fc', border: '1px solid #4338ca' }}>
-              ← Prev
+              {t('admin.customers.page.prev')}
             </button>
             <button type="button" onClick={() => gotoPage(data.page + 1)}
               disabled={data.page >= totalPages || loading}
               className="rounded-md px-3 py-1.5 text-xs font-bold disabled:opacity-30"
               style={{ background: '#1e1b4b', color: '#a5b4fc', border: '1px solid #4338ca' }}>
-              Next →
+              {t('admin.customers.page.next')}
             </button>
           </div>
           <span className="text-xs tabular-nums" style={{ color: '#a5b4fc' }}>
-            Showing {Math.min((data.page - 1) * data.pageSize + 1, data.total)}–{Math.min(data.page * data.pageSize, data.total).toLocaleString()} of {data.total.toLocaleString()} customers · Page {data.page}/{totalPages}
+            {t('admin.customers.page.showing', {
+              from: Math.min((data.page - 1) * data.pageSize + 1, data.total),
+              to: Math.min(data.page * data.pageSize, data.total).toLocaleString(),
+              total: data.total.toLocaleString(),
+              page: data.page,
+              totalPages,
+            })}
           </span>
         </div>
       )}
@@ -400,14 +413,14 @@ export default function AdminCustomers() {
         <ConfirmDialog
           open={!!pending}
           onClose={() => setPending(null)}
-          title={pending.status === 'ACTIVE' ? 'Suspend this customer?' : 'Activate this customer?'}
+          title={pending.status === 'ACTIVE' ? t('admin.customers.confirm.suspendTitle') : t('admin.customers.confirm.activateTitle')}
           description={
             pending.status === 'ACTIVE'
-              ? `${pending.tel} won't be able to sign in until reactivated.`
-              : `${pending.tel} will regain access immediately.`
+              ? t('admin.customers.confirm.suspendDescription', { tel: pending.tel })
+              : t('admin.customers.confirm.activateDescription', { tel: pending.tel })
           }
           tone={pending.status === 'ACTIVE' ? 'danger' : 'success'}
-          confirmLabel={pending.status === 'ACTIVE' ? 'SUSPEND' : 'ACTIVATE'}
+          confirmLabel={pending.status === 'ACTIVE' ? t('admin.customers.action.suspend') : t('admin.customers.action.activate')}
           fields={{
             userId: pending.id,
             op: pending.status === 'ACTIVE' ? 'suspend' : 'activate',
@@ -419,6 +432,7 @@ export default function AdminCustomers() {
 }
 
 function CustomerCard({ u, onAction, onResetPassword, rowNum }: { u: CustomerRow; onAction?: (u: CustomerRow) => void; onResetPassword?: (u: CustomerRow) => void; rowNum: number }) {
+  const t = useT()
   return (
     <div
       className="rounded-xl p-3"
@@ -459,7 +473,7 @@ function CustomerCard({ u, onAction, onResetPassword, rowNum }: { u: CustomerRow
             className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[10px] font-bold"
             style={{ background: 'rgba(67,56,202,0.25)', color: '#a5b4fc', border: '1px solid #4338ca' }}
           >
-            <KeyRound size={10} /> PW
+            <KeyRound size={10} /> {t('admin.customers.action.pwShort')}
           </button>}
           {onAction && <ActionButton u={u} onClick={() => onAction(u)} />}
         </div>
@@ -470,6 +484,7 @@ function CustomerCard({ u, onAction, onResetPassword, rowNum }: { u: CustomerRow
 }
 
 function ActionButton({ u, onClick, disabled }: { u: CustomerRow; onClick: () => void; disabled?: boolean }) {
+  const t = useT()
   const isActive = u.status === 'ACTIVE'
   return (
     <button
@@ -484,32 +499,37 @@ function ActionButton({ u, onClick, disabled }: { u: CustomerRow; onClick: () =>
       }}
     >
       {isActive ? <ShieldOff size={10} /> : <ShieldCheckIcon size={10} />}
-      {isActive ? 'SUSPEND' : 'ACTIVATE'}
+      {isActive ? t('admin.customers.action.suspend') : t('admin.customers.action.activate')}
     </button>
   )
 }
 
 type SelfPlayPhase = CustomerRow['selfPlayPhase']
 
+// NORMAL/PHASE_* keep their raw enum names (DB values); only ADMIN_LOCKED shows
+// a translated display label, resolved in PhaseBadge.
 const PHASE_LABELS: Record<SelfPlayPhase, { label: string; bg: string; color: string }> = {
-  NORMAL:       { label: 'Normal',   bg: 'rgba(22,163,74,0.15)',   color: '#4ade80' },
-  PHASE_A:      { label: 'Phase A',  bg: 'rgba(234,88,12,0.2)',    color: '#fb923c' },
-  PHASE_B:      { label: 'Phase B',  bg: 'rgba(202,138,4,0.2)',    color: '#facc15' },
-  PHASE_C:      { label: 'Phase C',  bg: 'rgba(220,38,38,0.2)',    color: '#f87171' },
-  ADMIN_LOCKED: { label: '🔒 Locked', bg: 'rgba(127,29,29,0.35)',  color: '#fca5a5' },
+  NORMAL:       { label: 'NORMAL',   bg: 'rgba(22,163,74,0.15)',   color: '#4ade80' },
+  PHASE_A:      { label: 'PHASE_A',  bg: 'rgba(234,88,12,0.2)',    color: '#fb923c' },
+  PHASE_B:      { label: 'PHASE_B',  bg: 'rgba(202,138,4,0.2)',    color: '#facc15' },
+  PHASE_C:      { label: 'PHASE_C',  bg: 'rgba(220,38,38,0.2)',    color: '#f87171' },
+  ADMIN_LOCKED: { label: 'ADMIN_LOCKED', bg: 'rgba(127,29,29,0.35)',  color: '#fca5a5' },
 }
 
 function PhaseBadge({ phase }: { phase: SelfPlayPhase }) {
+  const t = useT()
   const p = PHASE_LABELS[phase]
+  const label = phase === 'ADMIN_LOCKED' ? t('admin.customers.lock.adminLockedLabel') : p.label
   return (
     <span className="rounded-full px-2 py-0.5 text-[9px] font-bold whitespace-nowrap"
       style={{ background: p.bg, color: p.color, border: `1px solid ${p.color}40` }}>
-      {p.label}
+      {label}
     </span>
   )
 }
 
 function GameLockButton({ u, disabled, onRevalidate }: { u: CustomerRow; disabled?: boolean; onRevalidate: () => void }) {
+  const t = useT()
   const isLocked = u.selfPlayPhase === 'ADMIN_LOCKED'
   const submitHook = useSubmit()
 
@@ -526,7 +546,7 @@ function GameLockButton({ u, disabled, onRevalidate }: { u: CustomerRow; disable
       type="button"
       onClick={toggle}
       disabled={disabled}
-      title={isLocked ? 'Unlock game (allow wins)' : 'Lock game (force losses)'}
+      title={isLocked ? t('admin.customers.lock.unlockTitle') : t('admin.customers.lock.lockTitle')}
       className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[10px] font-bold disabled:opacity-50"
       style={{
         background: isLocked ? 'rgba(22,163,74,0.15)' : 'rgba(127,29,29,0.3)',
@@ -535,12 +555,13 @@ function GameLockButton({ u, disabled, onRevalidate }: { u: CustomerRow; disable
       }}
     >
       {isLocked ? <LockOpen size={10} /> : <Lock size={10} />}
-      {isLocked ? 'Unlock' : 'Lock'}
+      {isLocked ? t('admin.customers.lock.unlock') : t('admin.customers.lock.lock')}
     </button>
   )
 }
 
 function ResetPasswordModal({ user, onClose }: { user: CustomerRow; onClose: () => void }) {
+  const t = useT()
   const fetcher = useFetcher<{ ok?: boolean; error?: string }>()
   const [pw, setPw] = useState('')
   const [show, setShow] = useState(false)
@@ -569,7 +590,7 @@ function ResetPasswordModal({ user, onClose }: { user: CustomerRow; onClose: () 
         <div className="mb-4 flex items-center justify-between">
           <div>
             <div className="flex items-center gap-2 text-sm font-bold" style={{ color: '#fde68a' }}>
-              <KeyRound size={14} /> Reset Password
+              <KeyRound size={14} /> {t('admin.customers.action.resetPasswordTitle')}
             </div>
             <div className="mt-0.5 text-xs" style={{ color: '#a5b4fc' }}>{name} · {user.tel}</div>
           </div>
@@ -585,14 +606,14 @@ function ResetPasswordModal({ user, onClose }: { user: CustomerRow; onClose: () 
           <input type="hidden" name="userId" value={user.id} />
 
           <div className="flex flex-col gap-1">
-            <label className="text-[10px] font-bold" style={{ color: '#a5b4fc' }}>NEW PASSWORD</label>
+            <label className="text-[10px] font-bold" style={{ color: '#a5b4fc' }}>{t('admin.customers.resetPassword.newPasswordLabel')}</label>
             <div className="relative">
               <input
                 name="newPassword"
                 type={show ? 'text' : 'password'}
                 value={pw}
                 onChange={e => setPw(e.target.value)}
-                placeholder="Min. 6 characters"
+                placeholder={t('admin.customers.resetPassword.placeholder')}
                 autoComplete="new-password"
                 className="w-full rounded-lg px-3 py-2.5 pr-10 text-sm outline-none"
                 style={{ background: '#1e1b4b', color: '#fde68a', border: '1px solid #4338ca' }}
@@ -616,7 +637,7 @@ function ResetPasswordModal({ user, onClose }: { user: CustomerRow; onClose: () 
           )}
           {fetcher.data?.ok && (
             <div className="rounded-lg px-3 py-2 text-xs" style={{ background: 'rgba(22,163,74,0.15)', color: '#4ade80', border: '1px solid #4ade80' }}>
-              Password updated successfully.
+              {t('admin.customers.resetPassword.success')}
             </div>
           )}
 
@@ -624,7 +645,7 @@ function ResetPasswordModal({ user, onClose }: { user: CustomerRow; onClose: () 
             <button type="button" onClick={onClose}
               className="flex-1 rounded-xl py-2.5 text-sm font-bold"
               style={{ background: '#1e1b4b', color: '#a5b4fc', border: '1px solid #4338ca' }}>
-              Cancel
+              {t('admin.customers.resetPassword.cancel')}
             </button>
             <button
               type="submit"
@@ -633,7 +654,7 @@ function ResetPasswordModal({ user, onClose }: { user: CustomerRow; onClose: () 
               style={{ background: 'linear-gradient(135deg,#4338ca,#312e81)', color: '#fff', border: '1px solid #818cf8' }}
             >
               {submitting ? <Loader size={14} className="animate-spin" /> : <KeyRound size={14} />}
-              {submitting ? 'Saving…' : 'Set Password'}
+              {submitting ? t('admin.customers.resetPassword.saving') : t('admin.customers.resetPassword.submit')}
             </button>
           </div>
         </fetcher.Form>
@@ -643,12 +664,13 @@ function ResetPasswordModal({ user, onClose }: { user: CustomerRow; onClose: () 
 }
 
 function EmptyState() {
+  const t = useT()
   return (
     <div
       className="rounded-xl p-6 text-center text-xs"
       style={{ background: '#0f172a', color: '#818cf8', border: '1px solid #1e1b4b' }}
     >
-      No customers match.
+      {t('admin.customers.table.noMatch')}
     </div>
   )
 }

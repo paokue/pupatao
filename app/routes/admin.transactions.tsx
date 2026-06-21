@@ -9,7 +9,9 @@ import { notifyAdmin, notifyUser } from '~/lib/pusher.server'
 import { ADMIN_CHANNEL, type TxCreatedPayload, type TxResolvedPayload } from '~/lib/pusher-channels'
 import { usePusherEvent } from '~/hooks/use-pusher'
 import { ConfirmDialog } from '~/components/ConfirmDialog'
-import { isValidRejectReason, rejectReasonLabel, rejectReasonsFor } from '~/lib/reject-reasons'
+import { isValidRejectReason, rejectReasonsFor } from '~/lib/reject-reasons'
+import { useT, useLocale } from '~/lib/use-t'
+import { t as translate, parseLocaleCookie, type StringKey } from '~/lib/i18n'
 
 const PAGE_SIZES = [10, 30, 50, 100, 200, 500] as const
 type Tab = 'deposit' | 'withdraw' | 'transfer' | 'reward'
@@ -215,31 +217,36 @@ export async function loader({ request }: Route.LoaderArgs) {
 
 export async function action({ request }: Route.ActionArgs) {
   const admin = await requireAdmin(request)
-  if (admin.role === 'SUPPORT') return { error: 'Insufficient permissions' }
+  // Errors are translated server-side from the locale cookie (actions can't use
+  // the useT() hook) so render sites can show `data.error` verbatim.
+  const locale = parseLocaleCookie(request.headers.get('cookie'))
+  if (admin.role === 'SUPPORT') return { error: translate(locale, 'admin.transactions.error.insufficientPermissions') }
   const fd = await request.formData()
   const op = String(fd.get('op') ?? '')
   const txId = String(fd.get('txId') ?? '')
   const reason = String(fd.get('reason') ?? '')
-  if (!txId) return { error: 'txId required' }
+  if (!txId) return { error: translate(locale, 'admin.transactions.error.txIdRequired') }
 
-  if (op !== 'approve' && op !== 'reject') return { error: 'Unknown op' }
+  if (op !== 'approve' && op !== 'reject') return { error: translate(locale, 'admin.transactions.error.unknownOp') }
 
   try {
     const tx = await prisma.transaction.findUnique({ where: { id: txId } })
-    if (!tx) return { error: 'Transaction not found.' }
-    if (tx.status !== 'PENDING') return { error: 'Only pending transactions can be reviewed.' }
+    if (!tx) return { error: translate(locale, 'admin.transactions.error.txNotFound') }
+    if (tx.status !== 'PENDING') return { error: translate(locale, 'admin.transactions.error.onlyPendingReviewable') }
 
     if (op === 'reject') {
-      if (tx.type !== 'DEPOSIT' && tx.type !== 'WITHDRAW') return { error: 'Only deposit/withdraw requests can be rejected here.' }
-      if (!isValidRejectReason(tx.type, reason)) return { error: 'Please select a reject reason.' }
-      const reasonLabel = rejectReasonLabel(tx.type, reason)
+      if (tx.type !== 'DEPOSIT' && tx.type !== 'WITHDRAW') return { error: translate(locale, 'admin.transactions.error.onlyDepositWithdrawRejectable') }
+      if (!isValidRejectReason(tx.type, reason)) return { error: translate(locale, 'admin.transactions.error.selectRejectReason') }
 
       const [updated] = await prisma.$transaction([
         prisma.transaction.update({
           where: { id: tx.id },
           data: {
             status: 'CANCELLED',
-            note: `${reasonLabel} — rejected by admin`,
+            // Stored note is customer-facing (rendered verbatim in wallet.tsx
+            // regardless of the customer's locale) — keep it English. The
+            // localized reason text comes from rejectReasonCode via i18n.
+            note: `${tx.note ?? 'Deposit'} — rejected by admin`,
             rejectReasonCode: reason,
             rejectedById: admin.id,
             reviewedAt: new Date(),
@@ -269,11 +276,11 @@ export async function action({ request }: Route.ActionArgs) {
 
     const result = await prisma.$transaction(async db => {
       const wallet = await db.wallet.findUnique({ where: { id: tx.walletId } })
-      if (!wallet) throw new Error('Wallet not found.')
+      if (!wallet) throw new Error(translate(locale, 'admin.transactions.error.walletNotFound'))
 
       const delta = tx.type === 'DEPOSIT' ? tx.amount : -tx.amount
       const newBalance = wallet.balance + delta
-      if (newBalance < 0) throw new Error(`Insufficient balance: user has ${wallet.balance.toLocaleString()} ₭ but withdraw is ${tx.amount.toLocaleString()} ₭.`)
+      if (newBalance < 0) throw new Error(translate(locale, 'admin.transactions.error.insufficientBalance', { balance: wallet.balance.toLocaleString(), amount: tx.amount.toLocaleString() }))
 
       await db.wallet.update({
         where: { id: wallet.id },
@@ -285,6 +292,7 @@ export async function action({ request }: Route.ActionArgs) {
           status: 'COMPLETED',
           balanceBefore: wallet.balance,
           balanceAfter: newBalance,
+          // Customer-facing note (see comment above) — keep English.
           note: `${tx.note ?? (tx.type === 'DEPOSIT' ? 'Deposit' : 'Withdraw')} — approved by admin`,
           approvedById: admin.id,
           reviewedAt: new Date(),
@@ -402,22 +410,24 @@ export async function action({ request }: Route.ActionArgs) {
     return { ok: true }
   } catch (err) {
     console.error('[admin/transactions]', err)
-    return { error: err instanceof Error ? err.message : 'Action failed.' }
+    return { error: err instanceof Error ? err.message : translate(locale, 'admin.transactions.error.actionFailed') }
   }
 }
 
 const STATUS_FILTERS: StatusFilter[] = ['ALL', 'PENDING', 'COMPLETED', 'CANCELLED']
-const TABS: { key: Tab; label: string }[] = [
-  { key: 'deposit', label: 'Deposit' },
-  { key: 'withdraw', label: 'Withdraw' },
-  { key: 'transfer', label: 'Transfer' },
-  { key: 'reward', label: '🎁 Reward' },
+const TABS: { key: Tab; labelKey: StringKey }[] = [
+  { key: 'deposit', labelKey: 'admin.transactions.tab.deposit' },
+  { key: 'withdraw', labelKey: 'admin.transactions.tab.withdraw' },
+  { key: 'transfer', labelKey: 'admin.transactions.tab.transfer' },
+  { key: 'reward', labelKey: 'admin.transactions.tab.reward' },
 ]
 
 type TxLite = ReturnType<typeof useLoaderData<typeof loader>>['txs'][number]
 type PendingAction = { tx: TxLite; op: 'approve' | 'reject' } | null
 
 export default function AdminTransactions() {
+  const t = useT()
+  const locale = useLocale()
   const data = useLoaderData<typeof loader>()
   const [params] = useSearchParams()
   const navigation = useNavigation()
@@ -437,7 +447,7 @@ export default function AdminTransactions() {
       (data.tab === 'withdraw' && tx.type === 'WITHDRAW')
     if (!isOnTab) return
     if (data.status !== 'PENDING' && data.status !== 'ALL') return
-    toast.message('New ' + tx.type.toLowerCase() + ' request', {
+    toast.message(t('admin.transactions.toast.newRequest', { type: tx.type === 'DEPOSIT' ? t('admin.transactions.tab.deposit') : t('admin.transactions.tab.withdraw') }), {
       description: `${tx.user.tel} · ${tx.amount.toLocaleString()} ₭`,
     })
     revalidator.revalidate()
@@ -475,8 +485,8 @@ export default function AdminTransactions() {
   return (
     <div className="flex flex-col gap-4">
       <div className="flex items-center justify-between">
-        <h1 className="text-xl font-bold" style={{ color: '#fde68a' }}>Transactions</h1>
-        <span className="text-xs" style={{ color: '#a5b4fc' }}>{data.total.toLocaleString()} total</span>
+        <h1 className="text-xl font-bold" style={{ color: '#fde68a' }}>{t('admin.transactions.title')}</h1>
+        <span className="text-xs" style={{ color: '#a5b4fc' }}>{t('admin.transactions.totalCount', { n: data.total.toLocaleString() })}</span>
       </div>
 
       {/* Filters bar — tabs + status on the left, phone search on the right.
@@ -485,20 +495,20 @@ export default function AdminTransactions() {
         {/* LEFT: tabs (row) + status pills (row) stacked */}
         <div className="flex flex-col gap-2">
           <div className="flex gap-2">
-            {TABS.map(t => {
-              const count = t.key === 'deposit' ? data.pendingDepositCount : t.key === 'withdraw' ? data.pendingWithdrawCount : t.key === 'transfer' ? data.pendingTransferCount : 0
+            {TABS.map(tab => {
+              const count = tab.key === 'deposit' ? data.pendingDepositCount : tab.key === 'withdraw' ? data.pendingWithdrawCount : tab.key === 'transfer' ? data.pendingTransferCount : 0
               return (
                 <Link
-                  key={t.key}
-                  to={tabHref(t.key)}
+                  key={tab.key}
+                  to={tabHref(tab.key)}
                   className="inline-flex items-center gap-1.5 rounded-lg px-4 py-1.5 text-xs font-bold capitalize"
                   style={{
-                    background: data.tab === t.key ? '#4338ca' : '#1e1b4b',
-                    color: data.tab === t.key ? '#fff' : '#a5b4fc',
-                    border: `1px solid ${data.tab === t.key ? '#818cf8' : '#4338ca'}`,
+                    background: data.tab === tab.key ? '#4338ca' : '#1e1b4b',
+                    color: data.tab === tab.key ? '#fff' : '#a5b4fc',
+                    border: `1px solid ${data.tab === tab.key ? '#818cf8' : '#4338ca'}`,
                   }}
                 >
-                  {t.label}
+                  {t(tab.labelKey)}
                   {count > 0 && (
                     <span className="inline-flex h-4 min-w-[16px] items-center justify-center rounded-full px-1 text-[9px] font-bold" style={{ background: '#ef4444', color: '#fff' }}>
                       {count}
@@ -541,14 +551,14 @@ export default function AdminTransactions() {
             className="rounded-lg px-2 py-2 text-xs font-bold outline-none"
             style={{ background: '#0f172a', color: '#a5b4fc', border: '1.5px solid #4338ca' }}
           >
-            {PAGE_SIZES.map(s => <option key={s} value={s}>{s} / page</option>)}
+            {PAGE_SIZES.map(s => <option key={s} value={s}>{t('admin.transactions.pageSizeOption', { n: s })}</option>)}
           </select>
           <div className="relative flex-1">
             <Search size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2" style={{ color: '#818cf8' }} />
             <input
               name="q"
               defaultValue={data.q}
-              placeholder="Filter by phone number…"
+              placeholder={t('admin.transactions.searchPlaceholder')}
               className="w-full rounded-lg py-2 pl-9 pr-3 text-sm outline-none"
               style={{ background: '#0f172a', color: '#fde68a', border: '1.5px solid #4338ca' }}
             />
@@ -558,7 +568,7 @@ export default function AdminTransactions() {
             className="rounded-lg px-3 py-2 text-xs font-bold"
             style={{ background: '#4338ca', color: '#fff', border: '1.5px solid #818cf8' }}
           >
-            {loading ? <Loader size={14} className="animate-spin" /> : 'SEARCH'}
+            {loading ? <Loader size={14} className="animate-spin" /> : t('admin.transactions.search')}
           </button>
           {data.q && (
             <Link
@@ -571,7 +581,7 @@ export default function AdminTransactions() {
               className="rounded-lg px-3 py-2 text-xs font-bold"
               style={{ background: '#1e1b4b', color: '#a5b4fc', border: '1.5px solid #4338ca' }}
             >
-              CLEAR
+              {t('admin.transactions.clear')}
             </Link>
           )}
         </Form>
@@ -583,7 +593,7 @@ export default function AdminTransactions() {
             className="rounded-xl p-8 text-center text-xs"
             style={{ background: '#0f172a', color: '#818cf8', border: '1px solid #1e1b4b' }}
           >
-            No {data.tab} transactions match.
+            {t('admin.transactions.noneMatch', { tab: t(TABS.find(tab => tab.key === data.tab)?.labelKey ?? 'admin.transactions.tab.deposit') })}
           </div>
         )}
         {data.txs.map((tx, i) =>
@@ -612,18 +622,24 @@ export default function AdminTransactions() {
             {data.page > 1 && (
               <Link to={pageHref(data.page - 1)} className="rounded-md px-3 py-1.5 text-xs font-bold"
                 style={{ background: '#1e1b4b', color: '#a5b4fc', border: '1px solid #4338ca' }}>
-                ← Prev
+                {t('admin.transactions.prev')}
               </Link>
             )}
             {data.page < totalPages && (
               <Link to={pageHref(data.page + 1)} className="rounded-md px-3 py-1.5 text-xs font-bold"
                 style={{ background: '#1e1b4b', color: '#a5b4fc', border: '1px solid #4338ca' }}>
-                Next →
+                {t('admin.transactions.next')}
               </Link>
             )}
           </div>
           <span className="text-xs tabular-nums" style={{ color: '#a5b4fc' }}>
-            Showing {Math.min((data.page - 1) * data.pageSize + 1, data.total)}–{Math.min(data.page * data.pageSize, data.total).toLocaleString()} of {data.total.toLocaleString()} transactions · Page {data.page}/{totalPages}
+            {t('admin.transactions.showingRange', {
+              from: Math.min((data.page - 1) * data.pageSize + 1, data.total),
+              to: Math.min(data.page * data.pageSize, data.total).toLocaleString(),
+              total: data.total.toLocaleString(),
+              page: data.page,
+              totalPages,
+            })}
           </span>
         </div>
       )}
@@ -638,33 +654,33 @@ export default function AdminTransactions() {
           onClose={() => setPending(null)}
           title={
             pending.op === 'approve'
-              ? `Approve ${pending.tx.amount.toLocaleString()} ₭ ${data.tab}?`
-              : `Reject this ${data.tab} request?`
+              ? t('admin.transactions.confirm.approveTitle', { tab: data.tab === 'deposit' ? t('admin.transactions.tab.deposit') : t('admin.transactions.tab.withdraw'), amount: pending.tx.amount.toLocaleString() })
+              : t('admin.transactions.confirm.rejectTitle', { tab: data.tab === 'deposit' ? t('admin.transactions.tab.deposit') : t('admin.transactions.tab.withdraw') })
           }
           description={
             pending.op === 'approve'
               ? data.tab === 'deposit'
-                ? `${pending.tx.sender.tel} will be credited ${pending.tx.amount.toLocaleString()} ₭ on their REAL wallet.`
-                : `${pending.tx.sender.tel} will be debited ${pending.tx.amount.toLocaleString()} ₭ from their REAL wallet.`
-              : `${pending.tx.sender.tel} will be notified the request was rejected. No balance change.`
+                ? t('admin.transactions.confirm.approveDepositDesc', { tel: pending.tx.sender.tel, amount: pending.tx.amount.toLocaleString() })
+                : t('admin.transactions.confirm.approveWithdrawDesc', { tel: pending.tx.sender.tel, amount: pending.tx.amount.toLocaleString() })
+              : t('admin.transactions.confirm.rejectDesc', { tel: pending.tx.sender.tel })
           }
           tone={pending.op === 'approve' ? 'success' : 'danger'}
-          confirmLabel={pending.op === 'approve' ? 'APPROVE' : 'REJECT'}
+          confirmLabel={pending.op === 'approve' ? t('admin.transactions.confirm.approve') : t('admin.transactions.confirm.reject')}
           fields={pending.op === 'reject' ? { txId: pending.tx.id, op: pending.op, reason: rejectReason } : { txId: pending.tx.id, op: pending.op }}
           confirmDisabled={pending.op === 'reject' && !rejectReason}
         >
           {pending.op === 'reject' && (
             <label className="flex flex-col gap-1">
-              <span className="text-xs font-bold" style={{ color: '#a5b4fc' }}>Reject reason</span>
+              <span className="text-xs font-bold" style={{ color: '#a5b4fc' }}>{t('admin.transactions.confirm.rejectReasonLabel')}</span>
               <select
                 value={rejectReason}
                 onChange={e => setRejectReason(e.target.value)}
                 className="rounded-md px-2 py-2 text-xs font-semibold outline-none"
                 style={{ background: '#0f172a', color: '#fde68a', border: '1.5px solid #4338ca' }}
               >
-                <option value="" disabled>Select a reason…</option>
+                <option value="" disabled>{t('admin.transactions.confirm.rejectReasonPlaceholder')}</option>
                 {rejectReasonsFor(data.tab === 'deposit' ? 'DEPOSIT' : 'WITHDRAW').map(r => (
-                  <option key={r.code} value={r.code}>{r.label}</option>
+                  <option key={r.code} value={r.code}>{r.label[locale]}</option>
                 ))}
               </select>
             </label>
@@ -702,6 +718,7 @@ function TxCard({
   onReject: () => void
   onSlipPreview: (url: string) => void
 }) {
+  const t = useT()
   const isPending = tx.status === 'PENDING'
   return (
     <div className="flex flex-col gap-3 rounded-xl p-4 md:flex-row md:items-center"
@@ -712,11 +729,11 @@ function TxCard({
           onClick={() => onSlipPreview(tx.slipUrl!)}
           className="flex h-20 w-20 shrink-0 items-center justify-center overflow-hidden rounded-lg transition-opacity hover:opacity-80"
           style={{ background: '#1e1b4b', border: '1px solid #4338ca' }}
-          aria-label="Preview slip"
+          aria-label={t('admin.transactions.card.previewSlipAria')}
         >
           {tx.slipUrl.endsWith('.pdf')
             ? <span className="text-xs font-bold" style={{ color: '#fde68a' }}>📄 PDF</span>
-            : <img src={tx.slipUrl} alt="Slip" className="h-full w-full object-cover" />}
+            : <img src={tx.slipUrl} alt={t('admin.transactions.card.slipAlt')} className="h-full w-full object-cover" />}
         </button>
       )}
       <div className="min-w-0 flex-1">
@@ -733,13 +750,13 @@ function TxCard({
         {tx.note && <div className="mt-1 text-xs" style={{ color: '#a5b4fc' }}>{tx.note}</div>}
         {'approvedBy' in tx && tx.approvedBy && (
           <div className="mt-1 text-[10px]" style={{ color: '#4ade80' }}>
-            ✓ Approved by <strong>{tx.approvedBy}</strong>
+            ✓ {t('admin.transactions.card.approvedBy')} <strong>{tx.approvedBy}</strong>
             {tx.reviewedAt ? ` · ${new Date(tx.reviewedAt).toLocaleString()}` : ''}
           </div>
         )}
         {'rejectedBy' in tx && tx.rejectedBy && (
           <div className="mt-1 text-[10px]" style={{ color: '#f87171' }}>
-            ✗ Rejected by <strong>{tx.rejectedBy}</strong>
+            ✗ {t('admin.transactions.card.rejectedBy')} <strong>{tx.rejectedBy}</strong>
             {tx.reviewedAt ? ` · ${new Date(tx.reviewedAt).toLocaleString()}` : ''}
           </div>
         )}
@@ -753,12 +770,12 @@ function TxCard({
             <button type="button" onClick={onReject} disabled={loading}
               className="inline-flex items-center gap-1 rounded-md px-2.5 py-1.5 text-[10px] font-bold disabled:opacity-50"
               style={{ background: '#7f1d1d', color: '#fff', border: '1px solid #fca5a5' }}>
-              <X size={10} /> REJECT
+              <X size={10} /> {t('admin.transactions.confirm.reject')}
             </button>
             <button type="button" onClick={onApprove} disabled={loading}
               className="inline-flex items-center gap-1 rounded-md px-2.5 py-1.5 text-[10px] font-bold disabled:opacity-50"
               style={{ background: '#14532d', color: '#fff', border: '1px solid #4ade80' }}>
-              <Check size={10} /> APPROVE
+              <Check size={10} /> {t('admin.transactions.confirm.approve')}
             </button>
           </div>
         ) : (
@@ -769,7 +786,7 @@ function TxCard({
               className="inline-flex items-center gap-1 text-[10px] font-bold underline"
               style={{ color: '#a5b4fc' }}
             >
-              <Maximize2 size={10} /> SLIP
+              <Maximize2 size={10} /> {t('admin.transactions.card.slipAlt')}
             </button>
           )
         )}
@@ -779,6 +796,7 @@ function TxCard({
 }
 
 function TransferCard({ tx, rowNum }: { tx: TxLite; rowNum: number }) {
+  const t = useT()
   const isPending = tx.status === 'PENDING'
   const isEncrypted = tx.note ? /encrypt/i.test(tx.note) : false
 
@@ -795,14 +813,14 @@ function TransferCard({ tx, rowNum }: { tx: TxLite; rowNum: number }) {
             {tx.recipient ? (
               <span className="font-semibold" style={{ color: '#e9d5ff' }}>{tx.recipient.name}</span>
             ) : (
-              <span className="text-xs" style={{ color: '#818cf8' }}>Unknown recipient</span>
+              <span className="text-xs" style={{ color: '#818cf8' }}>{t('admin.transactions.transfer.unknownRecipient')}</span>
             )}
           </div>
           <StatusBadge status={tx.status} />
           {/* Transfer type badge */}
           <span className="rounded-full px-2 py-0.5 text-[10px] font-bold"
             style={{ background: isEncrypted ? 'rgba(124,58,237,0.2)' : 'rgba(59,130,246,0.2)', color: isEncrypted ? '#c4b5fd' : '#93c5fd' }}>
-            {isEncrypted ? 'ENCRYPTED' : 'NORMAL'}
+            {isEncrypted ? t('admin.transactions.transfer.encrypted') : t('admin.transactions.transfer.normal')}
           </span>
         </div>
 
@@ -824,7 +842,7 @@ function TransferCard({ tx, rowNum }: { tx: TxLite; rowNum: number }) {
           {tx.amount.toLocaleString()} ₭
         </span>
         <span className="text-[10px]" style={{ color: '#818cf8' }}>
-          Balance after: {tx.balanceAfter.toLocaleString()} ₭
+          {t('admin.transactions.transfer.balanceAfter', { amount: tx.balanceAfter.toLocaleString() })}
         </span>
       </div>
     </div>
@@ -832,6 +850,7 @@ function TransferCard({ tx, rowNum }: { tx: TxLite; rowNum: number }) {
 }
 
 function RewardCard({ tx, rowNum }: { tx: TxLite; rowNum: number }) {
+  const t = useT()
   return (
     <div className="flex flex-col gap-3 rounded-xl p-4 md:flex-row md:items-center"
       style={{ background: '#0f172a', border: '1px solid #14532d' }}>
@@ -843,7 +862,7 @@ function RewardCard({ tx, rowNum }: { tx: TxLite; rowNum: number }) {
           </span>
           <span className="rounded-full px-2 py-0.5 text-[10px] font-bold"
             style={{ background: 'rgba(22,163,74,0.2)', color: '#4ade80' }}>
-            REWARD
+            {t('admin.transactions.reward.badge')}
           </span>
         </div>
         <div className="mt-0.5 text-xs" style={{ color: '#818cf8' }}>
@@ -856,7 +875,7 @@ function RewardCard({ tx, rowNum }: { tx: TxLite; rowNum: number }) {
           +{tx.amount.toLocaleString()} ₭
         </span>
         <span className="text-[10px]" style={{ color: '#818cf8' }}>
-          Balance after: {tx.balanceAfter.toLocaleString()} ₭
+          {t('admin.transactions.transfer.balanceAfter', { amount: tx.balanceAfter.toLocaleString() })}
         </span>
       </div>
     </div>
@@ -867,6 +886,7 @@ function RewardCard({ tx, rowNum }: { tx: TxLite; rowNum: number }) {
 // PDFs render via <iframe>; everything else is treated as an image with
 // `object-contain` so it never overflows the viewport.
 function SlipPreview({ url, onClose }: { url: string; onClose: () => void }) {
+  const t = useT()
   useEffect(() => {
     function onKey(e: KeyboardEvent) { if (e.key === 'Escape') onClose() }
     window.addEventListener('keydown', onKey)
@@ -888,14 +908,14 @@ function SlipPreview({ url, onClose }: { url: string; onClose: () => void }) {
       onClick={onClose}
       role="dialog"
       aria-modal="true"
-      aria-label="Slip preview"
+      aria-label={t('admin.transactions.card.previewSlipAria')}
     >
       <button
         type="button"
         onClick={onClose}
         className="absolute right-4 top-4 z-10 flex h-10 w-10 items-center justify-center rounded-full transition-opacity hover:opacity-80"
         style={{ background: '#0f172a', color: '#fde68a', border: '1px solid #4338ca' }}
-        aria-label="Close preview"
+        aria-label={t('admin.transactions.slip.closeAria')}
       >
         <X size={18} />
       </button>
@@ -903,14 +923,14 @@ function SlipPreview({ url, onClose }: { url: string; onClose: () => void }) {
         {isPdf ? (
           <iframe
             src={url}
-            title="Slip PDF"
+            title={t('admin.transactions.slip.pdfTitle')}
             className="h-full w-full max-w-5xl rounded-lg"
             style={{ background: '#fff', border: '1px solid #4338ca' }}
           />
         ) : (
           <img
             src={url}
-            alt="Payment slip"
+            alt={t('admin.transactions.slip.imageAlt')}
             className="max-h-full max-w-full rounded-lg object-contain"
             style={{ boxShadow: '0 8px 40px rgba(0,0,0,0.6)' }}
           />

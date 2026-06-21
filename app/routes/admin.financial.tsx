@@ -2,6 +2,8 @@ import { Form, useLoaderData, useNavigation } from 'react-router'
 import { AlertTriangle, ArrowDownCircle, ArrowUpCircle, BarChart2, Clock, Loader, TrendingDown, TrendingUp, Users } from 'lucide-react'
 import { requireRole } from '~/lib/admin-auth.server'
 import { prisma } from '~/lib/prisma.server'
+import { useT } from '~/lib/use-t'
+import type { StringKey } from '~/lib/i18n'
 
 type Period = 'today' | 'week' | 'month' | 'all' | 'custom'
 
@@ -185,15 +187,16 @@ function fmtDatetime(iso: string) {
   return timePart ? `${dateLabel}, ${timePart}` : dateLabel
 }
 
-const PERIOD_TABS: { key: Period; label: string }[] = [
-  { key: 'today', label: 'Today' },
-  { key: 'week', label: 'This Week' },
-  { key: 'month', label: 'This Month' },
-  { key: 'all', label: 'All Time' },
-  { key: 'custom', label: 'Custom' },
+const PERIOD_TABS: { key: Period; labelKey: StringKey }[] = [
+  { key: 'today', labelKey: 'admin.financial.period.today' },
+  { key: 'week', labelKey: 'admin.financial.period.week' },
+  { key: 'month', labelKey: 'admin.financial.period.month' },
+  { key: 'all', labelKey: 'admin.financial.period.all' },
+  { key: 'custom', labelKey: 'admin.financial.period.custom' },
 ]
 
 export default function AdminFinancial() {
+  const t = useT()
   const data = useLoaderData<typeof loader>()
   const navigation = useNavigation()
   const loading = navigation.state !== 'idle'
@@ -204,7 +207,7 @@ export default function AdminFinancial() {
     <div className="flex flex-col gap-5">
       <div className="flex items-center gap-3">
         <BarChart2 size={18} style={{ color: '#fde68a' }} />
-        <h1 className="text-xl font-bold" style={{ color: '#fde68a' }}>Financial Overview</h1>
+        <h1 className="text-xl font-bold" style={{ color: '#fde68a' }}>{t('admin.financial.title')}</h1>
         {loading && <Loader size={14} className="animate-spin ml-auto" style={{ color: '#a5b4fc' }} />}
       </div>
 
@@ -223,7 +226,7 @@ export default function AdminFinancial() {
                 color: data.period === tab.key ? '#fff' : '#a5b4fc',
               }}
             >
-              {tab.label}
+              {t(tab.labelKey)}
             </button>
           ))}
         </div>
@@ -251,7 +254,7 @@ export default function AdminFinancial() {
               className="rounded-md px-3 py-1.5 text-xs font-bold"
               style={{ background: '#4338ca', color: '#fff' }}
             >
-              Apply
+              {t('admin.financial.apply')}
             </button>
           </>
         )}
@@ -265,18 +268,18 @@ export default function AdminFinancial() {
       {/* ── Bank Reconciliation (all-time) ────────────────── */}
       <div className="rounded-xl p-4" style={{ background: 'linear-gradient(135deg, #1e1b4b, #0f172a)', border: '1.5px solid #4338ca' }}>
         <div className="mb-3 text-[11px] font-bold tracking-widest" style={{ color: '#a5b4fc' }}>
-          BANK RECONCILIATION — ALL TIME
+          {t('admin.financial.recon.title')}
         </div>
         <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
           <ReconCard
-            label="Bank Position"
-            sublabel="Deposits − Withdrawals"
+            label={t('admin.financial.recon.bankPosition')}
+            sublabel={t('admin.financial.recon.bankPositionSub')}
             value={data.bankPosition}
             color="#fde68a"
           />
           <ReconCard
-            label="Customer Liability"
-            sublabel="Sum of all REAL balances"
+            label={t('admin.financial.recon.customerLiability')}
+            sublabel={t('admin.financial.recon.customerLiabilitySub')}
             value={data.customerLiability}
             color="#a5b4fc"
           />
@@ -286,13 +289,13 @@ export default function AdminFinancial() {
           >
             <div className="flex items-center gap-1.5 text-[10px] font-bold" style={{ color: profitPositive ? '#4ade80' : '#f87171' }}>
               {profitPositive ? <TrendingUp size={12} /> : <TrendingDown size={12} />}
-              ESTIMATED HOUSE {profitPositive ? 'PROFIT' : 'DEFICIT'}
+              {profitPositive ? t('admin.financial.recon.estimatedProfit') : t('admin.financial.recon.estimatedDeficit')}
             </div>
             <div className="mt-1 text-2xl font-bold md:text-3xl" style={{ color: profitPositive ? '#4ade80' : '#f87171' }}>
               {fmt(Math.abs(data.houseProfit))}
             </div>
             <div className="mt-1 text-[10px]" style={{ color: '#64748b' }}>
-              Bank Position − Customer Liability
+              {t('admin.financial.recon.profitFormula')}
             </div>
           </div>
         </div>
@@ -303,19 +306,19 @@ export default function AdminFinancial() {
             {data.pendingDepCount > 0 && (
               <PendingChip
                 icon={<ArrowDownCircle size={11} />}
-                label={`${data.pendingDepCount} pending deposit${data.pendingDepCount > 1 ? 's' : ''}`}
+                label={t('admin.financial.pending.deposits', { count: data.pendingDepCount, s: data.pendingDepCount === 1 ? '' : 's' })}
                 amount={data.pendingDepAmount}
                 color="#4ade80"
-                note="Not yet approved — not in bank"
+                note={t('admin.financial.pending.depositsNote')}
               />
             )}
             {data.pendingWithCount > 0 && (
               <PendingChip
                 icon={<ArrowUpCircle size={11} />}
-                label={`${data.pendingWithCount} pending withdrawal${data.pendingWithCount > 1 ? 's' : ''}`}
+                label={t('admin.financial.pending.withdrawals', { count: data.pendingWithCount, s: data.pendingWithCount === 1 ? '' : 's' })}
                 amount={data.pendingWithAmount}
                 color="#f87171"
-                note="Not yet paid — still in bank"
+                note={t('admin.financial.pending.withdrawalsNote')}
               />
             )}
           </div>
@@ -326,28 +329,28 @@ export default function AdminFinancial() {
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         <MetricCard
           icon={<ArrowDownCircle size={14} />}
-          label="Deposits IN"
+          label={t('admin.financial.metric.depositsIn')}
           value={data.periodIn}
           count={data.periodInCount}
           color="#4ade80"
         />
         <MetricCard
           icon={<ArrowUpCircle size={14} />}
-          label="Withdrawals OUT"
+          label={t('admin.financial.metric.withdrawalsOut')}
           value={data.periodOut}
           count={data.periodOutCount}
           color="#f87171"
         />
         <MetricCard
           icon={data.periodNet >= 0 ? <TrendingUp size={14} /> : <TrendingDown size={14} />}
-          label="Net Cash Flow"
+          label={t('admin.financial.metric.netCashFlow')}
           value={data.periodNet}
           color={data.periodNet >= 0 ? '#fde68a' : '#f87171'}
           signed
         />
         <MetricCard
           icon={<Users size={14} />}
-          label="New Customers"
+          label={t('admin.financial.metric.newCustomers')}
           value={data.periodNewUsers}
           color="#a5b4fc"
           isCount
@@ -359,7 +362,7 @@ export default function AdminFinancial() {
           {data.periodPromoAmount > 0 && (
             <MetricCard
               icon={<Clock size={14} />}
-              label="Promo Bonus Given"
+              label={t('admin.financial.metric.promoBonusGiven')}
               value={data.periodPromoAmount}
               count={data.periodPromoCount}
               color="#fcd34d"
@@ -368,7 +371,7 @@ export default function AdminFinancial() {
           {data.periodReferralAmount > 0 && (
             <MetricCard
               icon={<Clock size={14} />}
-              label="Referral Bonus Given"
+              label={t('admin.financial.metric.referralBonusGiven')}
               value={data.periodReferralAmount}
               count={data.periodReferralCount}
               color="#fcd34d"
@@ -380,23 +383,23 @@ export default function AdminFinancial() {
       {/* ── Daily breakdown ───────────────────────────────── */}
       <div>
         <div className="mb-2 text-[10px] font-bold tracking-wider" style={{ color: '#a5b4fc' }}>
-          DAILY BREAKDOWN
+          {t('admin.financial.daily.title')}
         </div>
         <div className="overflow-x-auto rounded-xl" style={{ background: '#0f172a', border: '1px solid #1e1b4b' }}>
           <table className="w-full min-w-[540px] text-left text-xs">
             <thead style={{ color: '#a5b4fc' }}>
               <tr className="text-[10px] font-bold" style={{ background: '#1e1b4b' }}>
-                <th className="px-4 py-2.5">DATE</th>
-                <th className="px-4 py-2.5 text-right">DEPOSITS IN</th>
-                <th className="px-4 py-2.5 text-right">WITHDRAWALS OUT</th>
-                <th className="px-4 py-2.5 text-right">NET</th>
+                <th className="px-4 py-2.5">{t('admin.financial.daily.date')}</th>
+                <th className="px-4 py-2.5 text-right">{t('admin.financial.metric.depositsIn')}</th>
+                <th className="px-4 py-2.5 text-right">{t('admin.financial.metric.withdrawalsOut')}</th>
+                <th className="px-4 py-2.5 text-right">{t('admin.financial.daily.net')}</th>
               </tr>
             </thead>
             <tbody>
               {data.dailyRows.length === 0 && (
                 <tr>
                   <td colSpan={4} className="px-4 py-6 text-center" style={{ color: '#64748b' }}>
-                    No completed transactions in this period.
+                    {t('admin.financial.daily.empty')}
                   </td>
                 </tr>
               )}
@@ -432,7 +435,7 @@ export default function AdminFinancial() {
             {data.dailyRows.length > 1 && (
               <tfoot>
                 <tr style={{ borderTop: '2px solid #4338ca', color: '#e9d5ff' }}>
-                  <td className="px-4 py-2.5 text-[10px] font-bold" style={{ color: '#a5b4fc' }}>TOTAL</td>
+                  <td className="px-4 py-2.5 text-[10px] font-bold" style={{ color: '#a5b4fc' }}>{t('admin.financial.daily.total')}</td>
                   <td className="px-4 py-2.5 text-right font-bold" style={{ color: '#4ade80' }}>
                     +{fmt(data.periodIn)}
                   </td>
@@ -452,36 +455,36 @@ export default function AdminFinancial() {
       {/* ── Glossary ─────────────────────────────────────── */}
       <div className="flex flex-col gap-2">
         <GlossaryCard
-          term="Net Cash Flow"
+          term={t('admin.financial.metric.netCashFlow')}
           color="#fde68a"
-          formula="Deposits IN − Withdrawals OUT (selected period)"
-          explain="How much cash moved through the system in the chosen time window. Positive = more money came in than went out. This resets each period — it is not a running total."
-          example={`This month: ${fmt(data.periodIn)} IN − ${fmt(data.periodOut)} OUT = ${data.periodNet >= 0 ? '+' : ''}${fmt(data.periodNet)}`}
+          formula={t('admin.financial.glossary.netCashFlow.formula')}
+          explain={t('admin.financial.glossary.netCashFlow.explain')}
+          example={t('admin.financial.glossary.netCashFlow.example', { periodIn: fmt(data.periodIn), periodOut: fmt(data.periodOut), periodNet: `${data.periodNet >= 0 ? '+' : ''}${fmt(data.periodNet)}` })}
         />
         <GlossaryCard
-          term="Customer Liability"
+          term={t('admin.financial.recon.customerLiability')}
           color="#a5b4fc"
-          formula="Sum of all REAL wallet balances right now"
-          explain="The total amount all customers currently hold in their REAL accounts. If every customer withdrew today, this is what you would need to pay out from the bank."
-          example={`Right now: ${fmt(data.customerLiability)} sitting across all customer REAL wallets`}
+          formula={t('admin.financial.glossary.customerLiability.formula')}
+          explain={t('admin.financial.glossary.customerLiability.explain')}
+          example={t('admin.financial.glossary.customerLiability.example', { amount: fmt(data.customerLiability) })}
         />
         <GlossaryCard
-          term="Bank Position"
+          term={t('admin.financial.recon.bankPosition')}
           color="#fde68a"
-          formula="All-time COMPLETED Deposits − All-time COMPLETED Withdrawals"
-          explain="What the system calculates should be in your bank account. Every time you approve a deposit it goes up; every time you complete a withdrawal it goes down. Compare this against your actual bank app balance to check if they match."
-          example={`System expects your bank to hold ${fmt(data.bankPosition)}`}
+          formula={t('admin.financial.glossary.bankPosition.formula')}
+          explain={t('admin.financial.glossary.bankPosition.explain')}
+          example={t('admin.financial.glossary.bankPosition.example', { amount: fmt(data.bankPosition) })}
         />
         <GlossaryCard
-          term={`Estimated House ${data.houseProfit >= 0 ? 'Profit' : 'Deficit'}`}
+          term={data.houseProfit >= 0 ? t('admin.financial.glossary.houseProfit.term') : t('admin.financial.glossary.houseDeficit.term')}
           color={data.houseProfit >= 0 ? '#4ade80' : '#f87171'}
-          formula="Bank Position − Customer Liability"
+          formula={t('admin.financial.recon.profitFormula')}
           explain={
             data.houseProfit >= 0
-              ? "Your bank holds more than you owe customers. The difference is the house's earnings from game play (customers' losses minus their wins)."
-              : "Your bank holds less than you owe customers. The house is in deficit — customers have won more than they have lost overall."
+              ? t('admin.financial.glossary.houseProfit.explainPositive')
+              : t('admin.financial.glossary.houseProfit.explainNegative')
           }
-          example={`${fmt(data.bankPosition)} (bank) − ${fmt(data.customerLiability)} (owed) = ${data.houseProfit >= 0 ? '+' : ''}${fmt(data.houseProfit)}`}
+          example={t('admin.financial.glossary.houseProfit.example', { bankPosition: fmt(data.bankPosition), customerLiability: fmt(data.customerLiability), houseProfit: `${data.houseProfit >= 0 ? '+' : ''}${fmt(data.houseProfit)}` })}
         />
       </div>
 
@@ -489,15 +492,15 @@ export default function AdminFinancial() {
       <div className="rounded-lg px-4 py-3 text-xs" style={{ background: '#0f172a', border: '1px solid #1e1b4b' }}>
         <div className="mb-2 flex items-center gap-1.5 font-bold" style={{ color: '#a5b4fc' }}>
           <AlertTriangle size={11} />
-          How to verify your bank balance
+          {t('admin.financial.verify.title')}
         </div>
         <ol className="list-decimal ml-4 space-y-1" style={{ color: '#94a3b8' }}>
-          <li>Open your bank app and note the current balance.</li>
-          <li>Compare it to <strong style={{ color: '#fde68a' }}>Bank Position ({fmt(data.bankPosition)})</strong> — they should match.</li>
-          <li>If they match ✅ the system is fully in sync with reality.</li>
-          <li>If they differ ❌ check for unapproved deposits or unpaid withdrawals below.</li>
-          <li><strong style={{ color: '#f87171' }}>Pending withdrawals ({fmt(data.pendingWithAmount)})</strong> — money still in your bank, not sent yet.</li>
-          <li><strong style={{ color: '#4ade80' }}>Pending deposits ({fmt(data.pendingDepAmount)})</strong> — not yet approved, not counted in Bank Position yet.</li>
+          <li>{t('admin.financial.verify.step1')}</li>
+          <li>{t('admin.financial.verify.step2', { amount: fmt(data.bankPosition) })}</li>
+          <li>{t('admin.financial.verify.step3')}</li>
+          <li>{t('admin.financial.verify.step4')}</li>
+          <li>{t('admin.financial.verify.step5', { amount: fmt(data.pendingWithAmount) })}</li>
+          <li>{t('admin.financial.verify.step6', { amount: fmt(data.pendingDepAmount) })}</li>
         </ol>
       </div>
     </div>
@@ -519,6 +522,7 @@ function MetricCard({
 }: {
   icon: React.ReactNode; label: string; value: number; count?: number; color: string; signed?: boolean; isCount?: boolean
 }) {
+  const t = useT()
   const display = isCount ? value.toLocaleString() : `${signed && value >= 0 ? '+' : signed && value < 0 ? '−' : ''}${fmt(Math.abs(value))}`
   return (
     <div className="rounded-xl p-3" style={{ background: '#0f172a', border: '1px solid #1e1b4b' }}>
@@ -528,7 +532,7 @@ function MetricCard({
       </div>
       <div className="mt-1 text-xl font-bold" style={{ color }}>{display}</div>
       {count !== undefined && (
-        <div className="mt-0.5 text-[10px]" style={{ color: '#64748b' }}>{count} transaction{count !== 1 ? 's' : ''}</div>
+        <div className="mt-0.5 text-[10px]" style={{ color: '#64748b' }}>{t('admin.financial.metric.transactionCount', { count, s: count === 1 ? '' : 's' })}</div>
       )}
     </div>
   )
@@ -554,6 +558,7 @@ function PendingChip({
 function GlossaryCard({
   term, color, formula, explain, example,
 }: { term: string; color: string; formula: string; explain: string; example: string }) {
+  const t = useT()
   return (
     <div className="rounded-lg px-4 py-3 text-xs" style={{ background: '#0f172a', border: '1px solid #1e1b4b' }}>
       <div className="flex flex-wrap items-baseline gap-2">
@@ -563,7 +568,7 @@ function GlossaryCard({
         </span>
       </div>
       <p className="mt-1.5" style={{ color: '#94a3b8' }}>{explain}</p>
-      <p className="mt-1 text-[10px]" style={{ color: '#64748b' }}>e.g. {example}</p>
+      <p className="mt-1 text-[10px]" style={{ color: '#64748b' }}>{t('admin.financial.glossary.example.prefix')} {example}</p>
     </div>
   )
 }
