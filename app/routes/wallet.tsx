@@ -150,6 +150,7 @@ export async function loader({ request }: Route.LoaderArgs) {
     amount: t.amount,
     status: t.status,
     note: t.note,
+    rejectReasonCode: t.rejectReasonCode,
     slipUrl: t.slipUrl,
     createdAt: t.createdAt.toISOString(),
     targetUserId: t.targetUserId,
@@ -712,7 +713,9 @@ export default function WalletPage() {
         })
       } else {
         toast.error(verbRejected, {
-          description: payload.note ?? t('wallet.toast.notApproved', { amount: payload.amount.toLocaleString() }),
+          description: rejectReasonText(t, payload.rejectReasonCode)
+            ?? payload.note
+            ?? t('wallet.toast.notApproved', { amount: payload.amount.toLocaleString() }),
         })
       }
       revalidator.revalidate()
@@ -1243,6 +1246,18 @@ function CustomAmountInput({ value, onChange }: { value: string; onChange: (v: s
 
 type TxRowTx = Awaited<ReturnType<typeof loader>>['deposits'][number]
 
+const REJECT_REASON_KEYS = {
+  INVALID_SLIP: 'rejectReason.INVALID_SLIP',
+  AMOUNT_MISMATCH: 'rejectReason.AMOUNT_MISMATCH',
+  INSUFFICIENT_BALANCE: 'rejectReason.INSUFFICIENT_BALANCE',
+  QR_ISSUE: 'rejectReason.QR_ISSUE',
+} as const satisfies Record<string, Parameters<ReturnType<typeof useT>>[0]>
+
+function rejectReasonText(t: ReturnType<typeof useT>, code: string | null | undefined): string | null {
+  if (!code || !(code in REJECT_REASON_KEYS)) return null
+  return t(REJECT_REASON_KEYS[code as keyof typeof REJECT_REASON_KEYS])
+}
+
 function TxRow({ tx }: { tx: TxRowTx }) {
   const t = useT()
   const isCredit = tx.type === 'DEPOSIT' || tx.type === 'TRANSFER_IN' || tx.type === 'SYSTEM_REWARD'
@@ -1262,6 +1277,8 @@ function TxRow({ tx }: { tx: TxRowTx }) {
         : tx.status === 'CANCELLED' ? t('common.status.cancelled')
           : t('common.status.failed')
 
+  const reasonText = tx.status === 'CANCELLED' ? rejectReasonText(t, tx.rejectReasonCode) : null
+
   return (
     <div
       className="flex items-center justify-between rounded-xl px-4 py-3"
@@ -1272,6 +1289,9 @@ function TxRow({ tx }: { tx: TxRowTx }) {
           {tx.note ?? tx.type.replace('_', ' ').toLowerCase()}
         </span>
         <span className="text-xs" style={{ color: '#7c3aed' }}>{formatDate(tx.createdAt)}</span>
+        {reasonText && (
+          <span className="text-xs font-semibold" style={{ color: '#f87171' }}>{reasonText}</span>
+        )}
         {tx.slipUrl && (
           <a
             href={tx.slipUrl}

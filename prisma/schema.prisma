@@ -308,6 +308,7 @@ model Transaction {
   slipUrl        String? // payment-slip image URL (DEPOSIT / WITHDRAW with manual verification)
   approvedById   String?           @db.ObjectId // admin who approved this tx
   rejectedById   String?           @db.ObjectId // admin who rejected this tx
+  rejectReasonCode String?                      // code from RejectReasonCode (lib/reject-reasons.ts) — drives the translated message shown to the customer
   reviewedAt     DateTime?                      // when approved or rejected
   createdAt      DateTime          @default(now())
 

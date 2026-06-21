@@ -9,6 +9,7 @@ import { notifyAdmin, notifyUser } from '~/lib/pusher.server'
 import { ADMIN_CHANNEL, type TxCreatedPayload, type TxResolvedPayload } from '~/lib/pusher-channels'
 import { usePusherEvent } from '~/hooks/use-pusher'
 import { ConfirmDialog } from '~/components/ConfirmDialog'
+import { isValidRejectReason, rejectReasonLabel, rejectReasonsFor } from '~/lib/reject-reasons'
 
 const PAGE_SIZES = [10, 30, 50, 100, 200, 500] as const
 type Tab = 'deposit' | 'withdraw' | 'transfer' | 'reward'
@@ -200,6 +201,7 @@ export async function loader({ request }: Route.LoaderArgs) {
       status: t.status,
       slipUrl: t.slipUrl ?? null,
       note: t.note,
+      rejectReasonCode: t.rejectReasonCode,
       createdAt: t.createdAt.toISOString(),
       reviewedAt: t.reviewedAt?.toISOString() ?? null,
       balanceAfter: t.balanceAfter,
@@ -217,6 +219,7 @@ export async function action({ request }: Route.ActionArgs) {
   const fd = await request.formData()
   const op = String(fd.get('op') ?? '')
   const txId = String(fd.get('txId') ?? '')
+  const reason = String(fd.get('reason') ?? '')
   if (!txId) return { error: 'txId required' }
 
   if (op !== 'approve' && op !== 'reject') return { error: 'Unknown op' }
@@ -227,12 +230,17 @@ export async function action({ request }: Route.ActionArgs) {
     if (tx.status !== 'PENDING') return { error: 'Only pending transactions can be reviewed.' }
 
     if (op === 'reject') {
+      if (tx.type !== 'DEPOSIT' && tx.type !== 'WITHDRAW') return { error: 'Only deposit/withdraw requests can be rejected here.' }
+      if (!isValidRejectReason(tx.type, reason)) return { error: 'Please select a reject reason.' }
+      const reasonLabel = rejectReasonLabel(tx.type, reason)
+
       const [updated] = await prisma.$transaction([
         prisma.transaction.update({
           where: { id: tx.id },
           data: {
             status: 'CANCELLED',
-            note: `${tx.note ?? 'Deposit'} — rejected by admin`,
+            note: `${reasonLabel} — rejected by admin`,
+            rejectReasonCode: reason,
             rejectedById: admin.id,
             reviewedAt: new Date(),
           },
@@ -242,6 +250,7 @@ export async function action({ request }: Route.ActionArgs) {
             actorId: admin.id,
             action: tx.type === 'DEPOSIT' ? 'deposit.reject' : 'withdraw.reject',
             target: `transaction:${tx.id}`,
+            metadata: { rejectReasonCode: reason },
           },
         }),
       ])
@@ -252,6 +261,7 @@ export async function action({ request }: Route.ActionArgs) {
         amount: updated.amount,
         balanceAfter: updated.balanceAfter,
         note: updated.note,
+        rejectReasonCode: updated.rejectReasonCode,
       })
       notifyAdmin('transaction:resolved', { id: updated.id })
       return { ok: true }
@@ -416,6 +426,7 @@ export default function AdminTransactions() {
   const totalPages = Math.max(1, Math.ceil(data.total / data.pageSize))
 
   const [pending, setPending] = useState<PendingAction>(null)
+  const [rejectReason, setRejectReason] = useState('')
   // Active slip URL for the fullscreen preview modal — null = closed.
   const [slipPreview, setSlipPreview] = useState<string | null>(null)
 
@@ -588,7 +599,7 @@ export default function AdminTransactions() {
               tab={data.tab as 'deposit' | 'withdraw'}
               loading={loading}
               onApprove={() => setPending({ tx, op: 'approve' })}
-              onReject={() => setPending({ tx, op: 'reject' })}
+              onReject={() => { setRejectReason(''); setPending({ tx, op: 'reject' }) }}
               onSlipPreview={url => setSlipPreview(url)}
             />
           )
@@ -639,8 +650,26 @@ export default function AdminTransactions() {
           }
           tone={pending.op === 'approve' ? 'success' : 'danger'}
           confirmLabel={pending.op === 'approve' ? 'APPROVE' : 'REJECT'}
-          fields={{ txId: pending.tx.id, op: pending.op }}
-        />
+          fields={pending.op === 'reject' ? { txId: pending.tx.id, op: pending.op, reason: rejectReason } : { txId: pending.tx.id, op: pending.op }}
+          confirmDisabled={pending.op === 'reject' && !rejectReason}
+        >
+          {pending.op === 'reject' && (
+            <label className="flex flex-col gap-1">
+              <span className="text-xs font-bold" style={{ color: '#a5b4fc' }}>Reject reason</span>
+              <select
+                value={rejectReason}
+                onChange={e => setRejectReason(e.target.value)}
+                className="rounded-md px-2 py-2 text-xs font-semibold outline-none"
+                style={{ background: '#0f172a', color: '#fde68a', border: '1.5px solid #4338ca' }}
+              >
+                <option value="" disabled>Select a reason…</option>
+                {rejectReasonsFor(data.tab === 'deposit' ? 'DEPOSIT' : 'WITHDRAW').map(r => (
+                  <option key={r.code} value={r.code}>{r.label}</option>
+                ))}
+              </select>
+            </label>
+          )}
+        </ConfirmDialog>
       )}
     </div>
   )

@@ -4,6 +4,7 @@ import { Form, Link, useFetcher, useLoaderData, useOutletContext, useRevalidator
 import { toast } from 'sonner'
 import type { Route } from './+types/home'
 import { LoginModal } from '~/components/LoginModal'
+import { JoinGroupModal } from '~/components/JoinGroupModal'
 import { RegisterModal } from '~/components/RegisterModal'
 import { FeatureTour, type TourStep } from '~/components/FeatureTour'
 import { useUser } from '~/hooks/use-user'
@@ -31,7 +32,7 @@ import {
   type RoundStartedPayload,
   type TxUpdatedPayload,
 } from '~/lib/pusher-channels'
-import { ArrowDown, ArrowUp, ArrowUpDown, BookOpen, CalendarClock, Check, ChevronDown, Eye, LogOut, MessageCircle, Pencil, ReceiptText, RefreshCw, Undo, User, Volume2, VolumeOff, Wallet, X } from 'lucide-react'
+import { ArrowDown, ArrowUp, ArrowUpDown, BookOpen, CalendarClock, Check, ChevronDown, Eye, LogOut, MessageCircle, Pencil, ReceiptText, RefreshCw, Undo, User, Users, Volume2, VolumeOff, Wallet, X } from 'lucide-react'
 
 type SymbolKey = 'fish' | 'prawn' | 'crab' | 'rooster' | 'gourd' | 'frog'
 
@@ -826,9 +827,10 @@ interface ProfileDropdownProps {
   onClose: () => void
   competitionEnabled?: boolean
   competitionType?: string
+  onJoinGroup: () => void
 }
 
-function ProfileDropdown({ name, onClose, competitionEnabled, competitionType }: ProfileDropdownProps) {
+function ProfileDropdown({ name, onClose, competitionEnabled, competitionType, onJoinGroup }: ProfileDropdownProps) {
   const ref = useRef<HTMLDivElement>(null)
   const t = useT()
 
@@ -840,13 +842,14 @@ function ProfileDropdown({ name, onClose, competitionEnabled, competitionType }:
     return () => document.removeEventListener('mousedown', handler)
   }, [onClose])
 
-  const items: { label: string; icon: ReactNode; href: string; desc: string; external?: boolean; highlight?: boolean }[] = [
+  const items: { label: string; icon: ReactNode; href?: string; desc: string; external?: boolean; highlight?: boolean; onClick?: () => void }[] = [
     ...(competitionEnabled ? [{ label: competitionType === 'DEMO_LIVE' ? '🏆 ການແຂ່ງຂັນ Demo' : '🏆 ການແຂ່ງຂັນ Real', icon: <span style={{ fontSize: 18 }}>🏆</span>, href: '/competition', desc: competitionType === 'DEMO_LIVE' ? 'ຄະແນນ Demo Competition' : 'ຄະແນນ Real Competition', highlight: true }] : []),
     { label: t('menu.wallet'), icon: <Wallet size={18} />, href: '/wallet', desc: t('menu.walletDesc') },
     { label: t('menu.playHistory'), icon: <ReceiptText size={18} />, href: '/history', desc: t('menu.playHistoryDesc') },
     { label: t('menu.profile'), icon: <User size={18} />, href: '/profile', desc: t('menu.profileDesc') },
     { label: t('menu.rules'), icon: <BookOpen size={18} />, href: '/rules', desc: t('menu.rulesDesc') },
     { label: t('menu.contactAdmin'), icon: <MessageCircle size={18} />, href: 'https://wa.me/8562099299817', desc: t('menu.contactAdminDesc'), external: true },
+    { label: t('menu.joinGroup'), icon: <Users size={18} />, desc: t('menu.joinGroupDesc'), onClick: onJoinGroup },
   ]
 
   return (
@@ -878,7 +881,26 @@ function ProfileDropdown({ name, onClose, competitionEnabled, competitionType }:
 
       <div className="py-1">
         {items.map(item =>
-          item.external ? (
+          item.onClick ? (
+            <button
+              key={item.label}
+              onClick={() => {
+                playClick()
+                onClose()
+                item.onClick!()
+              }}
+              className="flex w-full items-center gap-3 px-4 py-2 text-left transition-all hover:opacity-90"
+              style={{ background: 'transparent' }}
+              onMouseEnter={e => (e.currentTarget.style.background = '#2d1b4e')}
+              onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
+            >
+              <span style={{ color: '#fff' }}>{item.icon}</span>
+              <div>
+                <div className="text-sm font-semibold" style={{ color: '#e9d5ff' }}>{item.label}</div>
+                <div className="text-[10px] text-white">{item.desc}</div>
+              </div>
+            </button>
+          ) : item.external ? (
             <button
               key={item.href}
               onClick={() => {
@@ -900,7 +922,7 @@ function ProfileDropdown({ name, onClose, competitionEnabled, competitionType }:
           ) : (
             <Link
               key={item.href}
-              to={item.href}
+              to={item.href!}
               prefetch="intent"
               onClick={() => { playClick(); onClose() }}
               className="flex w-full items-center gap-3 px-4 py-2 text-left transition-all hover:opacity-90"
@@ -1253,6 +1275,7 @@ export default function FishPrawnCrabGame() {
   const [overlayModeOpen, setOverlayModeOpen] = useState(false)
   const [overlayWalletOpen, setOverlayWalletOpen] = useState(false)
   const [overlayProfileOpen, setOverlayProfileOpen] = useState(false)
+  const [joinGroupOpen, setJoinGroupOpen] = useState(false)
   const liveRound = loaderData.liveRound
   // The URL shown to customers: active round's stream takes priority; otherwise
   // use the admin-controlled SystemSetting (cleared by "End Live").
@@ -2443,7 +2466,7 @@ export default function FishPrawnCrabGame() {
                 {initials || '?'}
               </button>
               {overlayProfileOpen && (
-                <ProfileDropdown name={displayName} onClose={() => setOverlayProfileOpen(false)} competitionEnabled={competitionMenuVisible} competitionType={loaderData.competitionType} />
+                <ProfileDropdown name={displayName} onClose={() => setOverlayProfileOpen(false)} competitionEnabled={competitionMenuVisible} competitionType={loaderData.competitionType} onJoinGroup={() => setJoinGroupOpen(true)} />
               )}
             </div>
 
@@ -3037,7 +3060,7 @@ export default function FishPrawnCrabGame() {
                   </svg>
                 </button>
                 {profileOpen && (
-                  <ProfileDropdown name={displayName} onClose={() => setProfileOpen(false)} competitionEnabled={competitionMenuVisible} competitionType={loaderData.competitionType} />
+                  <ProfileDropdown name={displayName} onClose={() => setProfileOpen(false)} competitionEnabled={competitionMenuVisible} competitionType={loaderData.competitionType} onJoinGroup={() => setJoinGroupOpen(true)} />
                 )}
               </>
             )}
@@ -4254,6 +4277,8 @@ export default function FishPrawnCrabGame() {
           </div>
         </div>
       )}
+
+      <JoinGroupModal open={joinGroupOpen} onClose={() => setJoinGroupOpen(false)} />
 
       {/* Sign-in overlay — opened from the Anonymous pill or when anonymous users try to switch to REAL */}
       <LoginModal

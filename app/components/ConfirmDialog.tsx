@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, type ReactNode } from 'react'
 import { useFetcher } from 'react-router'
 import { Loader, X } from 'lucide-react'
 
@@ -19,6 +19,10 @@ interface ConfirmDialogProps {
   action?: string
   /** Called with `true` once the action returns `{ ok: true }`. */
   onSettled?: (ok: boolean) => void
+  /** Extra form content rendered above the action buttons (e.g. a reason select). */
+  children?: ReactNode
+  /** Disables the confirm button without affecting cancel (e.g. reason not picked yet). */
+  confirmDisabled?: boolean
 }
 
 const TONE_STYLES: Record<ConfirmTone, { bg: string; border: string; color: string }> = {
@@ -41,6 +45,8 @@ export function ConfirmDialog({
   method = 'post',
   action,
   onSettled,
+  children,
+  confirmDisabled,
 }: ConfirmDialogProps) {
   const fetcher = useFetcher<{ ok?: boolean; error?: string }>()
   const submitting = fetcher.state !== 'idle'
@@ -115,28 +121,31 @@ export function ConfirmDialog({
           </div>
         )}
 
-        <fetcher.Form method={method} action={action} className="flex items-center justify-end gap-2">
+        <fetcher.Form method={method} action={action}>
           {Object.entries(fields).map(([k, v]) => (
             <input key={k} type="hidden" name={k} value={v} />
           ))}
-          <button
-            type="button"
-            onClick={onClose}
-            disabled={submitting}
-            className="rounded-md px-3 py-1.5 text-xs font-bold  disabled:opacity-50"
-            style={{ background: 'transparent', color: '#a5b4fc', border: '1px solid #4338ca' }}
-          >
-            CANCEL
-          </button>
-          <button
-            type="submit"
-            disabled={submitting}
-            className="inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-bold  disabled:opacity-50"
-            style={{ background: toneStyle.bg, color: toneStyle.color, border: `1px solid ${toneStyle.border}` }}
-          >
-            {submitting && <Loader size={12} className="animate-spin" />}
-            {confirmLabel}
-          </button>
+          {children && <div className="mb-4">{children}</div>}
+          <div className="flex items-center justify-end gap-2">
+            <button
+              type="button"
+              onClick={onClose}
+              disabled={submitting}
+              className="rounded-md px-3 py-1.5 text-xs font-bold  disabled:opacity-50"
+              style={{ background: 'transparent', color: '#a5b4fc', border: '1px solid #4338ca' }}
+            >
+              CANCEL
+            </button>
+            <button
+              type="submit"
+              disabled={submitting || confirmDisabled}
+              className="inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-bold  disabled:opacity-50"
+              style={{ background: toneStyle.bg, color: toneStyle.color, border: `1px solid ${toneStyle.border}` }}
+            >
+              {submitting && <Loader size={12} className="animate-spin" />}
+              {confirmLabel}
+            </button>
+          </div>
         </fetcher.Form>
       </div>
     </div>

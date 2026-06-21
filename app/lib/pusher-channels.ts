@@ -26,6 +26,7 @@ export interface TxUpdatedPayload {
   amount: number
   balanceAfter: number
   note: string | null
+  rejectReasonCode?: string | null // set on rejection — looked up via i18n `rejectReason.<code>` for the customer's locale
 }
 
 export interface TxResolvedPayload {

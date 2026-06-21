@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { Form, useFetcher, useLoaderData, useNavigation, useRevalidator } from 'react-router'
 import { ArrowDown, ArrowUp, ArrowUpDown, CalendarClock, Check, Loader, Lock, PlayCircle, Radio, Square, Users as UsersIcon, X } from 'lucide-react'
 import type { DiceSymbol } from '@prisma/client'
@@ -1197,6 +1197,41 @@ function ViewersPanel({ viewers }: { viewers: ReturnType<typeof usePresenceMembe
   )
 }
 
+// Groups bets placed on the exact same selection (e.g. every FISH bet, every
+// FROG+ROOSTER pair regardless of which symbol the bettor tapped first) into
+// one row so admins watching a crowded round aren't scanning dozens of
+// near-duplicate lines. Database rows stay untouched — this is display-only.
+function liveBetGroupKey(b: LiveBet): string {
+  switch (b.kind) {
+    case 'SYMBOL': return `SYMBOL:${b.symbol}`
+    case 'RANGE': return `RANGE:${b.range}`
+    case 'SUM': return `SUM:${b.exactSum}`
+    case 'PAIR': return `PAIR:${[b.pairA, b.pairB].sort().join('+')}`
+    default: return `${b.kind}:${b.symbol}:${b.range}:${b.pairA}:${b.pairB}:${b.exactSum}`
+  }
+}
+
+type GroupedLiveBet = Pick<LiveBet, 'kind' | 'symbol' | 'range' | 'pairA' | 'pairB' | 'exactSum'> & {
+  key: string
+  amount: number
+  bettors: { tel: string; name: string | null }[]
+}
+
+function groupLiveBets(bets: LiveBet[]): GroupedLiveBet[] {
+  const groups = new Map<string, GroupedLiveBet>()
+  for (const b of bets) {
+    const key = liveBetGroupKey(b)
+    let g = groups.get(key)
+    if (!g) {
+      g = { key, kind: b.kind, symbol: b.symbol, range: b.range, pairA: b.pairA, pairB: b.pairB, exactSum: b.exactSum, amount: 0, bettors: [] }
+      groups.set(key, g)
+    }
+    g.amount += b.amount
+    if (!g.bettors.some(p => p.tel === b.userTel)) g.bettors.push({ tel: b.userTel, name: b.userName })
+  }
+  return Array.from(groups.values()).sort((a, b) => b.amount - a.amount)
+}
+
 function LiveBetsPanel({
   bets,
   hasOpenRound,
@@ -1209,6 +1244,7 @@ function LiveBetsPanel({
   maxHeight?: string
 }) {
   const totalStake = bets.reduce((sum, b) => sum + b.amount, 0)
+  const grouped = useMemo(() => groupLiveBets(bets), [bets])
   return (
     <div className="rounded-xl p-4" style={{ background: '#0f172a', border: '1px solid #1e1b4b' }}>
       <div className="mb-3 flex items-center justify-between">
@@ -1221,28 +1257,29 @@ function LiveBetsPanel({
       </div>
       {!hasOpenRound ? (
         <p className="text-center text-[10px]" style={{ color: '#475569' }}>Start a LIVE round to see bets stream in.</p>
-      ) : bets.length === 0 ? (
+      ) : grouped.length === 0 ? (
         <p className="text-center text-[10px]" style={{ color: '#475569' }}>No bets in this round yet.</p>
       ) : (
         <ul className="flex flex-col gap-1 overflow-y-auto" style={{ maxHeight }}>
-          {bets.map(b => (
+          {grouped.map(g => (
             <li
-              key={b.id}
+              key={g.key}
               className="flex items-center justify-between gap-2 rounded-md px-2 py-1.5 text-xs"
               style={{ background: '#1e1b4b' }}
             >
               <div className="min-w-0">
                 <div className="truncate font-semibold" style={{ color: '#e9d5ff' }}>
-                  {/* Name only (per request) — fall back to tel if the user
-                      has no first/last name set so the row still identifies
-                      who placed the bet. */}
-                  {b.userName ?? b.userTel}
+                  {/* Single bettor → name (fall back to tel). Multiple bettors
+                      on the same selection → every phone number, comma-joined. */}
+                  {g.bettors.length === 1
+                    ? (g.bettors[0].name ?? g.bettors[0].tel)
+                    : g.bettors.map(p => p.tel).join(', ')}
                 </div>
                 <div className="mt-0.5" style={{ color: '#a5b4fc' }}>
-                  <LiveBetDescription bet={b} />
+                  <LiveBetDescription bet={g} />
                 </div>
               </div>
-              <span className="shrink-0 font-bold" style={{ color: '#fde68a' }}>{b.amount.toLocaleString()}</span>
+              <span className="shrink-0 font-bold" style={{ color: '#fde68a' }}>{g.amount.toLocaleString()}</span>
             </li>
           ))}
         </ul>
@@ -1254,7 +1291,7 @@ function LiveBetsPanel({
 // JSX renderer for the description line under each LIVE BETS row.
 //   - SYMBOL / PAIR → small symbol thumbnail(s) + uppercase name
 //   - RANGE → colored arrow icon (low=green↓, middle=yellow↕, high=red↑)
-function LiveBetDescription({ bet }: { bet: LiveBet }) {
+function LiveBetDescription({ bet }: { bet: Pick<LiveBet, 'kind' | 'symbol' | 'range' | 'pairA' | 'pairB' | 'exactSum'> }) {
   if (bet.kind === 'SYMBOL' && bet.symbol) {
     return (
       <span className="flex items-center gap-1.5 text-[10px]">

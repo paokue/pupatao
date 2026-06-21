@@ -316,7 +316,10 @@ export const STRINGS = {
 
   // ─── Feature discovery tour ──────────────────────────────────────────
   "tour.replay": { lo: "ວິທີຫຼິ້ນ", en: "How to Play" },
-  "tour.stepOf": { lo: "ບາດກ້າວ {current}/{total}", en: "Step {current} of {total}" },
+  "tour.stepOf": {
+    lo: "ບາດກ້າວ {current}/{total}",
+    en: "Step {current} of {total}",
+  },
   "tour.next": { lo: "ຕໍ່ໄປ", en: "Next" },
   "tour.skip": { lo: "ຂ້າມ", en: "Skip" },
   "tour.finish": { lo: "ເລີ່ມຫຼິ້ນ! 🎉", en: "Let's Play! 🎉" },
@@ -340,12 +343,18 @@ export const STRINGS = {
     lo: "ນອກຈາກຮູບສັດ, ທ່ານຍັງວາງເດີມພັນຍອດລວມໝາກລູກເຕົ໋າໄດ້: ຕໍ່າ, ກາງ, ສູງ — ເລືອກຊ່ວງຍອດລວມທີ່ທ່ານຄາດວ່າຈະອອກ.",
     en: "Beyond symbols, you can also bet on the total dice sum: LOW, MIDDLE, or HIGH — pick the range you think the roll will land in.",
   },
-  "tour.step5Title": { lo: "🪙 ເລືອກຈຳນວນເງິນ", en: "🪙 Choose Your Bet Amount" },
+  "tour.step5Title": {
+    lo: "🪙 ເລືອກຈຳນວນເງິນ",
+    en: "🪙 Choose Your Bet Amount",
+  },
   "tour.step5Body": {
     lo: "ກົດເລືອກຈຳນວນຊິບກ່ອນວາງເດີມພັນ. ບໍ່ມີຈຳນວນທີ່ທ່ານຕ້ອງການ? ກົດໄອຄອນດິນສໍເພື່ອປ້ອນຈຳນວນເອງໄດ້ເລີຍ!",
     en: "Pick a chip amount before placing bets. Don't see the amount you want? Tap the pencil icon to enter a custom amount!",
   },
-  "tour.step6Title": { lo: "✅ ຢືນຢັນການວາງເດີມພັນ", en: "✅ Confirm Your Bet" },
+  "tour.step6Title": {
+    lo: "✅ ຢືນຢັນການວາງເດີມພັນ",
+    en: "✅ Confirm Your Bet",
+  },
   "tour.step6Body": {
     lo: "ໂໝດຫຼິ້ນດ່ຽວ: ກົດ 'ວາງເດີມພັນ' ເພື່ອເລີ່ມຮອບ — ຜົນຈະອອກອັດຕະໂນມັດຫຼັງໝົດເວລາ. ໂໝດໄລສົດ: ປຸ່ມຈະເປັນ 'ແທງເລີຍ' — ສຳຄັນ! ເດີມພັນຂອງທ່ານຈະບໍ່ຖືກບັນທຶກຈົນກວ່າທ່ານຈະກົດປຸ່ມນີ້.",
     en: "In Self-Play, tap 'BET' to start a round — it resolves automatically when the timer ends. In LIVE mode, this button reads 'ແທງເລີຍ' instead — important: your bets aren't submitted until you tap it!",
@@ -392,6 +401,21 @@ export const STRINGS = {
   "menu.contactAdminDesc": {
     lo: "ສົນທະນາກັບແອັດມິນຜ່ານ WhatsApp",
     en: "Chat with admin on WhatsApp",
+  },
+  "menu.joinGroup": { lo: "ເຂົ້າຮ່ວມກຸ່ມ", en: "Join Group" },
+  "menu.joinGroupDesc": {
+    lo: "ເຂົ້າກຸ່ມ WhatsApp ຫຼື Messenger",
+    en: "Join our WhatsApp or Messenger group",
+  },
+  "joinGroup.title": { lo: "ເຂົ້າຮ່ວມກຸ່ມ", en: "Join Our Group" },
+  "joinGroup.subtitle": {
+    lo: "ເລືອກແອັບທີ່ທ່ານໃຊ້ ເພື່ອເຂົ້າຮ່ວມກຸ່ມຂອງພວກເຮົາ",
+    en: "Pick an app to join our community group",
+  },
+  "joinGroup.whatsapp": { lo: "ເຂົ້າກຸ່ມ WhatsApp", en: "Join WhatsApp Group" },
+  "joinGroup.messenger": {
+    lo: "ເຂົ້າກຸ່ມ Messenger",
+    en: "Join Messenger Group",
   },
   "menu.loggedIn": { lo: "ເຂົ້າສູ່ລະບົບແລ້ວ", en: "Logged in" },
   "menu.language": { lo: "ພາສາ", en: "Language" },
@@ -571,6 +595,25 @@ export const STRINGS = {
   "wallet.toast.notApproved": {
     lo: "{amount} ₭ — ຄຳຂໍບໍ່ຖືກອະນຸມັດ",
     en: "{amount} ₭ — request not approved",
+  },
+
+  // ─── Reject reasons (admin picks a code; customer sees the translated
+  // text in their own locale) ──────────────────────────────────────────
+  "rejectReason.INVALID_SLIP": {
+    lo: "ສະລິບການໂອນບໍ່ຖືກຕ້ອງ ກາລຸນາກວດສອບ ແລະ ລອງໃໝ່ອີກຄັ້ງ.",
+    en: "The transfer slip is invalid. Please check and try again.",
+  },
+  "rejectReason.AMOUNT_MISMATCH": {
+    lo: "ຈໍານວນເງີນທີ່ໂອນ ແລະ ເຕີມໃນລະບົບບໍ່ເທົ່າກັນ ກວດສອບ ແລະ ລອງໃໝ່",
+    en: "The transferred amount does not match the deposit amount. Please check and try again.",
+  },
+  "rejectReason.INSUFFICIENT_BALANCE": {
+    lo: "ຍອດເງີນຂອງທ່ານບໍ່ພຽງພໍທີ່ຈະຖອນ",
+    en: "Your balance is insufficient for this withdrawal.",
+  },
+  "rejectReason.QR_ISSUE": {
+    lo: "QR ຂອງທ່ານມີບັນຫາ ກາລຸນາອັບເດດ QR ໃໝ່",
+    en: "There is an issue with your QR code. Please update it.",
   },
 
   // ─── History page ───────────────────────────────────────────────────
