@@ -41,6 +41,26 @@ const SPECIAL_SUMS = new Set([3, 7, 11, 15])
 type LivePromo = { triple: boolean; sum: boolean }
 
 // Mirrors the per-bet payout math in api.play-round.tsx so server-side resolve
+// Retries a transaction on MongoDB transient write-conflict / deadlock errors
+// (Prisma code P2034). These happen when a concurrent write touches a document
+// the transaction is modifying — e.g. a bettor playing self-play while a LIVE
+// round settle credits their wallet. The transaction aborts atomically on
+// conflict (nothing committed), so re-running the whole thing is safe and never
+// double-credits. Uses exponential backoff with jitter.
+async function withWriteConflictRetry<T>(fn: () => Promise<T>, maxAttempts = 6): Promise<T> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await fn()
+    } catch (e) {
+      const code = (e as { code?: string })?.code
+      const msg = String((e as { message?: string })?.message ?? '')
+      const isTransient = code === 'P2034' || /write conflict|deadlock|please retry/i.test(msg)
+      if (!isTransient || attempt >= maxAttempts - 1) throw e
+      await new Promise(r => setTimeout(r, 60 * 2 ** attempt + Math.floor(Math.random() * 60)))
+    }
+  }
+}
+
 // produces the same numbers as a client-rolled RANDOM round would.
 // Multipliers come from getPayoutConfig() so a single env change tunes both.
 // `livePromo` is only passed for LIVE-mode settlements to apply promotion bonuses.
@@ -501,7 +521,7 @@ export async function action({ request }: Route.ActionArgs) {
       // independent of the money math and are applied in parallel AFTER commit —
       // this keeps the transaction short so it doesn't hit the 30s timeout on a
       // busy round (many bets/players × Atlas round-trip latency).
-      const newBalances = await prisma.$transaction(async db => {
+      const newBalances = await withWriteConflictRetry(() => prisma.$transaction(async db => {
         await db.gameRound.update({
           where: { id: roundId },
           data: { status: 'RESOLVED', dice1, dice2, dice3, diceSum, resolvedAt },
@@ -572,7 +592,7 @@ export async function action({ request }: Route.ActionArgs) {
           }
         }
         return balances
-      }, { timeout: 60000, maxWait: 15000 })
+      }, { timeout: 60000, maxWait: 15000 }))
 
       // Non-money-critical follow-ups, run in parallel outside the transaction.
       // The round is already RESOLVED (settle is idempotent via the status
@@ -757,7 +777,7 @@ export async function action({ request }: Route.ActionArgs) {
         else refundGroups.set(key, { userId: b.userId, walletId: b.walletId, refund: b.amount })
       }
 
-      const refundedBalances = await prisma.$transaction(async db => {
+      const refundedBalances = await withWriteConflictRetry(() => prisma.$transaction(async db => {
         await db.gameRound.update({
           where: { id: roundId },
           data: { status: 'CANCELLED', resolvedAt: new Date() },
@@ -789,7 +809,7 @@ export async function action({ request }: Route.ActionArgs) {
           balances[grp.userId] = newBalance
         }
         return balances
-      }, { timeout: 60000, maxWait: 15000 })
+      }, { timeout: 60000, maxWait: 15000 }))
 
       // Audit log is non-money-critical — write it outside the transaction.
       await prisma.auditLog.create({
