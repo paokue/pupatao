@@ -258,6 +258,8 @@ export const STRINGS = {
   },
   "withdraw.changeQr": { lo: "ປ່ຽນ QR", en: "CHANGE QR" },
   "withdraw.keepCurrentQr": { lo: "ໃຊ້ QR ປັດຈຸບັນ", en: "KEEP CURRENT QR" },
+  "withdraw.fee": { lo: "ຄ່າທຳນຽມ", en: "Fee" },
+  "withdraw.youReceive": { lo: "ຈະໄດ້ຮັບ", en: "You receive" },
   "withdraw.confirmCta": { lo: "ຢືນຢັນການຖອນ", en: "CONFIRM WITHDRAW" },
   "withdraw.submitted": { lo: "ສົ່ງການຖອນແລ້ວ", en: "Withdraw submitted" },
   "withdraw.submittedDesc": {
@@ -525,6 +527,7 @@ export const STRINGS = {
 
   // ─── LIVE-mode status badges + waiting messages ──────────────────────
   "live.statusBetting": { lo: "⏱ {n}s ຮັບແທງ", en: "⏱ {n}s BETTING" },
+  "live.betLocked": { lo: "⏳ ກຳລັງເລີ່ມຮອບໃໝ່, ກະລຸນາລໍຖ້າ...", en: "⏳ Starting a new round, please wait…" },
   "live.statusWaitingResult": {
     lo: "🔒 ກຳລັງລໍຜົນ",
     en: "🔒 WAITING FOR RESULT",
@@ -595,6 +598,10 @@ export const STRINGS = {
   "result.totalStake": { lo: "ລວມການແທງ", en: "Total stake" },
   "result.totalWon": { lo: "ລວມຊະນະ", en: "Total won" },
   "result.totalLost": { lo: "ລວມແພ້", en: "Total lost" },
+  "result.refundNote": {
+    lo: "ໝາຍເຫດ: ບາງລາຍການເກີດບັນຫາລະຫວ່າງການວາງເດີມພັນ ຈຶ່ງຖືກຄືນເງິນໃຫ້ທ່ານ.",
+    en: "Note: some bets had a problem during betting, so they were refunded to you.",
+  },
 
   // ─── Wallet realtime toasts (admin approve / reject events) ──────────
   "wallet.toast.depositApproved": {
@@ -689,6 +696,7 @@ export const STRINGS = {
   "history.filter.allKinds": { lo: "ປະເພດທັງໝົດ", en: "All kinds" },
   "history.won": { lo: "ຊະນະ +{amount}", en: "won +{amount}" },
   "history.lost": { lo: "ເສຍ", en: "lost" },
+  "history.refunded": { lo: "ຄືນເງິນ", en: "refunded" },
   "history.win": { lo: "ຊະນະ +{amount}", en: "WIN +{amount}" },
   "history.loss": { lo: "ເສຍ -{amount}", en: "LOSS -{amount}" },
   "history.sum": { lo: "ລວມ:", en: "SUM:" },

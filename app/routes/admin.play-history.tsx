@@ -639,6 +639,14 @@ function BetCard({ b, rowNum, onView, onLock, lockProcessing }: { b: Bet; rowNum
 
 function ResultPill({ result }: { result: string | null }) {
   if (!result) return <span className="text-[10px]" style={{ color: '#818cf8' }}>—</span>
+  if (result === 'REFUNDED') {
+    return (
+      <span className="inline-block rounded-full px-2 py-0.5 text-[10px] font-bold"
+        style={{ background: 'rgba(217,119,6,0.2)', color: '#fbbf24' }}>
+        REFUNDED
+      </span>
+    )
+  }
   const isWin = result === 'WIN'
   return (
     <span className="inline-block rounded-full px-2 py-0.5 text-[10px] font-bold"

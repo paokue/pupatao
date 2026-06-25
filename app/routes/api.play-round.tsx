@@ -12,6 +12,32 @@ import {
 
 const MAX_BET_PER_ROUND = 10_000_000
 
+// LIVE per-betting-target caps (per round). A "target" is a single symbol,
+// range, exact-sum number, or pair combo. One user may stake at most
+// LIVE_TARGET_USER_CAP on a target; all users combined at most
+// LIVE_TARGET_ROUND_CAP — once a target hits the round cap it's full for
+// everyone. (RANDOM/self-play is single-player, so these don't apply there.)
+const LIVE_TARGET_USER_CAP  = 200_000
+const LIVE_TARGET_ROUND_CAP = 1_000_000
+
+// Canonical key identifying a betting target, so bets on the same option
+// aggregate regardless of which board cell was tapped (e.g. both GOURD cells →
+// one SYMBOL:GOURD bucket; a pair is order-independent).
+function liveTargetKey(b: {
+  kind: string
+  symbol: string | null
+  range: string | null
+  pairA: string | null
+  pairB: string | null
+  exactSum: number | null
+}): string | null {
+  if (b.kind === 'SYMBOL' && b.symbol) return `SYMBOL:${b.symbol}`
+  if (b.kind === 'RANGE' && b.range) return `RANGE:${b.range}`
+  if (b.kind === 'SUM' && b.exactSum != null) return `SUM:${b.exactSum}`
+  if (b.kind === 'PAIR' && b.pairA && b.pairB) return `PAIR:${[b.pairA, b.pairB].sort().join('-')}`
+  return null
+}
+
 type Mode = 'RANDOM' | 'LIVE'
 type WalletKey = 'DEMO' | 'REAL' | 'PROMO'
 
@@ -377,7 +403,7 @@ async function handleRandomRound(args: {
 //   debited now; payouts are credited later when the admin enters the dice on
 //   the admin Live page. No dice come from the customer for this mode.
 async function handleLiveBets(args: {
-  user: { id: string; tel: string; firstName: string | null; lastName: string | null }
+  user: { id: string; tel: string; firstName: string | null; lastName: string | null; betLocked: boolean }
   wallet: { id: string; balance: number }
   walletKey: WalletKey
   totalStake: number
@@ -387,6 +413,12 @@ async function handleLiveBets(args: {
   sumBets: SumBetIn[]
 }) {
   const { user, wallet, walletKey, totalStake, symbolBets, rangeBets, pairBets, sumBets } = args
+
+  // Bet-locked users cannot place LIVE bets (the board is hidden client-side; this
+  // is the server-side safety net).
+  if (user.betLocked) {
+    return Response.json({ error: 'ບັນຊີຂອງທ່ານຖືກລັອກການແທງ Live ຊົ່ວຄາວ.' }, { status: 403 })
+  }
 
   const openRound = await prisma.gameRound.findFirst({
     where: { mode: 'LIVE', status: 'BETTING' },
@@ -398,6 +430,45 @@ async function handleLiveBets(args: {
   }
   if (openRound.bettingClosesAt && openRound.bettingClosesAt.getTime() < Date.now()) {
     return Response.json({ error: 'Betting window closed for this round.' }, { status: 409 })
+  }
+
+  // ── Per-target limits ────────────────────────────────────────────────────
+  // Sum the incoming stake per target, then add existing bets in this round
+  // (this user's, and everyone's) and enforce the per-user / per-round caps.
+  const incomingByTarget = new Map<string, number>()
+  const addIncoming = (k: string, amt: number) => incomingByTarget.set(k, (incomingByTarget.get(k) ?? 0) + amt)
+  for (const b of symbolBets) addIncoming(`SYMBOL:${b.symbol}`, b.amount)
+  for (const b of rangeBets)  addIncoming(`RANGE:${b.range}`, b.amount)
+  for (const b of sumBets)    addIncoming(`SUM:${b.sum}`, b.amount)
+  for (const b of pairBets)   addIncoming(`PAIR:${[b.symbolA, b.symbolB].sort().join('-')}`, b.amount)
+
+  if (incomingByTarget.size > 0) {
+    const existing = await prisma.bet.findMany({
+      where: { roundId: openRound.id },
+      select: { userId: true, kind: true, amount: true, symbol: true, range: true, pairA: true, pairB: true, exactSum: true },
+    })
+    const userTotals = new Map<string, number>()
+    const allTotals = new Map<string, number>()
+    for (const b of existing) {
+      const k = liveTargetKey(b)
+      if (!k) continue
+      allTotals.set(k, (allTotals.get(k) ?? 0) + b.amount)
+      if (b.userId === user.id) userTotals.set(k, (userTotals.get(k) ?? 0) + b.amount)
+    }
+    for (const [k, inc] of incomingByTarget) {
+      if ((userTotals.get(k) ?? 0) + inc > LIVE_TARGET_USER_CAP) {
+        return Response.json(
+          { error: `ເດີມພັນສູງສຸດ ${LIVE_TARGET_USER_CAP.toLocaleString()} ₭ ຕໍ່ລາຍການຕໍ່ຄົນ.` },
+          { status: 400 },
+        )
+      }
+      if ((allTotals.get(k) ?? 0) + inc > LIVE_TARGET_ROUND_CAP) {
+        return Response.json(
+          { error: `ລາຍການນີ້ເຕັມແລ້ວ (ສູງສຸດ ${LIVE_TARGET_ROUND_CAP.toLocaleString()} ₭ ຕໍ່ຮອບ). ກະລຸນາເລືອກລາຍການອື່ນ.` },
+          { status: 409 },
+        )
+      }
+    }
   }
 
   const placedAt = new Date()

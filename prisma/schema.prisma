@@ -79,6 +79,11 @@ model User {
   selfPlayPhase        SelfPlayPhase @default(NORMAL)
   selfPlayPhaseBalance Int? // wallet balance (₭) when Phase A was entered; reference for 10 %/50 % thresholds
 
+  // When true, the LIVE betting board is hidden from this user — they can watch
+  // a round but cannot place bets, even when the admin opens a new round.
+  // Independent of selfPlayPhase (set via the Customers page "Bet-lock" action).
+  betLocked Boolean @default(false)
+
   // Referral — every user gets a short unique code at registration. New
   // sign-ups arriving from /register?ref=CODE attach `referredById`.
   // Nullable on the schema so an initial `db push` against an existing
@@ -466,6 +471,7 @@ enum RangeKey {
 enum BetResult {
   WIN
   LOSS
+  REFUNDED // bet voided at settle (locked user, high-value win) — stake returned, no win/loss
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

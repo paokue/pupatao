@@ -556,12 +556,17 @@ function BetTile({
     ))
   const payout = bet.payout ?? 0
   const profit = payout - bet.amount
+  // Voided at settle (locked high-value bet): stake was returned, neither win
+  // nor loss — render neutral/amber.
+  const refunded = bet.result === 'REFUNDED'
 
-  // Tile styling — green border + glow when this bet matched the result,
-  // dim red border otherwise.
-  const baseStyle = won
-    ? { background: 'rgba(22,163,74,0.18)', border: '1.5px solid #4ade80', boxShadow: '0 0 8px rgba(74,222,128,0.4)' }
-    : { background: 'rgba(127,29,29,0.18)', border: '1.5px solid #7f1d1d' }
+  // Tile styling — amber when refunded, green border + glow when this bet
+  // matched the result, dim red border otherwise.
+  const baseStyle = refunded
+    ? { background: 'rgba(217,119,6,0.15)', border: '1.5px solid #d97706' }
+    : won
+      ? { background: 'rgba(22,163,74,0.18)', border: '1.5px solid #4ade80', boxShadow: '0 0 8px rgba(74,222,128,0.4)' }
+      : { background: 'rgba(127,29,29,0.18)', border: '1.5px solid #7f1d1d' }
 
   if (bet.kind === 'SYMBOL' && bet.symbol) {
     return (
@@ -570,7 +575,7 @@ function BetTile({
           <img src={`/symbols/${bet.symbol}.png`} alt={bet.symbol} className="absolute inset-0 h-full w-full object-contain" />
         </div>
         <span className="text-xs font-semibold" style={{ color: '#fde68a' }}>{bet.amount.toLocaleString()}</span>
-        <PayoutBadge won={won} profit={profit} />
+        <PayoutBadge won={won} profit={profit} refunded={refunded} refundAmount={bet.amount} />
       </div>
     )
   }
@@ -588,7 +593,7 @@ function BetTile({
           </div>
         </div>
         <span className="text-xs font-semibold" style={{ color: '#fde68a' }}>{bet.amount.toLocaleString()}</span>
-        <PayoutBadge won={won} profit={profit} />
+        <PayoutBadge won={won} profit={profit} refunded={refunded} refundAmount={bet.amount} />
       </div>
     )
   }
@@ -611,7 +616,7 @@ function BetTile({
       >
         <span>{label} ({range.min}-{range.max})</span>
         <span style={{ color: '#fde68a' }}>· {bet.amount.toLocaleString()}</span>
-        <PayoutBadge won={won} profit={profit} compact />
+        <PayoutBadge won={won} profit={profit} refunded={refunded} refundAmount={bet.amount} compact />
       </div>
     )
   }
@@ -624,7 +629,7 @@ function BetTile({
       >
         <span>ເລກ {bet.exactSum}</span>
         <span style={{ color: '#fde68a' }}>· {bet.amount.toLocaleString()}</span>
-        <PayoutBadge won={won} profit={profit} compact />
+        <PayoutBadge won={won} profit={profit} refunded={refunded} refundAmount={bet.amount} compact />
       </div>
     )
   }
@@ -632,8 +637,18 @@ function BetTile({
   return null
 }
 
-function PayoutBadge({ won, profit, compact }: { won: boolean; profit: number; compact?: boolean }) {
+function PayoutBadge({ won, profit, compact, refunded, refundAmount }: { won: boolean; profit: number; compact?: boolean; refunded?: boolean; refundAmount?: number }) {
   const t = useT()
+  if (refunded) {
+    return (
+      <span
+        className={`rounded-full ${compact ? 'px-1.5 py-0.5 text-[9px]' : 'px-2 py-0.5 text-[10px]'} font-bold `}
+        style={{ background: 'rgba(217,119,6,0.85)', color: '#fff' }}
+      >
+        {t('history.refunded')} +{(refundAmount ?? 0).toLocaleString()}
+      </span>
+    )
+  }
   if (won && profit > 0) {
     return (
       <span

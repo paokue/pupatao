@@ -17,6 +17,7 @@ import { WithdrawModal } from '~/components/WithdrawModal'
 import { TransferModal } from '~/components/TransferModal'
 import { ClaimTransferModal } from '~/components/ClaimTransferModal'
 import { ConfirmDialog } from '~/components/ConfirmDialog'
+import { withdrawFee, MAX_WITHDRAW_PER_DAY } from '~/lib/withdraw-fee'
 import { useT } from '~/lib/use-t'
 
 const HIDDEN = '••••••'
@@ -302,8 +303,12 @@ export async function action({ request }: Route.ActionArgs) {
       return { op, error: `Maximum withdraw is ${MAX_WITHDRAW.toLocaleString()} ₭.` }
     }
 
+    // Start of today in GMT+7 (Laos) — bounds the per-day withdrawal cap.
+    const GMT7_MS = 7 * 60 * 60 * 1000
+    const todayStart = new Date(Math.floor((Date.now() + GMT7_MS) / 86_400_000) * 86_400_000 - GMT7_MS)
+
     try {
-      const [wallet, bank, pendingWithdrawAgg] = await Promise.all([
+      const [wallet, bank, pendingWithdrawAgg, todayWithdrawAgg] = await Promise.all([
         prisma.wallet.findUnique({
           where: { userId_type: { userId: user.id, type: 'REAL' } },
         }),
@@ -312,9 +317,24 @@ export async function action({ request }: Route.ActionArgs) {
           where: { userId: user.id, type: 'WITHDRAW', status: 'PENDING' },
           _sum: { amount: true },
         }),
+        // Total already withdrawn/queued today (completed + pending) for the day cap.
+        prisma.transaction.aggregate({
+          where: { userId: user.id, type: 'WITHDRAW', status: { in: ['COMPLETED', 'PENDING'] }, createdAt: { gte: todayStart } },
+          _sum: { amount: true },
+        }),
       ])
       if (!wallet) return { op, error: 'Real wallet not found.' }
       if (!bank) return { op, error: 'Add your bank QR code before withdrawing.' }
+
+      // Per-day cap: completed + pending withdrawals today + this request ≤ 10,000,000 ₭.
+      const withdrawnToday = todayWithdrawAgg._sum.amount ?? 0
+      if (withdrawnToday + amount > MAX_WITHDRAW_PER_DAY) {
+        const remaining = Math.max(0, MAX_WITHDRAW_PER_DAY - withdrawnToday)
+        return {
+          op,
+          error: `ຖອນໄດ້ສູງສຸດ ${MAX_WITHDRAW_PER_DAY.toLocaleString()} ₭ ຕໍ່ມື້. ມື້ນີ້ຖອນໄປແລ້ວ ${withdrawnToday.toLocaleString()} ₭ — ຍັງຖອນໄດ້ອີກ ${remaining.toLocaleString()} ₭.`,
+        }
+      }
 
       // Effective balance = current balance minus all pending (unprocessed) withdrawals
       const pendingTotal = pendingWithdrawAgg._sum.amount ?? 0
@@ -326,6 +346,11 @@ export async function action({ request }: Route.ActionArgs) {
           error: `ຍອດເງິນບໍ່ພຽງພໍ. ຍອດທີ່ສາມາດຖອນໄດ້ຂອງທ່ານຄື ${effectiveBalance.toLocaleString()} ₭${pendingTotal > 0 ? ` (ລາຍການຖອນທີ່ລໍຖ້າ ${pendingTotal.toLocaleString()} ₭ ຖືກຫັກແລ້ວ)` : ''}.`,
         }
       }
+
+      // Tiered fee, deducted from the payout (user receives amount − fee). Recorded
+      // on the request so the admin knows the net to send on approval.
+      const fee = withdrawFee(amount)
+      const net = amount - fee
 
       // PENDING — admin debits the balance only on approval. We snapshot the
       // bank QR onto the transaction (slipUrl), so a later QR change leaves
@@ -341,7 +366,7 @@ export async function action({ request }: Route.ActionArgs) {
           status: 'PENDING',
           slipUrl: bank.qrUrl,
           idempotencyKey: crypto.randomUUID(),
-          note: 'Withdraw request — awaiting verification',
+          note: `Withdraw request — awaiting verification (fee ${fee.toLocaleString()} ₭, net ${net.toLocaleString()} ₭)`,
         },
       })
       notifyAdmin('transaction:created', toTxCreatedPayload(created, user))
@@ -351,6 +376,8 @@ export async function action({ request }: Route.ActionArgs) {
         lines: [
           { label: 'Phone', value: user.tel },
           { label: 'Amount', value: `${amount.toLocaleString()} ₭` },
+          { label: 'Fee', value: `${fee.toLocaleString()} ₭` },
+          { label: 'Net to send', value: `${net.toLocaleString()} ₭` },
           { label: 'Available balance', value: `${wallet.balance.toLocaleString()} ₭` },
           { label: 'Transaction ID', value: created.id },
           { label: 'Submitted at', value: created.createdAt.toLocaleString() },

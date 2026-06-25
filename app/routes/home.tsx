@@ -32,7 +32,7 @@ import {
   type RoundStartedPayload,
   type TxUpdatedPayload,
 } from '~/lib/pusher-channels'
-import { ArrowDown, ArrowUp, ArrowUpDown, BookOpen, CalendarClock, Check, ChevronDown, Eye, LogOut, MessageCircle, Pencil, ReceiptText, RefreshCw, Undo, User, Users, Volume2, VolumeOff, Wallet, X } from 'lucide-react'
+import { ArrowDown, ArrowUp, ArrowUpDown, BookOpen, CalendarClock, Check, ChevronDown, Eye, LogOut, MessageCircle, ReceiptText, RefreshCw, Undo, User, Users, Volume2, VolumeOff, Wallet, X } from 'lucide-react'
 
 type SymbolKey = 'fish' | 'prawn' | 'crab' | 'rooster' | 'gourd' | 'frog'
 
@@ -716,13 +716,17 @@ function symName(sym: string, t: ReturnType<typeof useT>): string {
   try { return t(key) } catch { return sym }
 }
 
-const MIN_CHIP = 1_000    // Minimum allowed chip amount (₭)
-const MAX_CHIP = 100_000          // Maximum allowed chip amount (₭)
 const MAX_BET_SYMBOL = 1_000_000  // Max total bet per symbol cell (×2 payout → 2,000,000)
 const MAX_BET_PAIR   = 200_000    // Max total bet per pair combo (×6 payout → 1,200,000)
 const MAX_BET_MIDDLE = 200_000    // Max total bet on MIDDLE range (×6 payout → 1,200,000)
 const MAX_BET_RANGE  = 1_000_000  // Max total bet on LOW / HIGH range (×2 payout → 2,000,000)
 const MAX_BET_SUM    = 200_000    // Max total bet per number 3-18 (×4 payout → 800,000)
+
+// LIVE mode only: per betting target (symbol / range / pair / number) one user may
+// stake at most this much. All users combined are capped per target on the server
+// (see api.play-round.tsx) — once a target reaches that round cap it's full for
+// everyone. Self-play (RANDOM) keeps the larger per-target caps above.
+const MAX_BET_LIVE_PER_USER = 200_000
 
 const TOUR_STORAGE_KEY = 'fpc_tour_completed_v1'
 
@@ -744,9 +748,9 @@ const CHIP_CONFIG = [
   { value: 5000, label: '5,000', colors: 'from-gray-600 to-gray-800', border: '#9CA3AF' },
   { value: 10000, label: '10,000', colors: 'from-blue-500 to-blue-700', border: '#60A5FA' },
   { value: 20000, label: '20,000', colors: 'from-blue-500 to-blue-700', border: '#60A5FA' },
-  { value: 30000, label: '30,000', colors: 'from-blue-500 to-blue-700', border: '#60A5FA' },
   { value: 50000, label: '50,000', colors: 'from-green-500 to-green-700', border: '#4ADE80' },
   { value: 100000, label: '100,000', colors: 'from-yellow-500 to-yellow-700', border: '#FCD34D' },
+  { value: 200000, label: '200,000', colors: 'from-red-500 to-red-700', border: '#F87171' },
 ]
 
 function CountUpNumber({ from, to, duration = 1400, sound = false }: { from: number; to: number; duration?: number; sound?: boolean }) {
@@ -1096,17 +1100,31 @@ export async function loader({ request }: Route.LoaderArgs) {
       myLiveBets: [] as MyLiveBet[],
       payoutConfig,
       hasSeenTour: false,
+      betLocked: false,
     }
   }
 
   // The customer's own bets in the current LIVE round — populates the
   // "your bets in this round" list shown during the awaiting-result phase.
+  //
+  // For ADMIN_LOCKED users we HIDE high-value bets (return-if-won ≥ 500,000 ₭)
+  // from their own screen — the bet still exists and settles (a win ≥ 500k is
+  // voided + refunded at resolve; a loss stays), it's just not shown live.
+  const { liveBetPotentialReturn, LOCKED_LIVE_VOID_RETURN_MIN } = await import('~/lib/game-logic.server')
+  const _promoSum = process.env.PROMO_SUM === 'true'
   const myLiveBets = liveRound
     ? (await prisma.bet.findMany({
       where: { roundId: liveRound.id, userId: user.id },
       orderBy: { createdAt: 'asc' },
       select: { id: true, kind: true, amount: true, symbol: true, range: true, pairA: true, pairB: true, exactSum: true },
-    })).map(b => ({
+    }))
+      .filter(b => !(
+        user.selfPlayPhase === 'ADMIN_LOCKED' &&
+        // Hide by potential WINNINGS (profit = return − stake), so a 100k pair
+        // (600k return = 500k profit) still shows; only > 500k profit is hidden.
+        liveBetPotentialReturn(b, payoutConfig, { promoSum: _promoSum }) - b.amount > LOCKED_LIVE_VOID_RETURN_MIN
+      ))
+      .map(b => ({
       id: b.id,
       kind: b.kind as 'SYMBOL' | 'RANGE' | 'PAIR' | 'SUM',
       amount: b.amount,
@@ -1155,6 +1173,7 @@ export async function loader({ request }: Route.LoaderArgs) {
     myLiveBets,
     payoutConfig,
     hasSeenTour: user.hasSeenTour,
+    betLocked: user.betLocked,
   }
 }
 
@@ -1207,8 +1226,6 @@ export default function FishPrawnCrabGame() {
   const [currentPairBets, setCurrentPairBets] = useState<PairBet[]>([])
   const [pendingCell, setPendingCell] = useState<number | null>(null)
   const [selectedChip, setSelectedChip] = useState(5_000)
-  const [customModalOpen, setCustomModalOpen] = useState(false)
-  const [customAmount, setCustomAmount] = useState('')
   const [resultModal, setResultModal] = useState<{
     win: number; betTotal: number; newBalance: number; dice: SymbolKey[]; diceSum: number
     symbolResults: { symbol: SymbolKey; amount: number; payout: number; won: boolean }[]
@@ -1277,6 +1294,8 @@ export default function FishPrawnCrabGame() {
   const [overlayProfileOpen, setOverlayProfileOpen] = useState(false)
   const [joinGroupOpen, setJoinGroupOpen] = useState(false)
   const liveRound = loaderData.liveRound
+  // Bet-locked users can watch a LIVE round but never see the betting board.
+  const betLocked = loaderData.betLocked
   // The URL shown to customers: active round's stream takes priority; otherwise
   // use the admin-controlled SystemSetting (cleared by "End Live").
   const activeStreamUrl = liveRound?.streamUrl ?? loaderData.liveStreamUrl ?? null
@@ -1626,9 +1645,11 @@ export default function FishPrawnCrabGame() {
         return
       }
     } else {
+      // LOW / HIGH: 200k per user in LIVE, larger cap in self-play.
+      const cap = mode === 'live' ? MAX_BET_LIVE_PER_USER : MAX_BET_RANGE
       const existing = currentRangeBets.find(b => b.range === range)?.amount ?? 0
-      if (existing + selectedChip > MAX_BET_RANGE) {
-        toast.warning(`ວົງເດີມພັນສູງສຸດ ${MAX_BET_RANGE.toLocaleString()} ₭`)
+      if (existing + selectedChip > cap) {
+        toast.warning(`ວົງເດີມພັນສູງສຸດ ${cap.toLocaleString()} ₭`)
         return
       }
     }
@@ -1643,7 +1664,7 @@ export default function FishPrawnCrabGame() {
       return [...prev, { range, amount: selectedChip }]
     })
     setBalance(prev => prev - selectedChip)
-  }, [bettingLocked, balance, selectedChip, ensureBgMusic, soundEnabled, currentRangeBets])
+  }, [bettingLocked, balance, selectedChip, ensureBgMusic, soundEnabled, currentRangeBets, mode])
 
   const placeSumBet = useCallback((sum: number) => {
     ensureBgMusic()
@@ -1696,13 +1717,18 @@ export default function FishPrawnCrabGame() {
     if (chips <= 0) return
     const total = selectedChip * chips
     const symbol = BOARD_LAYOUT[cell]
-    const existing = currentBets.find(b => b.cell === cell)?.amount ?? 0
-    if (existing >= MAX_BET_SYMBOL) {
-      toast.warning(`ວົງເດີມພັນສັດດ່ຽວສູງສຸດ ${MAX_BET_SYMBOL.toLocaleString()} ₭`)
+    // LIVE caps a single symbol at 200k PER SYMBOL (summed across its board cells,
+    // e.g. both GOURD cells share one cap); self-play keeps the per-cell cap.
+    const cap = mode === 'live' ? MAX_BET_LIVE_PER_USER : MAX_BET_SYMBOL
+    const existing = mode === 'live'
+      ? currentBets.filter(b => BOARD_LAYOUT[b.cell] === symbol).reduce((s, b) => s + b.amount, 0)
+      : (currentBets.find(b => b.cell === cell)?.amount ?? 0)
+    if (existing >= cap) {
+      toast.warning(`ວົງເດີມພັນສັດດ່ຽວສູງສຸດ ${cap.toLocaleString()} ₭`)
       return
     }
-    const actualAdd = Math.min(total, MAX_BET_SYMBOL - existing)
-    if (actualAdd < total) toast.warning(`ວົງເດີມພັນສັດດ່ຽວສູງສຸດ ${MAX_BET_SYMBOL.toLocaleString()} ₭`)
+    const actualAdd = Math.min(total, cap - existing)
+    if (actualAdd < total) toast.warning(`ວົງເດີມພັນສັດດ່ຽວສູງສຸດ ${cap.toLocaleString()} ₭`)
     ensureBgMusic()
     soundEnabled && playChipPlace()
     setCurrentBets(prev => {
@@ -1715,7 +1741,7 @@ export default function FishPrawnCrabGame() {
       return [...prev, { cell, symbol, amount: actualAdd }]
     })
     setBalance(prev => prev - actualAdd)
-  }, [selectedChip, ensureBgMusic, soundEnabled, currentBets])
+  }, [selectedChip, ensureBgMusic, soundEnabled, currentBets, mode])
 
   // Board tap flow:
   //  1st tap on X           → X becomes "pending" (no chip yet, pulsing highlight)
@@ -2277,8 +2303,9 @@ export default function FishPrawnCrabGame() {
   }, [])
 
   // Auto-open the bet sheet when a new round starts; auto-close + clear state when it ends.
+  // Bet-locked users never get the board (it stays closed the whole round).
   useEffect(() => {
-    if (livePhase === 'betting') {
+    if (livePhase === 'betting' && !betLocked) {
       setBetSheetOpen(true)
       // Clear any leftover staged bets + pending pair selection from the previous round
       setPendingCell(null)
@@ -2291,7 +2318,7 @@ export default function FishPrawnCrabGame() {
       setBetSheetOpen(false)
       setPendingCell(null)
     }
-  }, [livePhase])
+  }, [livePhase, betLocked])
 
   // When a cancel-bet succeeds, update the local balance and revalidate.
   useEffect(() => {
@@ -2709,8 +2736,19 @@ export default function FishPrawnCrabGame() {
             </div>
           )}
 
+          {/* ── Bet-locked: no betting board for this user. Show a neutral
+                "round starting" notice so it reads like a normal wait, not a lock. ── */}
+          {livePhase === 'betting' && betLocked && (
+            <div className="absolute inset-x-0 flex justify-center px-4" style={{ bottom: 'max(env(safe-area-inset-bottom), 24px)' }}>
+              <span className="rounded-full px-4 py-2 text-xs font-semibold text-center"
+                style={{ background: 'rgba(0,0,0,0.6)', color: '#c4b5fd' }}>
+                {t('live.betLocked')}
+              </span>
+            </div>
+          )}
+
           {/* ── FAB buttons ── */}
-          {livePhase === 'betting' && !betSheetOpen && (
+          {livePhase === 'betting' && !betSheetOpen && !betLocked && (
             <div className="absolute right-4 flex flex-col items-end gap-2"
               style={{ bottom: 'max(env(safe-area-inset-bottom), 16px)', paddingBottom: 8 }}>
               {hasAnyBet && (
@@ -2952,30 +2990,6 @@ export default function FishPrawnCrabGame() {
                     {chip.label}
                   </button>
                 ))}
-                {/* Custom amount chip — same as main game layout */}
-                {(() => {
-                  const isCustomChip = !CHIP_CONFIG.some(c => c.value === selectedChip)
-                  return (
-                    <button
-                      onClick={() => {
-                        soundEnabled && playClick()
-                        setCustomAmount(isCustomChip ? String(selectedChip) : '')
-                        setCustomModalOpen(true)
-                      }}
-                      disabled={randomBoardLocked}
-                      className="relative flex h-11 w-11 shrink-0 flex-col items-center justify-center rounded-full bg-gradient-to-b from-purple-600 to-purple-900 font-bold text-white transition-all disabled:opacity-40"
-                      style={{
-                        border: isCustomChip ? '2px solid #fff' : '1px solid #c084fc',
-                        transform: isCustomChip ? 'scale(1.15)' : 'scale(1)',
-                        boxShadow: isCustomChip ? '0 0 12px #c084fc' : '0 2px 4px rgba(0,0,0,0.4)',
-                        fontSize: isCustomChip ? (selectedChip >= 10_000 ? 9 : 10) : 14,
-                      }}
-                      title={t('game.custom')}
-                    >
-                      {isCustomChip ? formatAmount(selectedChip) : <Pencil size={16} />}
-                    </button>
-                  )
-                })()}
               </div>
               <div className="flex gap-2 pt-1">
                 <button onClick={undoBet} disabled={!hasAnyBet && pendingCell === null}
@@ -3815,30 +3829,6 @@ export default function FishPrawnCrabGame() {
                   {chip.label}
                 </button>
               ))}
-              {(() => {
-                const isCustomChip = !CHIP_CONFIG.some(c => c.value === selectedChip)
-                return (
-                  <button
-                    onClick={() => {
-                      soundEnabled && playClick()
-                      ensureBgMusic()
-                      setCustomAmount(isCustomChip ? String(selectedChip) : '')
-                      setCustomModalOpen(true)
-                    }}
-                    disabled={randomBoardLocked}
-                    className="relative flex h-12 w-12 flex-col items-center justify-center rounded-full bg-gradient-to-b from-purple-600 to-purple-900 font-bold text-white transition-all disabled:opacity-40"
-                    style={{
-                      border: '1px solid #c084fc',
-                      transform: isCustomChip ? 'scale(1.22)' : 'scale(1)',
-                      boxShadow: isCustomChip ? '0 0 14px #c084fc' : '0 2px 6px rgba(0,0,0,0.5)',
-                      fontSize: isCustomChip ? (selectedChip >= 10_000 ? 9 : 10) : 14,
-                    }}
-                    title="Custom amount"
-                  >
-                    {isCustomChip ? formatAmount(selectedChip) : <Pencil size={16} />}
-                  </button>
-                )
-              })()}
             </div>
 
             {/* RIGHT: UNDO button */}
@@ -3939,27 +3929,6 @@ export default function FishPrawnCrabGame() {
                     {chip.label}
                   </button>
                 ))}
-                {(() => {
-                  const isCustomChip = !CHIP_CONFIG.some(c => c.value === selectedChip)
-                  return (
-                    <button
-                      onClick={() => {
-                        soundEnabled && playClick()
-                        ensureBgMusic()
-                        setCustomAmount(isCustomChip ? String(selectedChip) : '')
-                        setCustomModalOpen(true)
-                      }}
-                      disabled={randomBoardLocked}
-                      className="col-span-2 flex h-10 w-full items-center justify-center gap-1 rounded-xl bg-gradient-to-b from-purple-600 to-purple-900 text-[11px] font-bold text-white disabled:opacity-40"
-                      style={{
-                        border: '1px solid #c084fc',
-                      }}
-                      title="Custom amount"
-                    >
-                      {isCustomChip ? formatAmount(selectedChip) : <><Pencil size={12} /> {t('game.custom')}</>}
-                    </button>
-                  )
-                })()}
               </div>
               <button
                 onClick={undoBet}
@@ -4031,83 +4000,6 @@ export default function FishPrawnCrabGame() {
           </div>
         </aside>
       </main>
-
-      {/* Custom chip amount modal */}
-      {customModalOpen && (() => {
-        const n = Number(customAmount)
-        const trimmed = customAmount.trim()
-        const error = trimmed === '' ? null
-          : !Number.isFinite(n) ? 'Enter a valid number.'
-            : !Number.isInteger(n) ? 'Enter a whole number.'
-              : n < MIN_CHIP ? `Amount must be at least ${MIN_CHIP.toLocaleString()} ₭.`
-                : n > MAX_CHIP ? `Maximum ${MAX_CHIP.toLocaleString()} ₭.`
-                  : null
-        const canSubmit = !error && trimmed !== ''
-        const submit = () => {
-          if (!canSubmit) return
-          setSelectedChip(Math.floor(n))
-          setCustomModalOpen(false)
-          soundEnabled && playCoin()
-        }
-        return (
-          <div
-            className="fixed inset-0 z-[100] flex items-center justify-center p-4"
-            style={{ background: 'rgba(15,0,32,0.82)' }}
-            onClick={() => setCustomModalOpen(false)}
-          >
-            <div
-              onClick={e => e.stopPropagation()}
-              className="w-full max-w-sm rounded-2xl p-6"
-              style={{
-                background: 'linear-gradient(135deg, #3b0764, #1e0040)',
-                border: '1px solid #a78bfa',
-                boxShadow: '0 10px 40px rgba(124,58,237,0.5)',
-              }}
-            >
-              <div className="mb-1 text-lg font-bold" style={{ color: '#fde68a' }}>{t('chip.customTitle')}</div>
-              <div className="mb-4 text-xs" style={{ color: '#c4b5fd' }}>
-                {t('chip.customHint', { min: MIN_CHIP.toLocaleString(), max: MAX_CHIP.toLocaleString() })}
-              </div>
-              <input
-                type="number"
-                value={customAmount}
-                onChange={e => setCustomAmount(e.target.value)}
-                onKeyDown={e => {
-                  if (e.key === 'Enter') submit()
-                  if (e.key === 'Escape') setCustomModalOpen(false)
-                }}
-                autoFocus
-                min={MIN_CHIP}
-                max={MAX_CHIP}
-                step={1}
-                placeholder={t('chip.customPlaceholder', { min: MIN_CHIP.toLocaleString(), max: MAX_CHIP.toLocaleString() })}
-                className="w-full rounded-lg px-4 py-3 text-lg font-bold outline-none"
-                style={{ background: '#2d1b4e', color: '#fde68a', border: `1px solid ${error ? '#f87171' : '#7c3aed'}` }}
-              />
-              <div className="mt-2 min-h-[16px] text-xs font-semibold" style={{ color: error ? '#f87171' : '#a78bfa' }}>
-                {error ?? (trimmed ? t('chip.customPreview', { amount: Number(trimmed).toLocaleString() }) : '\u00a0')}
-              </div>
-              <div className="mt-4 flex gap-3">
-                <button
-                  onClick={() => setCustomModalOpen(false)}
-                  className="flex-1 rounded-xl py-2.5 text-sm font-bold"
-                  style={{ background: '#4c1d95', color: '#c4b5fd', border: '1px solid #6d28d9' }}
-                >
-                  {t('common.cancel')}
-                </button>
-                <button
-                  onClick={submit}
-                  disabled={!canSubmit}
-                  className="flex-1 rounded-xl py-2.5 text-sm font-bold transition-opacity disabled:opacity-40"
-                  style={{ background: 'linear-gradient(135deg, #16a34a, #15803d)', color: '#fff', border: '1px solid #4ade80' }}
-                >
-                  {t('chip.setChip')}
-                </button>
-              </div>
-            </div>
-          </div>
-        )
-      })()}
 
       {/* Round result modal — title, result, net amount, total balance, continue. */}
       {resultModal && (() => {
@@ -4479,8 +4371,9 @@ function MyBetsList({ bets, glass = false }: { bets: MyLiveBet[]; glass?: boolea
 type BreakdownBet = {
   label: React.ReactNode  // either translated text (range) or a small icon (single/pair)
   amount: number   // stake
-  payout: number   // 0 if lost; gross-payout including stake if won
+  payout: number   // 0 if lost; gross-payout including stake if won; stake if refunded
   won: boolean
+  refunded?: boolean  // voided locked high-value bet — stake returned, no win/loss
 }
 type BetBreakdownProps = {
   symbolBets: BreakdownBet[]
@@ -4502,17 +4395,26 @@ function BetBreakdown({ symbolBets, rangeBets, pairBets, sumBets = [] }: BetBrea
   const totalStake = allBets.reduce((s, b) => s + b.amount, 0)
   // Profit on winning bets only — matches the +/- amount shown per row.
   const totalWon = allBets.filter(b => b.won).reduce((s, b) => s + (b.payout - b.amount), 0)
-  const totalLost = allBets.filter(b => !b.won).reduce((s, b) => s + b.amount, 0)
+  const totalLost = allBets.filter(b => !b.won && !b.refunded).reduce((s, b) => s + b.amount, 0)
+  const hasRefund = allBets.some(b => b.refunded)
 
   return (
     <div className="mt-3 flex flex-col gap-3">
+      {/* Explain to the customer why a bet was refunded (locked high-value void). */}
+      {hasRefund && (
+        <div className="rounded-md px-3 py-2 text-[11px] font-semibold"
+          style={{ background: 'rgba(217,119,6,0.12)', color: '#b45309', border: '1px solid #f59e0b' }}>
+          {t('result.refundNote')}
+        </div>
+      )}
       {sections.map(s => (
         <div key={s.title} className="rounded-md px-3 py-2" style={{ background: '#f3f4f6' }}>
           <div className="mb-1.5 text-[10px] font-bold  text-gray-500">{s.title}</div>
           <ul className="flex flex-col overflow-hidden rounded">
             {s.bets.map((b, i) => {
-              const sign = b.won ? '+' : '-'
-              const amount = b.won ? b.payout - b.amount : b.amount
+              const color = b.refunded ? '#d97706' : b.won ? '#16a34a' : '#dc2626'
+              const sign = b.refunded ? '' : b.won ? '+' : '-'
+              const amount = b.refunded ? b.amount : b.won ? b.payout - b.amount : b.amount
               return (
                 <li
                   key={i}
@@ -4526,10 +4428,10 @@ function BetBreakdown({ symbolBets, rangeBets, pairBets, sumBets = [] }: BetBrea
                     <span className="inline-flex items-center">{b.label}</span>
                     <span className="truncate">· {b.amount.toLocaleString()}</span>
                   </span>
-                  <span className="text-[10px] font-bold " style={{ color: b.won ? '#16a34a' : '#dc2626' }}>
-                    {b.won ? t('result.win') : t('result.loss')}
+                  <span className="text-[10px] font-bold " style={{ color }}>
+                    {b.refunded ? t('history.refunded') : b.won ? t('result.win') : t('result.loss')}
                   </span>
-                  <span className="text-right font-bold" style={{ color: b.won ? '#16a34a' : '#dc2626' }}>
+                  <span className="text-right font-bold" style={{ color }}>
                     {sign}{amount.toLocaleString()}
                   </span>
                 </li>
@@ -4601,7 +4503,7 @@ function pairToBreakdown(
 
 // Settlement-payload shape (LIVE modal) → BreakdownBet[] sections.
 function settledToBreakdown(
-  bets: { kind: 'SYMBOL' | 'RANGE' | 'PAIR' | 'SUM'; amount: number; symbol: string | null; range: string | null; pairA: string | null; pairB: string | null; exactSum?: number | null; payout: number; result: 'WIN' | 'LOSS' }[],
+  bets: { kind: 'SYMBOL' | 'RANGE' | 'PAIR' | 'SUM'; amount: number; symbol: string | null; range: string | null; pairA: string | null; pairB: string | null; exactSum?: number | null; payout: number; result: 'WIN' | 'LOSS' | 'REFUNDED' }[],
   t: Translate,
 ): { symbolBets: BreakdownBet[]; rangeBets: BreakdownBet[]; pairBets: BreakdownBet[]; sumBets: BreakdownBet[] } {
   const out = { symbolBets: [] as BreakdownBet[], rangeBets: [] as BreakdownBet[], pairBets: [] as BreakdownBet[], sumBets: [] as BreakdownBet[] }
@@ -4612,7 +4514,7 @@ function settledToBreakdown(
     else if (b.kind === 'RANGE' && b.range) label = translatedRangeLabel(b.range, t)
     else if (b.kind === 'SUM' && b.exactSum != null) label = `ເລກ ${b.exactSum}`
     else label = b.kind
-    const entry: BreakdownBet = { label, amount: b.amount, payout: b.payout, won: b.result === 'WIN' }
+    const entry: BreakdownBet = { label, amount: b.amount, payout: b.payout, won: b.result === 'WIN', refunded: b.result === 'REFUNDED' }
     if (b.kind === 'SYMBOL') out.symbolBets.push(entry)
     else if (b.kind === 'RANGE') out.rangeBets.push(entry)
     else if (b.kind === 'PAIR') out.pairBets.push(entry)

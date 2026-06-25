@@ -7,6 +7,7 @@ import { requireAdmin } from '~/lib/admin-auth.server'
 import { prisma } from '~/lib/prisma.server'
 import { notifyAdmin, notifyGame, notifyPresenceLive, notifyUser } from '~/lib/pusher.server'
 import { getPayoutConfig, type PayoutConfig } from '~/lib/payouts.server'
+import { LOCKED_LIVE_VOID_RETURN_MIN } from '~/lib/game-logic.server'
 import { useT } from '~/lib/use-t'
 import { t as translate, parseLocaleCookie } from '~/lib/i18n'
 import {
@@ -165,6 +166,8 @@ export async function loader({ request }: Route.LoaderArgs) {
   })
 
   // Bets already placed in the current round — seeds the realtime feed.
+  // Admin always sees every bet (including ADMIN_LOCKED users' high-value bets —
+  // those are hidden only on the customer's own screen, and voided at settle).
   const currentBets = current
     ? await prisma.bet.findMany({
       where: { roundId: current.id, wallet: { type: { in: ['REAL', 'PROMO'] } } },
@@ -494,7 +497,7 @@ export async function action({ request }: Route.ActionArgs) {
       // guard above.
       const bets = await prisma.bet.findMany({
         where: { roundId },
-        select: { id: true, userId: true, walletId: true, kind: true, amount: true, symbol: true, range: true, pairA: true, pairB: true, exactSum: true, user: { select: { tel: true, firstName: true, lastName: true } }, wallet: { select: { type: true } } },
+        select: { id: true, userId: true, walletId: true, kind: true, amount: true, symbol: true, range: true, pairA: true, pairB: true, exactSum: true, user: { select: { tel: true, firstName: true, lastName: true, selfPlayPhase: true } }, wallet: { select: { type: true } } },
       })
 
       const cfg = getPayoutConfig()
@@ -503,9 +506,18 @@ export async function action({ request }: Route.ActionArgs) {
       }
       const promoStreak = process.env.PROMO_STREAK === 'true'
 
-      type Resolved = { id: string; payout: number; result: 'WIN' | 'LOSS' }
+      // Locked-user void rule: once the result is known, an ADMIN_LOCKED user's
+      // bet whose WINNINGS (profit = payout − stake) are MORE THAN 500,000 ₭ is
+      // voided — not paid out; the stake is refunded and the bet marked REFUNDED.
+      // A losing bet (or a win of exactly 500,000 profit or less, e.g. a 100k
+      // pair → 600k return = 500k profit) follows the normal flow.
+      type Resolved = { id: string; payout: number; result: 'WIN' | 'LOSS' | 'REFUNDED' }
       const betUpdates: Resolved[] = bets.map(b => {
         const payout = computeBetPayout(b, dice, diceSum, cfg, livePromo)
+        if (b.user.selfPlayPhase === 'ADMIN_LOCKED' && payout - b.amount > LOCKED_LIVE_VOID_RETURN_MIN) {
+          // Voided win: refund the stake instead of paying the (large) win.
+          return { id: b.id, payout: b.amount, result: 'REFUNDED' as const }
+        }
         return { id: b.id, payout, result: payout > 0 ? 'WIN' : 'LOSS' }
       })
 
@@ -523,6 +535,7 @@ export async function action({ request }: Route.ActionArgs) {
         stake: number          // sum of all stakes this user placed in this wallet
         winningStake: number   // sum of stakes of winning bets
         payout: number         // sum of gross payouts of winning bets (stake + profit)
+        refund: number         // sum of stakes of voided (locked high-value) bets to return
       }
       const playerGroups = new Map<string, Group>()
       bets.forEach((b, i) => {
@@ -539,8 +552,13 @@ export async function action({ request }: Route.ActionArgs) {
             stake: 0,
             winningStake: 0,
             payout: 0,
+            refund: 0,
           }
           playerGroups.set(key, grp)
+        }
+        if (u.result === 'REFUNDED') {
+          grp.refund += b.amount
+          return // voided bet: neither stake-at-risk nor win/loss
         }
         grp.stake += b.amount
         if (u.payout > 0) {
@@ -565,13 +583,34 @@ export async function action({ request }: Route.ActionArgs) {
         for (const grp of playerGroups.values()) {
           const w = await db.wallet.findUnique({ where: { id: grp.walletId } })
           if (!w) continue
-          balances[grp.userId] = w.balance  // default to current balance (no win)
+          let bal = w.balance
+
+          // Refund voided (locked high-value) bets to the SOURCE wallet first,
+          // so the running balance below already includes the returned stake.
+          if (grp.refund > 0) {
+            const afterRefund = bal + grp.refund
+            await db.wallet.update({
+              where: { id: grp.walletId },
+              data: { balance: afterRefund, version: { increment: 1 } },
+            })
+            await db.transaction.create({
+              data: {
+                userId: grp.userId, walletId: grp.walletId, type: 'ADJUSTMENT',
+                amount: grp.refund, balanceBefore: bal, balanceAfter: afterRefund,
+                status: 'COMPLETED', roundId, idempotencyKey: crypto.randomUUID(),
+                note: `Live bet failed — stake refunded (#${roundId.slice(-6)})`,
+              },
+            })
+            bal = afterRefund
+          }
+
+          balances[grp.userId] = bal  // default to balance after any refund (no win)
           if (grp.payout <= 0) continue
 
           if (grp.walletType === 'PROMO') {
             // PROMO rule: refund winning stakes to PROMO; credit profit to REAL.
             const profit = grp.payout - grp.winningStake
-            const newPromoBalance = w.balance + grp.winningStake
+            const newPromoBalance = bal + grp.winningStake
             if (grp.winningStake > 0) {
               await db.wallet.update({
                 where: { id: grp.walletId },
@@ -580,7 +619,7 @@ export async function action({ request }: Route.ActionArgs) {
               await db.transaction.create({
                 data: {
                   userId: grp.userId, walletId: grp.walletId, type: 'WIN',
-                  amount: grp.winningStake, balanceBefore: w.balance, balanceAfter: newPromoBalance,
+                  amount: grp.winningStake, balanceBefore: bal, balanceAfter: newPromoBalance,
                   status: 'COMPLETED', roundId, idempotencyKey: crypto.randomUUID(),
                   note: `Live round — PROMO stake refund (#${roundId.slice(-6)})`,
                 },
@@ -610,7 +649,7 @@ export async function action({ request }: Route.ActionArgs) {
             // (PROMO) wallet's resulting balance, not REAL — matches DEMO/REAL.
             balances[grp.userId] = newPromoBalance
           } else {
-            const newBalance = w.balance + grp.payout
+            const newBalance = bal + grp.payout
             await db.wallet.update({
               where: { id: grp.walletId },
               data: { balance: newBalance, version: { increment: 1 } },
@@ -618,7 +657,7 @@ export async function action({ request }: Route.ActionArgs) {
             await db.transaction.create({
               data: {
                 userId: grp.userId, walletId: grp.walletId, type: 'WIN',
-                amount: grp.payout, balanceBefore: w.balance, balanceAfter: newBalance,
+                amount: grp.payout, balanceBefore: bal, balanceAfter: newBalance,
                 status: 'COMPLETED', roundId, idempotencyKey: crypto.randomUUID(),
                 note: `Live round payout (#${roundId.slice(-6)})`,
               },
@@ -633,12 +672,15 @@ export async function action({ request }: Route.ActionArgs) {
       // The round is already RESOLVED (settle is idempotent via the status
       // guard), so a failure here can't double-credit — it would only leave a
       // bet row's result unset, which doesn't affect balances.
-      await Promise.all([
+      // Per-bet result writes are best-effort and individually guarded — a single
+      // write failure must NOT abort settlement (the money already committed) nor
+      // block the round:settled events below (which drive the customer's modal).
+      await Promise.allSettled([
         ...betUpdates.map(u =>
           prisma.bet.update({
             where: { id: u.id },
             data: { payout: u.payout, result: u.result, resolvedAt },
-          })
+          }).catch(err => { console.error('[round.resolve] bet result write failed', u.id, err) })
         ),
         prisma.auditLog.create({
           data: {
@@ -647,13 +689,13 @@ export async function action({ request }: Route.ActionArgs) {
             target: `round:${roundId}`,
             metadata: { dice1, dice2, dice3, diceSum, bets: bets.length, players: playerGroups.size },
           },
-        }),
+        }).catch(() => {}),
       ])
 
       // Build per-user bet lists for the round:settled events. The customer's
       // result modal renders one row per bet so they see exactly what they
       // placed and how each bet resolved.
-      const perUserBets = new Map<string, { kind: 'SYMBOL' | 'RANGE' | 'PAIR' | 'SUM'; amount: number; symbol: string | null; range: string | null; pairA: string | null; pairB: string | null; exactSum: number | null; payout: number; result: 'WIN' | 'LOSS' }[]>()
+      const perUserBets = new Map<string, { kind: 'SYMBOL' | 'RANGE' | 'PAIR' | 'SUM'; amount: number; symbol: string | null; range: string | null; pairA: string | null; pairB: string | null; exactSum: number | null; payout: number; result: 'WIN' | 'LOSS' | 'REFUNDED' }[]>()
       bets.forEach((b, i) => {
         const u = betUpdates[i]
         const list = perUserBets.get(b.userId) ?? []

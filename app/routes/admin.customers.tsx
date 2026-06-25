@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Form, useFetcher, useLoaderData, useNavigation, useOutletContext, useRevalidator, useSearchParams, useSubmit } from 'react-router'
-import { Eye, EyeOff, KeyRound, Loader, Lock, LockOpen, Search, ShieldOff, ShieldCheck as ShieldCheckIcon, X } from 'lucide-react'
+import { Ban, CircleSlash, Eye, EyeOff, KeyRound, Loader, Lock, LockOpen, Search, ShieldOff, ShieldCheck as ShieldCheckIcon, X } from 'lucide-react'
 import type { Route } from './+types/admin.customers'
 import { requireAdmin } from '~/lib/admin-auth.server'
 import type { AdminOutletContext } from './admin'
@@ -93,6 +93,7 @@ export async function loader({ request }: Route.LoaderArgs) {
       real: u.wallets.find(w => w.type === 'REAL')?.balance ?? 0,
       demo: u.wallets.find(w => w.type === 'DEMO')?.balance ?? 0,
       selfPlayPhase: u.selfPlayPhase,
+      betLocked: u.betLocked,
       lastActivity: latestMap.get(u.id)?.toISOString() ?? null,
     })),
   }
@@ -144,6 +145,17 @@ export async function action({ request }: Route.ActionArgs) {
     })
     await prisma.auditLog.create({
       data: { actorId: admin.id, action: 'user.game_unlock', target: `user:${userId}` },
+    })
+    return { ok: true }
+  }
+
+  if (op === 'betLock' || op === 'betUnlock') {
+    await prisma.user.update({
+      where: { id: userId },
+      data: { betLocked: op === 'betLock' },
+    })
+    await prisma.auditLog.create({
+      data: { actorId: admin.id, action: op === 'betLock' ? 'user.bet_lock' : 'user.bet_unlock', target: `user:${userId}` },
     })
     return { ok: true }
   }
@@ -362,11 +374,12 @@ export default function AdminCustomers() {
                         title={t('admin.customers.action.resetPasswordTitle')}
                         onClick={() => setPasswordModal(u)}
                         disabled={loading}
-                        className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[10px] font-bold disabled:opacity-50"
+                        className="inline-flex items-center gap-1 whitespace-nowrap rounded-md px-2 py-1 text-[10px] font-bold disabled:opacity-50"
                         style={{ background: 'rgba(67,56,202,0.25)', color: '#a5b4fc', border: '1px solid #4338ca' }}
                       >
                         <KeyRound size={10} /> {t('admin.customers.action.pwShort')}
                       </button>
+                      <BetLockButton u={u} disabled={loading} onRevalidate={revalidator.revalidate} />
                       <ActionButton u={u} onClick={() => setPending(u)} disabled={loading} />
                     </div>
                   )}
@@ -470,11 +483,12 @@ function CustomerCard({ u, onAction, onResetPassword, rowNum }: { u: CustomerRow
           {onResetPassword && <button
             type="button"
             onClick={() => onResetPassword(u)}
-            className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[10px] font-bold"
+            className="inline-flex items-center gap-1 whitespace-nowrap rounded-md px-2 py-1 text-[10px] font-bold"
             style={{ background: 'rgba(67,56,202,0.25)', color: '#a5b4fc', border: '1px solid #4338ca' }}
           >
             <KeyRound size={10} /> {t('admin.customers.action.pwShort')}
           </button>}
+          {onAction && <BetLockButton u={u} onRevalidate={() => window.location.reload()} />}
           {onAction && <ActionButton u={u} onClick={() => onAction(u)} />}
         </div>
         )}
@@ -491,7 +505,7 @@ function ActionButton({ u, onClick, disabled }: { u: CustomerRow; onClick: () =>
       type="button"
       onClick={onClick}
       disabled={disabled}
-      className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[10px] font-bold  disabled:opacity-50"
+      className="inline-flex items-center gap-1 whitespace-nowrap rounded-md px-2 py-1 text-[10px] font-bold  disabled:opacity-50"
       style={{
         background: isActive ? '#7f1d1d' : '#14532d',
         color: '#fff',
@@ -499,7 +513,7 @@ function ActionButton({ u, onClick, disabled }: { u: CustomerRow; onClick: () =>
       }}
     >
       {isActive ? <ShieldOff size={10} /> : <ShieldCheckIcon size={10} />}
-      {isActive ? t('admin.customers.action.suspend') : t('admin.customers.action.activate')}
+      {isActive ? t('admin.customers.action.suspendShort') : t('admin.customers.action.activateShort')}
     </button>
   )
 }
@@ -547,7 +561,7 @@ function GameLockButton({ u, disabled, onRevalidate }: { u: CustomerRow; disable
       onClick={toggle}
       disabled={disabled}
       title={isLocked ? t('admin.customers.lock.unlockTitle') : t('admin.customers.lock.lockTitle')}
-      className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[10px] font-bold disabled:opacity-50"
+      className="inline-flex items-center gap-1 whitespace-nowrap rounded-md px-2 py-1 text-[10px] font-bold disabled:opacity-50"
       style={{
         background: isLocked ? 'rgba(22,163,74,0.15)' : 'rgba(127,29,29,0.3)',
         color: isLocked ? '#4ade80' : '#fca5a5',
@@ -556,6 +570,40 @@ function GameLockButton({ u, disabled, onRevalidate }: { u: CustomerRow; disable
     >
       {isLocked ? <LockOpen size={10} /> : <Lock size={10} />}
       {isLocked ? t('admin.customers.lock.unlock') : t('admin.customers.lock.lock')}
+    </button>
+  )
+}
+
+// Bet-lock: hides the LIVE betting board from this user entirely — they can
+// watch a round but can't bet, even when the admin opens a new round.
+function BetLockButton({ u, disabled, onRevalidate }: { u: CustomerRow; disabled?: boolean; onRevalidate: () => void }) {
+  const t = useT()
+  const isBetLocked = u.betLocked
+  const submitHook = useSubmit()
+
+  function toggle() {
+    const fd = new FormData()
+    fd.set('op', isBetLocked ? 'betUnlock' : 'betLock')
+    fd.set('userId', u.id)
+    submitHook(fd, { method: 'post' })
+    setTimeout(onRevalidate, 500)
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={toggle}
+      disabled={disabled}
+      title={isBetLocked ? t('admin.customers.betLock.unlockTitle') : t('admin.customers.betLock.lockTitle')}
+      className="inline-flex items-center gap-1 whitespace-nowrap rounded-md px-2 py-1 text-[10px] font-bold disabled:opacity-50"
+      style={{
+        background: isBetLocked ? 'rgba(217,119,6,0.25)' : 'rgba(67,56,202,0.2)',
+        color: isBetLocked ? '#fbbf24' : '#a5b4fc',
+        border: `1px solid ${isBetLocked ? '#d97706' : '#4338ca'}`,
+      }}
+    >
+      {isBetLocked ? <CircleSlash size={10} /> : <Ban size={10} />}
+      {isBetLocked ? t('admin.customers.betLock.unlock') : t('admin.customers.betLock.lock')}
     </button>
   )
 }

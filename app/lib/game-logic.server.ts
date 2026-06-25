@@ -40,6 +40,40 @@ export function payoutForSum(b: SumBetIn, diceSum: number, cfg: PayoutConfig): n
   return diceSum === b.sum ? b.amount * cfg.sumNumber : 0
 }
 
+// LIVE-mode anti-payout rule for ADMIN_LOCKED users: a bet whose WINNINGS
+// (profit = return − stake) would be STRICTLY GREATER than this is voided
+// (refunded) at settle and hidden from the customer's own bet list. Winnings of
+// exactly this amount are allowed through — e.g. a 100k pair returns 600k
+// (×6) = 500k profit, so it stays; a larger pair (> 500k profit) is hidden.
+export const LOCKED_LIVE_VOID_RETURN_MIN = 500_000
+
+// SUM numbers that earn the ×6 promo return (matches admin.live settlement).
+const PROMO_SPECIAL_SUMS = new Set([3, 7, 11, 15])
+
+// Highest total amount a single LIVE bet would return to the player if it wins,
+// by bet type (SYMBOL uses the standard single-match ×). Used only for the
+// locked-user void rule — not for settlement.
+export function liveBetPotentialReturn(
+  b: { kind: string; amount: number; range?: RangeKey | null; exactSum?: number | null },
+  cfg: PayoutConfig,
+  opts?: { promoSum?: boolean },
+): number {
+  switch (b.kind) {
+    case 'SYMBOL':
+      return b.amount * cfg.symbol1
+    case 'RANGE':
+      return b.amount * (b.range === 'LOW' ? cfg.rangeLow : b.range === 'MIDDLE' ? cfg.rangeMiddle : cfg.rangeHigh)
+    case 'PAIR':
+      return b.amount * cfg.pair
+    case 'SUM':
+      return opts?.promoSum && b.exactSum != null && PROMO_SPECIAL_SUMS.has(b.exactSum)
+        ? b.amount * 6
+        : b.amount * cfg.sumNumber
+    default:
+      return 0
+  }
+}
+
 export type WalletType = 'DEMO' | 'REAL' | 'PROMO'
 
 // Per-phase win rates and dice-selection rules.

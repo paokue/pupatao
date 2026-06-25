@@ -199,13 +199,13 @@ export function DepositModal({ open, onClose, amount, onSuccess }: DepositModalP
               </p>
 
               <div
-                className="mb-4 flex justify-center rounded-xl px-4 py-5"
+                className="mb-4 flex justify-center rounded-xl px-4 py-3"
                 style={{ background: '#1e0040', border: '1.5px solid #7c3aed' }}
               >
                 <button
                   type="button"
                   onClick={() => setLightbox(QR_SRC)}
-                  className="block w-full max-w-[260px] overflow-hidden rounded-lg transition-opacity hover:opacity-90"
+                  className="block w-full max-w-[170px] overflow-hidden rounded-lg transition-opacity hover:opacity-90"
                   style={{ border: '2px solid #a78bfa' }}
                   aria-label={t('deposit.aria.viewQr')}
                 >
@@ -248,43 +248,24 @@ export function DepositModal({ open, onClose, amount, onSuccess }: DepositModalP
               </p>
 
               <div
-                className="mb-4 flex flex-col items-center gap-3 rounded-xl px-4 py-5"
+                className="mb-4 flex flex-col items-center gap-3 rounded-xl px-4 py-3"
                 style={{ background: '#1e0040', border: '1.5px dashed #7c3aed' }}
               >
-                {/* Example payment-slip thumbnail — only shown until the user picks their own file. */}
-                {!userPickedFile && (
-                  <div className="flex w-full flex-col items-center gap-1.5">
-                    <div className="text-[10px] font-bold " style={{ color: '#a78bfa' }}>
-                      {t('deposit.example')}
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => setLightbox(SLIP_EXAMPLE_SRC)}
-                      className="block w-[120px] overflow-hidden rounded-lg transition-opacity hover:opacity-90"
-                      style={{ border: '1.5px solid #6d28d9' }}
-                      aria-label={t('deposit.aria.viewExample')}
-                    >
-                      <img
-                        src={SLIP_EXAMPLE_SRC}
-                        alt="Example payment slip"
-                        className="block h-auto w-full object-contain"
-                      />
-                    </button>
-                    <div className="text-[10px]" style={{ color: '#7c3aed' }}>{t('deposit.tapForFull')}</div>
-                  </div>
-                )}
-
                 {displayedSlip ? (
-                  <div
-                    className="relative w-full max-w-[260px] overflow-hidden rounded-lg"
+                  // Compact preview (same size as the example) — tap to view full.
+                  <button
+                    type="button"
+                    onClick={() => !isPdf && setLightbox(displayedSlip)}
+                    className="relative block w-[72px] overflow-hidden rounded-lg transition-opacity hover:opacity-90"
                     style={{ border: '2px solid #a78bfa' }}
+                    aria-label={t('deposit.aria.viewExample')}
                   >
                     {isPdf ? (
                       <div
-                        className="flex aspect-[4/3] items-center justify-center text-xs font-semibold"
+                        className="flex aspect-[4/3] items-center justify-center text-[9px] font-semibold"
                         style={{ background: '#2d1b4e', color: '#fde68a' }}
                       >
-                        {t('deposit.pdfUploaded')}
+                        PDF
                       </div>
                     ) : (
                       <img src={displayedSlip} alt="Payment slip preview" className="block h-auto w-full object-contain" />
@@ -294,19 +275,18 @@ export function DepositModal({ open, onClose, amount, onSuccess }: DepositModalP
                         className="absolute inset-0 flex items-center justify-center"
                         style={{ background: 'rgba(0,0,0,0.5)' }}
                       >
-                        <Loader size={24} className="animate-spin text-white" />
+                        <Loader size={18} className="animate-spin text-white" />
                       </div>
                     )}
                     {slipUrl && !uploading && (
                       <div
-                        className="absolute bottom-2 right-2 flex items-center gap-1 rounded-full px-2 py-1 text-[10px] font-bold"
-                        style={{ background: 'rgba(22,163,74,0.9)', color: '#fff' }}
+                        className="absolute bottom-1 right-1 flex h-4 w-4 items-center justify-center rounded-full"
+                        style={{ background: 'rgba(22,163,74,0.95)', color: '#fff' }}
                       >
-                        <CheckCircle2 size={12} />
-                        {t('deposit.uploaded')}
+                        <CheckCircle2 size={11} />
                       </div>
                     )}
-                  </div>
+                  </button>
                 ) : (
                   <div className="flex flex-col items-center gap-1 py-2 text-center">
                     <Camera size={32} style={{ color: '#a78bfa' }} />
@@ -337,6 +317,30 @@ export function DepositModal({ open, onClose, amount, onSuccess }: DepositModalP
                   <Upload size={14} />
                   {slipUrl ? t('deposit.changeSlip') : t('common.chooseFile')}
                 </button>
+
+                {/* Small example slip — below the choose-file button so the
+                    confirm button stays visible without scrolling. */}
+                {!userPickedFile && (
+                  <div className="flex w-full flex-col items-center gap-1">
+                    <div className="text-[10px] font-bold" style={{ color: '#a78bfa' }}>
+                      {t('deposit.example')}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setLightbox(SLIP_EXAMPLE_SRC)}
+                      className="block w-[72px] overflow-hidden rounded-lg transition-opacity hover:opacity-90"
+                      style={{ border: '1.5px solid #6d28d9' }}
+                      aria-label={t('deposit.aria.viewExample')}
+                    >
+                      <img
+                        src={SLIP_EXAMPLE_SRC}
+                        alt="Example payment slip"
+                        className="block h-auto w-full object-contain"
+                      />
+                    </button>
+                    <div className="text-[10px]" style={{ color: '#7c3aed' }}>{t('deposit.tapForFull')}</div>
+                  </div>
+                )}
               </div>
 
               {uploadError && (

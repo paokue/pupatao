@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useFetcher } from 'react-router'
 import { ArrowLeft, ArrowRight, Camera, CheckCircle2, Loader, Pencil, Upload, X } from 'lucide-react'
 import { useT } from '~/lib/use-t'
+import { withdrawFee } from '~/lib/withdraw-fee'
 
 interface WithdrawModalProps {
   open: boolean
@@ -231,18 +232,35 @@ export function WithdrawModal({ open, onClose, amount, existingBankQrUrl, onSucc
           {/* ─── Step 2 — confirm ─────────────────────────────────── */}
           {step === 'confirm' && currentQr && (
             <>
-              <p className="mb-4 text-center text-xs" style={{ color: '#c4b5fd' }}>
+              <p className="mb-2 text-center text-xs" style={{ color: '#c4b5fd' }}>
                 {t('withdraw.confirmInstruction')}
               </p>
 
+              {/* Fee + net the customer receives, shown below the description. */}
               <div
-                className="mb-4 flex flex-col items-center gap-3 rounded-xl px-4 py-5"
+                className="mb-3 rounded-lg px-3 py-2 text-xs"
+                style={{ background: '#1e0040', border: '1px solid #4c1d95' }}
+              >
+                <div className="flex items-center justify-between">
+                  <span style={{ color: '#c4b5fd' }}>{t('withdraw.fee')}</span>
+                  <span className="font-bold" style={{ color: '#fbbf24' }}>{withdrawFee(amount).toLocaleString()} ₭</span>
+                </div>
+                <div className="mt-1 flex items-center justify-between">
+                  <span style={{ color: '#c4b5fd' }}>{t('withdraw.youReceive')}</span>
+                  <span className="font-bold" style={{ color: '#4ade80' }}>{(amount - withdrawFee(amount)).toLocaleString()} ₭</span>
+                </div>
+              </div>
+
+              {/* Compact QR — just enough to confirm the right account; keeps the
+                  confirm button above the fold without scrolling. Tap to enlarge. */}
+              <div
+                className="mb-3 flex flex-col items-center gap-2 rounded-xl px-4 py-3"
                 style={{ background: '#1e0040', border: '1.5px solid #7c3aed' }}
               >
                 <button
                   type="button"
                   onClick={() => setLightbox(currentQr)}
-                  className="block w-full max-w-[240px] overflow-hidden rounded-lg transition-opacity hover:opacity-90"
+                  className="block w-full max-w-[120px] overflow-hidden rounded-lg transition-opacity hover:opacity-90"
                   style={{ border: '2px solid #a78bfa' }}
                   aria-label={t('withdraw.aria.viewQr')}
                 >

@@ -10,6 +10,7 @@ import { ADMIN_CHANNEL, type TxCreatedPayload, type TxResolvedPayload } from '~/
 import { usePusherEvent } from '~/hooks/use-pusher'
 import { ConfirmDialog } from '~/components/ConfirmDialog'
 import { isValidRejectReason, rejectReasonsFor } from '~/lib/reject-reasons'
+import { withdrawFee } from '~/lib/withdraw-fee'
 import { useT, useLocale } from '~/lib/use-t'
 import { t as translate, parseLocaleCookie, type StringKey } from '~/lib/i18n'
 
@@ -797,6 +798,18 @@ function TxCard({
           {new Date(tx.createdAt).toLocaleString()}
         </div>
         {tx.note && <div className="mt-1 text-xs" style={{ color: '#a5b4fc' }}>{tx.note}</div>}
+        {tab === 'withdraw' && (
+          <div className="mt-1.5 inline-flex flex-wrap items-center gap-x-2 gap-y-0.5 rounded-md px-2 py-1 text-xs font-semibold"
+            style={{ background: 'rgba(217,119,6,0.12)' }}>
+            <span style={{ color: '#fbbf24' }}>
+              {t('admin.transactions.card.fee')}: {withdrawFee(tx.amount).toLocaleString()} ₭
+            </span>
+            <span style={{ color: '#94a3b8' }}>·</span>
+            <span style={{ color: '#cbd5e1' }}>
+              {t('admin.transactions.card.netTransfer')}: <strong style={{ color: '#4ade80' }}>{(tx.amount - withdrawFee(tx.amount)).toLocaleString()} ₭</strong>
+            </span>
+          </div>
+        )}
         {'approvedBy' in tx && tx.approvedBy && (
           <div className="mt-1 text-[10px]" style={{ color: '#4ade80' }}>
             ✓ {t('admin.transactions.card.approvedBy')} <strong>{tx.approvedBy}</strong>

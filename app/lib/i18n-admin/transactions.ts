@@ -56,6 +56,8 @@ export const ADMIN_TRANSACTIONS_STRINGS = {
   // TxCard
   "admin.transactions.card.previewSlipAria": { lo: "ເບິ່ງສະລິບ", en: "Preview slip" },
   "admin.transactions.card.slipAlt": { lo: "ສະລິບ", en: "Slip" },
+  "admin.transactions.card.fee": { lo: "ຄ່າທຳນຽມ", en: "Fee" },
+  "admin.transactions.card.netTransfer": { lo: "ໂອນໃຫ້ລູກຄ້າ", en: "Transfer to customer" },
   "admin.transactions.card.approvedBy": { lo: "ອະນຸມັດໂດຍ", en: "Approved by" },
   "admin.transactions.card.rejectedBy": { lo: "ປະຕິເສດໂດຍ", en: "Rejected by" },
   "admin.transactions.card.reject": { lo: "ປະຕິເສດ", en: "Reject" },

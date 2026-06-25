@@ -36,6 +36,8 @@ export const ADMIN_CUSTOMERS_STRINGS = {
   "admin.customers.action.pwShort": { lo: "ລະຫັດ", en: "PW" },
   "admin.customers.action.suspend": { lo: "ປະງັບ", en: "SUSPEND" },
   "admin.customers.action.activate": { lo: "ເປີດໃຊ້ງານ", en: "ACTIVATE" },
+  "admin.customers.action.suspendShort": { lo: "ປະງັບ", en: "SUSP" },
+  "admin.customers.action.activateShort": { lo: "ເປີດ", en: "ACT" },
 
   // ─── Game lock button ───────────────────────────────────────────────
   "admin.customers.lock.unlockTitle": { lo: "ປົດລັອກເກມ (ໃຫ້ຊະນະໄດ້)", en: "Unlock game (allow wins)" },
@@ -43,6 +45,10 @@ export const ADMIN_CUSTOMERS_STRINGS = {
   "admin.customers.lock.unlock": { lo: "ປົດລັອກ", en: "Unlock" },
   "admin.customers.lock.lock": { lo: "ລັອກ", en: "Lock" },
   "admin.customers.lock.adminLockedLabel": { lo: "🔒 ປິດ", en: "🔒 Locked" },
+  "admin.customers.betLock.lockTitle": { lo: "ລັອກການແທງ Live (ບໍ່ໃຫ້ເຫັນກະດານແທງ)", en: "Bet-lock (hide the live betting board)" },
+  "admin.customers.betLock.unlockTitle": { lo: "ປົດລັອກການແທງ Live", en: "Remove bet-lock" },
+  "admin.customers.betLock.lock": { lo: "ລັອກແທງ", en: "B-LOCK" },
+  "admin.customers.betLock.unlock": { lo: "ປົດແທງ", en: "B-OPEN" },
 
   // ─── Pagination ─────────────────────────────────────────────────────
   "admin.customers.page.prev": { lo: "← ກ່ອນໜ້າ", en: "← Prev" },

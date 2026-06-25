@@ -154,8 +154,8 @@ export interface SettledBet {
   pairA: string | null
   pairB: string | null
   exactSum: number | null
-  payout: number   // 0 if lost
-  result: 'WIN' | 'LOSS'
+  payout: number   // 0 if lost; refunded stake if REFUNDED
+  result: 'WIN' | 'LOSS' | 'REFUNDED'
 }
 // Fired after admin settles a live round when a promotion bonus is credited
 // to the user's REAL wallet (win streak, triple bonus, etc.).
