@@ -401,69 +401,81 @@ async function handleLiveBets(args: {
   }
 
   const placedAt = new Date()
-
-  const result = await prisma.$transaction(async db => {
-    // Re-read wallet inside the tx to guard against double-spend if the user
-    // submits two bet payloads in quick succession.
-    const fresh = await db.wallet.findUnique({ where: { id: wallet.id } })
-    if (!fresh) throw new Error('Wallet not found.')
-    if (fresh.balance < totalStake) {
-      throw new Error(`Insufficient ${args.walletKey} balance: ${fresh.balance.toLocaleString()} ₭ available, ${totalStake.toLocaleString()} ₭ requested.`)
-    }
-
-    const newBalance = fresh.balance - totalStake
-
-    const createdBets: Array<{ kind: 'SYMBOL' | 'RANGE' | 'PAIR' | 'SUM'; amount: number; symbol: DiceSymbol | null; range: RangeKey | null; pairA: DiceSymbol | null; pairB: DiceSymbol | null; exactSum: number | null }> = []
-
-    // Create all bets in parallel — reduces DB round trips from N sequential to 1 parallel batch.
-    await Promise.all([
-      ...symbolBets.map(b => db.bet.create({
-        data: { roundId: openRound.id, userId: user.id, walletId: wallet.id, kind: 'SYMBOL', amount: b.amount, symbol: b.symbol, cell: b.cell },
-      }).then(() => createdBets.push({ kind: 'SYMBOL', amount: b.amount, symbol: b.symbol, range: null, pairA: null, pairB: null, exactSum: null }))),
-      ...rangeBets.map(b => db.bet.create({
-        data: { roundId: openRound.id, userId: user.id, walletId: wallet.id, kind: 'RANGE', amount: b.amount, range: b.range },
-      }).then(() => createdBets.push({ kind: 'RANGE', amount: b.amount, symbol: null, range: b.range, pairA: null, pairB: null, exactSum: null }))),
-      ...pairBets.map(b => db.bet.create({
-        data: { roundId: openRound.id, userId: user.id, walletId: wallet.id, kind: 'PAIR', amount: b.amount, pairA: b.symbolA, pairB: b.symbolB, cellA: b.cellA, cellB: b.cellB },
-      }).then(() => createdBets.push({ kind: 'PAIR', amount: b.amount, symbol: null, range: null, pairA: b.symbolA, pairB: b.symbolB, exactSum: null }))),
-      ...sumBets.map(b => db.bet.create({
-        data: { roundId: openRound.id, userId: user.id, walletId: wallet.id, kind: 'SUM', amount: b.amount, exactSum: b.sum },
-      }).then(() => createdBets.push({ kind: 'SUM', amount: b.amount, symbol: null, range: null, pairA: null, pairB: null, exactSum: b.sum }))),
-    ])
-
-    await db.wallet.update({
-      where: { id: wallet.id },
-      data: { balance: newBalance, version: { increment: 1 } },
-    })
-    await db.transaction.create({
-      data: {
-        userId: user.id, walletId: wallet.id, type: 'LOSS',
-        amount: totalStake, balanceBefore: fresh.balance, balanceAfter: newBalance,
-        status: 'COMPLETED', roundId: openRound.id, idempotencyKey: crypto.randomUUID(),
-        note: 'Live round stake',
-      },
-    })
-
-    return { roundId: openRound.id, newBalance, createdBets }
-  })
-
-  // Realtime fanout — fire all bet events in one Pusher API call (triggerBatch)
-  // instead of N separate HTTP requests. Reduces latency proportional to bet count.
-  const userName = [user.firstName, user.lastName].filter(Boolean).join(' ') || null
   const placedAtIso = placedAt.toISOString()
-  if (result.createdBets.length > 0) {
-    notifyAdminBatch(result.createdBets.map(b => ({
-      event: 'bet:placed',
-      payload: {
-        roundId: result.roundId, mode: 'LIVE',
-        userId: user.id, userTel: user.tel, userName, walletType: walletKey,
-        kind: b.kind, amount: b.amount,
-        symbol: b.symbol, range: b.range, pairA: b.pairA, pairB: b.pairB,
-        exactSum: b.exactSum,
-        createdAt: placedAtIso,
-      } satisfies BetPlacedPayload,
-    })))
-  }
+  const userName = [user.firstName, user.lastName].filter(Boolean).join(' ') || null
+
+  // Build the realtime payloads from the validated INPUT (not from the DB) so we
+  // can broadcast them to the admin IN PARALLEL with the DB write below. The
+  // admin then sees the bet within one Pusher round-trip instead of waiting for
+  // the (slower) MongoDB transaction to commit — critical for last-second bets
+  // the admin must see before settling the round.
+  const betShapes: Array<{ kind: 'SYMBOL' | 'RANGE' | 'PAIR' | 'SUM'; amount: number; symbol: DiceSymbol | null; range: RangeKey | null; pairA: DiceSymbol | null; pairB: DiceSymbol | null; exactSum: number | null }> = [
+    ...symbolBets.map(b => ({ kind: 'SYMBOL' as const, amount: b.amount, symbol: b.symbol, range: null, pairA: null, pairB: null, exactSum: null })),
+    ...rangeBets.map(b => ({ kind: 'RANGE' as const, amount: b.amount, symbol: null, range: b.range, pairA: null, pairB: null, exactSum: null })),
+    ...pairBets.map(b => ({ kind: 'PAIR' as const, amount: b.amount, symbol: null, range: null, pairA: b.symbolA, pairB: b.symbolB, exactSum: null })),
+    ...sumBets.map(b => ({ kind: 'SUM' as const, amount: b.amount, symbol: null, range: null, pairA: null, pairB: null, exactSum: b.sum })),
+  ]
+  const betEvents = betShapes.map(b => ({
+    event: 'bet:placed' as const,
+    payload: {
+      roundId: openRound.id, mode: 'LIVE' as const,
+      userId: user.id, userTel: user.tel, userName, walletType: walletKey,
+      kind: b.kind, amount: b.amount,
+      symbol: b.symbol, range: b.range, pairA: b.pairA, pairB: b.pairB,
+      exactSum: b.exactSum,
+      createdAt: placedAtIso,
+    } satisfies BetPlacedPayload,
+  }))
+
+  // Persist (source of truth) and broadcast (best-effort) concurrently. The
+  // broadcast is wrapped in .catch so a Pusher hiccup never fails the bet.
+  const [result] = await Promise.all([
+    prisma.$transaction(async db => {
+      // Re-read wallet inside the tx to guard against double-spend if the user
+      // submits two bet payloads in quick succession.
+      const fresh = await db.wallet.findUnique({ where: { id: wallet.id } })
+      if (!fresh) throw new Error('Wallet not found.')
+      if (fresh.balance < totalStake) {
+        throw new Error(`Insufficient ${args.walletKey} balance: ${fresh.balance.toLocaleString()} ₭ available, ${totalStake.toLocaleString()} ₭ requested.`)
+      }
+
+      const newBalance = fresh.balance - totalStake
+
+      // Create all bets in parallel — reduces DB round trips from N sequential to 1 parallel batch.
+      await Promise.all([
+        ...symbolBets.map(b => db.bet.create({
+          data: { roundId: openRound.id, userId: user.id, walletId: wallet.id, kind: 'SYMBOL', amount: b.amount, symbol: b.symbol, cell: b.cell },
+        })),
+        ...rangeBets.map(b => db.bet.create({
+          data: { roundId: openRound.id, userId: user.id, walletId: wallet.id, kind: 'RANGE', amount: b.amount, range: b.range },
+        })),
+        ...pairBets.map(b => db.bet.create({
+          data: { roundId: openRound.id, userId: user.id, walletId: wallet.id, kind: 'PAIR', amount: b.amount, pairA: b.symbolA, pairB: b.symbolB, cellA: b.cellA, cellB: b.cellB },
+        })),
+        ...sumBets.map(b => db.bet.create({
+          data: { roundId: openRound.id, userId: user.id, walletId: wallet.id, kind: 'SUM', amount: b.amount, exactSum: b.sum },
+        })),
+      ])
+
+      await db.wallet.update({
+        where: { id: wallet.id },
+        data: { balance: newBalance, version: { increment: 1 } },
+      })
+      await db.transaction.create({
+        data: {
+          userId: user.id, walletId: wallet.id, type: 'LOSS',
+          amount: totalStake, balanceBefore: fresh.balance, balanceAfter: newBalance,
+          status: 'COMPLETED', roundId: openRound.id, idempotencyKey: crypto.randomUUID(),
+          note: 'Live round stake',
+        },
+      })
+
+      return { roundId: openRound.id, newBalance }
+    }),
+    betEvents.length > 0
+      ? notifyAdminBatch(betEvents).catch(err => { console.error('[live-bet] realtime broadcast failed', err) })
+      : Promise.resolve(),
+  ])
 
   return Response.json({
     ok: true,

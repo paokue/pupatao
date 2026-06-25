@@ -64,6 +64,14 @@ export const ADMIN_LIVE_STRINGS = {
   "admin.live.settleTitleReady": { lo: "ສະຫຼຸບຮອບ ແລະ ໂອນເງິນໃຫ້ຜູ້ຊະນະ", en: "Settle the round and credit winners" },
   "admin.live.settleTitleNotReady": { lo: "ກະລຸນາເລືອກໝາກໃຫ້ຄົບ 3 ໝາກກ່ອນ", en: "Pick all 3 dice first" },
   "admin.live.summaryBtn": { lo: "ສະຫຼຸບ", en: "SUMMARY" },
+  "admin.live.lowPayoutPicks": { lo: "ໝາກຈ່າຍໜ້ອຍ", en: "Low payout" },
+  "admin.live.lowPayoutHint": { lo: "ອັນດັບ {rank} · ລວມ {sum} · ຈ່າຍ {payout} ₭", en: "#{rank} · sum {sum} · pays {payout} ₭" },
+  "admin.live.highPayoutPicks": { lo: "ໝາກຈ່າຍຫຼາຍ (ຫຼີກລ້ຽງ)", en: "High payout (avoid)" },
+  "admin.live.highPayoutHint": { lo: "ອັນດັບ {rank} · ລວມ {sum} · ຈ່າຍ {payout} ₭", en: "#{rank} · sum {sum} · pays {payout} ₭" },
+  "admin.live.mostBetDie": { lo: "ໝາກແທງຫຼາຍສຸດ", en: "Most bet" },
+  "admin.live.mostBetDieHint": { lo: "ລວມເງິນແທງ {total} ₭", en: "{total} ₭ total staked" },
+  "admin.live.zeroBetDie": { lo: "ບໍ່ມີຄົນແທງ", en: "0 bet" },
+  "admin.live.zeroBetDieHint": { lo: "ໝາກນີ້ບໍ່ມີຄົນແທງ — ປອດໄພ", en: "No bets on these dice — safe to show" },
 
   // ─── Live stream panel / offline / schedule ─────────────────────────
   "admin.live.liveStream": { lo: "ສະຕຣີມສົດ", en: "LIVE STREAM" },

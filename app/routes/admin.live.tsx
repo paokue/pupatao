@@ -116,6 +116,45 @@ const SYMBOLS: DiceSymbol[] = ['FISH', 'PRAWN', 'CRAB', 'ROOSTER', 'GOURD', 'FRO
 function symbolSrc(s: DiceSymbol): string {
   return `/symbols/${SYMBOL_FILE[s]}.png`
 }
+
+// Scores every dice result by what it would pay out against the current bets,
+// to help the admin pick a low-exposure outcome on a LIVE round. Only enumerates
+// combos of 3 DISTINCT symbols (no pairs/triples) since duplicate dice are
+// avoided in live play. Returns all combos sorted cheapest→priciest; the caller
+// slices the lowest few (safe picks) and highest few (avoid). Pure/client-safe.
+type PayoutCombo = { dice: DiceSymbol[]; payout: number; diceSum: number }
+type ScorableBet = { kind: string; amount: number; symbol: string | null; range: string | null; pairA: string | null; pairB: string | null; exactSum?: number | null }
+function rankCombosByPayout(bets: ScorableBet[], cfg: PayoutConfig, livePromo: LivePromo): PayoutCombo[] {
+  const combos: PayoutCombo[] = []
+  for (let i = 0; i < SYMBOLS.length; i++) {
+    for (let j = i + 1; j < SYMBOLS.length; j++) {
+      for (let k = j + 1; k < SYMBOLS.length; k++) {
+        const dice = [SYMBOLS[i], SYMBOLS[j], SYMBOLS[k]]
+        const diceSum = SYMBOL_VALUE[dice[0]] + SYMBOL_VALUE[dice[1]] + SYMBOL_VALUE[dice[2]]
+        let payout = 0
+        for (const b of bets) payout += computeBetPayout(b, dice, diceSum, cfg, livePromo)
+        combos.push({ dice, payout, diceSum })
+      }
+    }
+  }
+  // Lowest payout first; tie-break by sum so the order is stable.
+  combos.sort((a, b) => a.payout - b.payout || a.diceSum - b.diceSum)
+  return combos
+}
+
+// Total money riding on each of the 6 symbols across SYMBOL + PAIR bets (RANGE
+// and SUM bets don't reference a symbol). Every symbol is present, defaulting to
+// 0 — so callers can read off both the most-bet die and the zero-bet dice.
+function symbolExposure(bets: ScorableBet[]): Map<DiceSymbol, number> {
+  const totals = new Map<DiceSymbol, number>()
+  for (const s of SYMBOLS) totals.set(s, 0)
+  for (const b of bets) {
+    for (const s of [b.symbol, b.pairA, b.pairB]) {
+      if (s && (SYMBOLS as string[]).includes(s)) totals.set(s as DiceSymbol, (totals.get(s as DiceSymbol) ?? 0) + b.amount)
+    }
+  }
+  return totals
+}
 const ACTIVE_STATUSES = ['BETTING', 'LOCKED', 'AWAITING_RESULT'] as const
 
 const DEFAULT_BETTING_SECONDS = 60
@@ -203,12 +242,13 @@ export async function loader({ request }: Route.LoaderArgs) {
     current: current ? serialize(current) : null,
     currentBets: currentBets.map(b => ({
       id: b.id,
-      kind: b.kind as 'SYMBOL' | 'RANGE' | 'PAIR',
+      kind: b.kind as 'SYMBOL' | 'RANGE' | 'PAIR' | 'SUM',
       amount: b.amount,
       symbol: b.symbol,
       range: b.range,
       pairA: b.pairA,
       pairB: b.pairB,
+      exactSum: b.exactSum,
       createdAt: b.createdAt.toISOString(),
       userId: b.userId,
       userTel: b.user.tel,
@@ -221,6 +261,10 @@ export async function loader({ request }: Route.LoaderArgs) {
     liveStreamUrl,
     schedule,
     savedBettingSeconds,
+    // Payout multipliers + LIVE promo flags so the admin result-entry modal can
+    // compute (client-side) which dice combos pay out the least.
+    payoutCfg: getPayoutConfig(),
+    livePromo: { triple: process.env.PROMO_TRIPLE === 'true', sum: process.env.PROMO_SUM === 'true' },
   }
 }
 
@@ -730,17 +774,23 @@ export async function action({ request }: Route.ActionArgs) {
       }
 
       // Build the summary payload that the admin's UI panel renders.
-      const players = Array.from(playerGroups.values()).map(grp => ({
-        userId: grp.userId,
-        userTel: grp.userTel,
-        userName: grp.userName,
-        stake: grp.stake,
-        payout: grp.payout,
-        net: grp.payout - grp.stake,
-        newBalance: newBalances[grp.userId] ?? 0,
-      }))
+      // Real-money view only: DEMO wallets are excluded so the totals reflect
+      // actual REAL/PROMO exposure (DEMO is play-money and shouldn't skew the
+      // house net / stake / payout figures).
+      const players = Array.from(playerGroups.values())
+        .filter(grp => grp.walletType !== 'DEMO')
+        .map(grp => ({
+          userId: grp.userId,
+          userTel: grp.userTel,
+          userName: grp.userName,
+          stake: grp.stake,
+          payout: grp.payout,
+          net: grp.payout - grp.stake,
+          newBalance: newBalances[grp.userId] ?? 0,
+        }))
       const totalStake = players.reduce((s, p) => s + p.stake, 0)
       const totalPayout = players.reduce((s, p) => s + p.payout, 0)
+      const realPromoBetCount = bets.filter(b => b.wallet.type !== 'DEMO').length
 
       return {
         ok: true,
@@ -748,7 +798,7 @@ export async function action({ request }: Route.ActionArgs) {
           roundId,
           dice: dice as string[],
           diceSum,
-          totalBets: bets.length,
+          totalBets: realPromoBetCount,
           totalPlayers: players.length,
           totalStake,
           totalPayout,
@@ -1574,7 +1624,28 @@ function ResultEntryModal({
   bets: LiveBet[]
 }) {
   const t = useT()
+  const { payoutCfg, livePromo } = useLoaderData<typeof loader>()
   const stillBetting = round.status === 'BETTING' && !bettingExpired
+  // Score every 3-distinct-dice result by its payout against the current bets —
+  // recomputed whenever a new bet streams in. `lowPicks` = cheapest 3 (safe),
+  // `highPicks` = priciest 3 (avoid), `topSymbol` = most-exposed single die.
+  const { lowPicks, highPicks, topSymbol, zeroSymbols } = useMemo(() => {
+    const ranked = rankCombosByPayout(bets, payoutCfg, livePromo)
+    const exposure = symbolExposure(bets)
+    let topSymbol: { symbol: DiceSymbol; total: number } | null = null
+    const zeroSymbols: DiceSymbol[] = []
+    for (const s of SYMBOLS) {
+      const total = exposure.get(s) ?? 0
+      if (total === 0) zeroSymbols.push(s)
+      else if (!topSymbol || total > topSymbol.total) topSymbol = { symbol: s, total }
+    }
+    return {
+      lowPicks: ranked.slice(0, 3),
+      highPicks: ranked.slice(-3).reverse(), // most-expensive first
+      topSymbol,
+      zeroSymbols,
+    }
+  }, [bets, payoutCfg, livePromo])
   return (
     <div
       className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto p-4"
@@ -1645,6 +1716,46 @@ function ResultEntryModal({
                 {submitting ? <Loader size={10} className="animate-spin" /> : <Check size={10} />}
                 {t('admin.live.summaryBtn')}
               </button>
+
+              {/* Low-payout suggestions: 3 distinct-dice results, cheapest first. */}
+              <span className="text-[10px] font-semibold uppercase tracking-wide" style={{ color: '#64748b' }}>
+                {t('admin.live.lowPayoutPicks')}
+              </span>
+              {lowPicks.map((s, i) => (
+                <div
+                  key={s.dice.join('-')}
+                  className="inline-flex items-center gap-1.5 rounded-md px-2 py-1"
+                  style={{ background: '#1e1b4b', border: `1px solid ${s.payout === 0 ? '#16a34a' : '#4338ca'}` }}
+                  title={t('admin.live.lowPayoutHint', { rank: i + 1, sum: s.diceSum, payout: s.payout.toLocaleString() })}
+                >
+                  <div className="flex gap-0.5">
+                    {s.dice.map((d, di) => (
+                      <img key={di} src={symbolSrc(d)} alt={d} className="h-5 w-5 shrink-0 rounded object-contain" style={{ background: '#fff' }} />
+                    ))}
+                  </div>
+                  <span className="text-[10px] font-bold tabular-nums" style={{ color: s.payout === 0 ? '#4ade80' : '#fde68a' }}>
+                    {s.payout.toLocaleString()}
+                  </span>
+                </div>
+              ))}
+
+              {/* Single dice with zero bets — totally safe to show. */}
+              {zeroSymbols.length > 0 && (
+                <div
+                  className="inline-flex items-center gap-1.5 rounded-md px-2 py-1"
+                  style={{ background: '#1e1b4b', border: '1px solid #16a34a' }}
+                  title={t('admin.live.zeroBetDieHint')}
+                >
+                  <span className="text-[9px] font-bold uppercase tracking-wide" style={{ color: '#4ade80' }}>
+                    {t('admin.live.zeroBetDie')}
+                  </span>
+                  <div className="flex gap-0.5">
+                    {zeroSymbols.map(s => (
+                      <img key={s} src={symbolSrc(s)} alt={s} className="h-5 w-5 shrink-0 rounded object-contain" style={{ background: '#fff' }} />
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           </>
         )}
@@ -1657,6 +1768,53 @@ function ResultEntryModal({
             <LiveBetsPanel bets={bets} hasOpenRound={true} roundId={round.id} maxHeight="240px" />
           </div>
         </div>
+
+        {/* Bottom danger row: highest-payout results (avoid) on the left,
+            single most-bet die (most exposed) on the right. */}
+        {bets.length > 0 && (
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-[10px] font-semibold uppercase tracking-wide" style={{ color: '#64748b' }}>
+                {t('admin.live.highPayoutPicks')}
+              </span>
+              {highPicks.map((s, i) => (
+                <div
+                  key={s.dice.join('-')}
+                  className="inline-flex items-center gap-1.5 rounded-md px-2 py-1"
+                  style={{ background: '#1e1b4b', border: '1px solid #7f1d1d' }}
+                  title={t('admin.live.highPayoutHint', { rank: i + 1, sum: s.diceSum, payout: s.payout.toLocaleString() })}
+                >
+                  <div className="flex gap-0.5">
+                    {s.dice.map((d, di) => (
+                      <img key={di} src={symbolSrc(d)} alt={d} className="h-5 w-5 shrink-0 rounded object-contain" style={{ background: '#fff' }} />
+                    ))}
+                  </div>
+                  <span className="text-[10px] font-bold tabular-nums" style={{ color: '#f87171' }}>
+                    {s.payout.toLocaleString()}
+                  </span>
+                </div>
+              ))}
+            </div>
+
+            {topSymbol && (
+              <div className="inline-flex items-center gap-1.5">
+                <span className="text-[10px] font-semibold uppercase tracking-wide" style={{ color: '#64748b' }}>
+                  {t('admin.live.mostBetDie')}
+                </span>
+                <div
+                  className="inline-flex items-center gap-1.5 rounded-md px-2 py-1"
+                  style={{ background: '#1e1b4b', border: '1px solid #b45309' }}
+                  title={t('admin.live.mostBetDieHint', { total: topSymbol.total.toLocaleString() })}
+                >
+                  <img src={symbolSrc(topSymbol.symbol)} alt={topSymbol.symbol} className="h-5 w-5 shrink-0 rounded object-contain" style={{ background: '#fff' }} />
+                  <span className="text-[10px] font-bold tabular-nums" style={{ color: '#fbbf24' }}>
+                    {topSymbol.total.toLocaleString()}
+                  </span>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   )
