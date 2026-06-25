@@ -225,6 +225,7 @@ export async function action({ request }: Route.ActionArgs) {
   const op = String(fd.get('op') ?? '')
   const txId = String(fd.get('txId') ?? '')
   const reason = String(fd.get('reason') ?? '')
+  const amountRaw = String(fd.get('amount') ?? '')
   if (!txId) return { error: translate(locale, 'admin.transactions.error.txIdRequired') }
 
   if (op !== 'approve' && op !== 'reject') return { error: translate(locale, 'admin.transactions.error.unknownOp') }
@@ -274,13 +275,27 @@ export async function action({ request }: Route.ActionArgs) {
       return { ok: true }
     }
 
+    // Admin may correct a deposit amount the customer typed wrong. The edited
+    // value becomes the official amount for this transaction (credited, stored,
+    // and used for the first-topup bonus). Withdraws are never re-amounted here.
+    let effectiveAmount = tx.amount
+    let amountAdjusted = false
+    if (tx.type === 'DEPOSIT' && amountRaw !== '') {
+      const parsed = Number(amountRaw)
+      if (!Number.isInteger(parsed) || parsed <= 0 || parsed > 100_000_000) {
+        return { error: translate(locale, 'admin.transactions.error.invalidAmount') }
+      }
+      effectiveAmount = parsed
+      amountAdjusted = parsed !== tx.amount
+    }
+
     const result = await prisma.$transaction(async db => {
       const wallet = await db.wallet.findUnique({ where: { id: tx.walletId } })
       if (!wallet) throw new Error(translate(locale, 'admin.transactions.error.walletNotFound'))
 
-      const delta = tx.type === 'DEPOSIT' ? tx.amount : -tx.amount
+      const delta = tx.type === 'DEPOSIT' ? effectiveAmount : -effectiveAmount
       const newBalance = wallet.balance + delta
-      if (newBalance < 0) throw new Error(translate(locale, 'admin.transactions.error.insufficientBalance', { balance: wallet.balance.toLocaleString(), amount: tx.amount.toLocaleString() }))
+      if (newBalance < 0) throw new Error(translate(locale, 'admin.transactions.error.insufficientBalance', { balance: wallet.balance.toLocaleString(), amount: effectiveAmount.toLocaleString() }))
 
       await db.wallet.update({
         where: { id: wallet.id },
@@ -290,10 +305,11 @@ export async function action({ request }: Route.ActionArgs) {
         where: { id: tx.id },
         data: {
           status: 'COMPLETED',
+          amount: effectiveAmount,
           balanceBefore: wallet.balance,
           balanceAfter: newBalance,
           // Customer-facing note (see comment above) — keep English.
-          note: `${tx.note ?? (tx.type === 'DEPOSIT' ? 'Deposit' : 'Withdraw')} — approved by admin`,
+          note: `${tx.note ?? (tx.type === 'DEPOSIT' ? 'Deposit' : 'Withdraw')} — approved by admin${amountAdjusted ? ' (amount adjusted)' : ''}`,
           approvedById: admin.id,
           reviewedAt: new Date(),
         },
@@ -303,7 +319,7 @@ export async function action({ request }: Route.ActionArgs) {
           actorId: admin.id,
           action: tx.type === 'DEPOSIT' ? 'deposit.approve' : 'withdraw.approve',
           target: `transaction:${tx.id}`,
-          metadata: { amount: tx.amount, walletId: tx.walletId, newBalance },
+          metadata: { amount: effectiveAmount, originalAmount: tx.amount, amountAdjusted, walletId: tx.walletId, newBalance },
         },
       })
 
@@ -321,9 +337,9 @@ export async function action({ request }: Route.ActionArgs) {
         const isFirstApproval = user && !user.firstTopupApprovedAt
         if (isFirstApproval) {
           await db.user.update({ where: { id: tx.userId }, data: { firstTopupApprovedAt: new Date() } })
-          const promoBonus = tx.amount >= 1_000_000 ? 100_000
-            : tx.amount >= 500_000 ? 50_000
-              : tx.amount >= 100_000 ? 20_000 : 0
+          const promoBonus = effectiveAmount >= 1_000_000 ? 100_000
+            : effectiveAmount >= 500_000 ? 50_000
+              : effectiveAmount >= 100_000 ? 20_000 : 0
           if (promoBonus > 0) {
             const promoWallet = await db.wallet.findUnique({
               where: { userId_type: { userId: tx.userId, type: 'PROMO' } },
@@ -336,7 +352,7 @@ export async function action({ request }: Route.ActionArgs) {
                   userId: tx.userId, walletId: promoWallet.id, type: 'PROMO_BONUS',
                   amount: promoBonus, balanceBefore: promoWallet.balance, balanceAfter: newPromo,
                   status: 'COMPLETED', idempotencyKey: crypto.randomUUID(),
-                  note: `First-topup bonus (deposit ${tx.amount.toLocaleString()} ₭ → +${promoBonus.toLocaleString()} ₭ promo)`,
+                  note: `First-topup bonus (deposit ${effectiveAmount.toLocaleString()} ₭ → +${promoBonus.toLocaleString()} ₭ promo)`,
                 },
               })
               bonus.promo = promoBonus
@@ -437,6 +453,9 @@ export default function AdminTransactions() {
 
   const [pending, setPending] = useState<PendingAction>(null)
   const [rejectReason, setRejectReason] = useState('')
+  // Editable deposit amount on approve — lets admin correct a wrong amount the
+  // customer typed. Seeded from the tx amount when the approve modal opens.
+  const [approveAmount, setApproveAmount] = useState('')
   // Active slip URL for the fullscreen preview modal — null = closed.
   const [slipPreview, setSlipPreview] = useState<string | null>(null)
 
@@ -481,6 +500,16 @@ export default function AdminTransactions() {
     next.set('page', '1')
     return `?${next.toString()}`
   }
+
+  // Deposit-approve amount editing state derived from the live input.
+  const isDepositApprove = pending?.op === 'approve' && pending.tx.type === 'deposit'
+  const approveAmountNum = Number(approveAmount)
+  const approveAmountValid = Number.isInteger(approveAmountNum) && approveAmountNum > 0
+  // Amount shown in the approve title/description — the edited value for a
+  // deposit, otherwise the original tx amount.
+  const approveDisplayAmount = isDepositApprove
+    ? (approveAmountValid ? approveAmountNum : 0).toLocaleString()
+    : (pending?.tx.amount ?? 0).toLocaleString()
 
   return (
     <div className="flex flex-col gap-4">
@@ -608,7 +637,7 @@ export default function AdminTransactions() {
               rowNum={(data.page - 1) * data.pageSize + i + 1}
               tab={data.tab as 'deposit' | 'withdraw'}
               loading={loading}
-              onApprove={() => setPending({ tx, op: 'approve' })}
+              onApprove={() => { setApproveAmount(String(tx.amount)); setPending({ tx, op: 'approve' }) }}
               onReject={() => { setRejectReason(''); setPending({ tx, op: 'reject' }) }}
               onSlipPreview={url => setSlipPreview(url)}
             />
@@ -654,21 +683,41 @@ export default function AdminTransactions() {
           onClose={() => setPending(null)}
           title={
             pending.op === 'approve'
-              ? t('admin.transactions.confirm.approveTitle', { tab: data.tab === 'deposit' ? t('admin.transactions.tab.deposit') : t('admin.transactions.tab.withdraw'), amount: pending.tx.amount.toLocaleString() })
+              ? t('admin.transactions.confirm.approveTitle', { tab: data.tab === 'deposit' ? t('admin.transactions.tab.deposit') : t('admin.transactions.tab.withdraw'), amount: approveDisplayAmount })
               : t('admin.transactions.confirm.rejectTitle', { tab: data.tab === 'deposit' ? t('admin.transactions.tab.deposit') : t('admin.transactions.tab.withdraw') })
           }
           description={
             pending.op === 'approve'
               ? data.tab === 'deposit'
-                ? t('admin.transactions.confirm.approveDepositDesc', { tel: pending.tx.sender.tel, amount: pending.tx.amount.toLocaleString() })
-                : t('admin.transactions.confirm.approveWithdrawDesc', { tel: pending.tx.sender.tel, amount: pending.tx.amount.toLocaleString() })
+                ? t('admin.transactions.confirm.approveDepositDesc', { tel: pending.tx.sender.tel, amount: approveDisplayAmount })
+                : t('admin.transactions.confirm.approveWithdrawDesc', { tel: pending.tx.sender.tel, amount: approveDisplayAmount })
               : t('admin.transactions.confirm.rejectDesc', { tel: pending.tx.sender.tel })
           }
           tone={pending.op === 'approve' ? 'success' : 'danger'}
           confirmLabel={pending.op === 'approve' ? t('admin.transactions.confirm.approve') : t('admin.transactions.confirm.reject')}
-          fields={pending.op === 'reject' ? { txId: pending.tx.id, op: pending.op, reason: rejectReason } : { txId: pending.tx.id, op: pending.op }}
-          confirmDisabled={pending.op === 'reject' && !rejectReason}
+          fields={
+            pending.op === 'reject'
+              ? { txId: pending.tx.id, op: pending.op, reason: rejectReason }
+              : isDepositApprove
+                ? { txId: pending.tx.id, op: pending.op, amount: approveAmountValid ? String(approveAmountNum) : '' }
+                : { txId: pending.tx.id, op: pending.op }
+          }
+          confirmDisabled={(pending.op === 'reject' && !rejectReason) || (isDepositApprove && !approveAmountValid)}
         >
+          {isDepositApprove && (
+            <label className="flex flex-col gap-1">
+              <span className="text-xs font-bold" style={{ color: '#a5b4fc' }}>{t('admin.transactions.confirm.depositAmountLabel')}</span>
+              <input
+                type="text"
+                inputMode="numeric"
+                value={approveAmount ? Number(approveAmount).toLocaleString() : ''}
+                onChange={e => setApproveAmount(e.target.value.replace(/\D/g, ''))}
+                className="rounded-md px-3 py-2 text-sm font-bold outline-none"
+                style={{ background: '#0f172a', color: '#fde68a', border: '1.5px solid #4338ca' }}
+              />
+              <span className="text-[10px]" style={{ color: '#64748b' }}>{t('admin.transactions.confirm.depositAmountHint')}</span>
+            </label>
+          )}
           {pending.op === 'reject' && (
             <label className="flex flex-col gap-1">
               <span className="text-xs font-bold" style={{ color: '#a5b4fc' }}>{t('admin.transactions.confirm.rejectReasonLabel')}</span>

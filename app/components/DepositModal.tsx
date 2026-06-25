@@ -213,23 +213,20 @@ export function DepositModal({ open, onClose, amount, onSuccess }: DepositModalP
                 </button>
               </div>
 
-              <div className="mb-4 flex items-center justify-center">
+              <div className="flex items-center justify-center gap-3">
                 <a
                   href={QR_SRC}
                   download="pupatao-qr-code.png"
-                  className="flex items-center justify-center gap-2 rounded-lg px-4 py-2 text-xs font-bold transition-opacity hover:opacity-90"
+                  className="flex items-center justify-center gap-2 rounded-lg px-4 py-2.5 text-xs font-bold transition-opacity hover:opacity-90"
                   style={{ background: '#4c1d95', color: '#fde68a', border: '1.5px solid #7c3aed' }}
                 >
                   <Download size={14} />
                   {t('deposit.downloadQr')}
                 </a>
-              </div>
-
-              <div className="w-full flex items-center justify-end">
                 <button
                   type="button"
                   onClick={() => setStep('slip')}
-                  className="flex w-auto items-center justify-center gap-2 rounded-lg py-2 px-4 text-sm font-bold  transition-opacity hover:opacity-90"
+                  className="flex items-center justify-center gap-2 rounded-lg py-2.5 px-4 text-sm font-bold  transition-opacity hover:opacity-90"
                   style={{
                     background: 'linear-gradient(135deg, #16a34a, #15803d)',
                     color: '#fff',

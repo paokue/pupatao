@@ -50,6 +50,8 @@ export const ADMIN_TRANSACTIONS_STRINGS = {
   "admin.transactions.confirm.reject": { lo: "ປະຕິເສດ", en: "Reject" },
   "admin.transactions.confirm.rejectReasonLabel": { lo: "ສາເຫດການປະຕິເສດ", en: "Reject reason" },
   "admin.transactions.confirm.rejectReasonPlaceholder": { lo: "ເລືອກສາເຫດ…", en: "Select a reason…" },
+  "admin.transactions.confirm.depositAmountLabel": { lo: "ຈຳນວນເງິນຝາກ (₭)", en: "Deposit amount (₭)" },
+  "admin.transactions.confirm.depositAmountHint": { lo: "ແກ້ໄຂຖ້າລູກຄ້າປ້ອນຈຳນວນຜິດ.", en: "Edit if the customer entered the wrong amount." },
 
   // TxCard
   "admin.transactions.card.previewSlipAria": { lo: "ເບິ່ງສະລິບ", en: "Preview slip" },
@@ -90,4 +92,5 @@ export const ADMIN_TRANSACTIONS_STRINGS = {
     en: "Insufficient balance: user has {balance} ₭ but withdraw is {amount} ₭.",
   },
   "admin.transactions.error.actionFailed": { lo: "ການດຳເນີນການລົ້ມເຫລວ.", en: "Action failed." },
+  "admin.transactions.error.invalidAmount": { lo: "ຈຳນວນເງິນບໍ່ຖືກຕ້ອງ.", en: "Invalid amount." },
 } as const

@@ -32,13 +32,10 @@ const RANGE_BOUNDS: Record<'LOW' | 'MIDDLE' | 'HIGH', { min: number; max: number
   HIGH: { min: 11, max: 18 },
 }
 
-// Symbols that earn the premium triple bonus (×16 total return on all-3-match).
-// Fish, Rooster, Frog earn the standard triple bonus (×10 total return).
-const TRIPLE_PREMIUM = new Set<string>(['CRAB', 'PRAWN', 'GOURD'])
 // SUM numbers that earn the special bonus payout (×5 total return) in live mode.
 const SPECIAL_SUMS = new Set([3, 7, 11, 15])
 
-type LivePromo = { triple: boolean; sum: boolean }
+type LivePromo = { sum: boolean }
 
 // Mirrors the per-bet payout math in api.play-round.tsx so server-side resolve
 // Retries a transaction on MongoDB transient write-conflict / deadlock errors
@@ -75,14 +72,9 @@ function computeBetPayout(
     const matches = dice.filter(d => d === b.symbol).length
     if (matches === 1) return b.amount * cfg.symbol1
     if (matches === 2) return b.amount * cfg.symbol2
-    if (matches === 3) {
-      if (livePromo?.triple) {
-        // Premium symbols (Crab/Prawn/Gourd): ×5 per die × 3 + stake = ×16 total
-        // Standard symbols (Fish/Rooster/Frog): ×3 per die × 3 + stake = ×10 total
-        return b.amount * (TRIPLE_PREMIUM.has(b.symbol) ? 16 : 10)
-      }
-      return b.amount * cfg.symbol3
-    }
+    // 3 matches pays the standard symbol3 multiplier (no triple bonus) — e.g.
+    // ×4 total: a 30,000 bet on FISH with three FISH pays 120,000.
+    if (matches === 3) return b.amount * cfg.symbol3
     return 0
   }
   if (b.kind === 'RANGE' && b.range) {
@@ -264,7 +256,7 @@ export async function loader({ request }: Route.LoaderArgs) {
     // Payout multipliers + LIVE promo flags so the admin result-entry modal can
     // compute (client-side) which dice combos pay out the least.
     payoutCfg: getPayoutConfig(),
-    livePromo: { triple: process.env.PROMO_TRIPLE === 'true', sum: process.env.PROMO_SUM === 'true' },
+    livePromo: { sum: process.env.PROMO_SUM === 'true' },
   }
 }
 
@@ -507,8 +499,7 @@ export async function action({ request }: Route.ActionArgs) {
 
       const cfg = getPayoutConfig()
       const livePromo: LivePromo = {
-        triple: process.env.PROMO_TRIPLE === 'true',
-        sum:    process.env.PROMO_SUM    === 'true',
+        sum: process.env.PROMO_SUM === 'true',
       }
       const promoStreak = process.env.PROMO_STREAK === 'true'
 
