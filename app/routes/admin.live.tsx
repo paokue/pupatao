@@ -966,6 +966,22 @@ export default function AdminLive() {
   const members = usePresenceMembers(PRESENCE_LIVE)
   const viewers = members.filter(m => m.info.kind === 'user')
 
+  // Each viewer's presence id is `user:<id>`; the snapshot balance in presence
+  // info goes stale as they win/lose. Re-query the current REAL balances when
+  // the viewer set changes and whenever a round starts/resolves (current?.id).
+  const viewerUserIds = viewers.map(v => v.id.replace(/^user:/, ''))
+  const viewerIdsKey = viewerUserIds.join(',')
+  const balancesFetcher = useFetcher<{ balances: Record<string, number> }>()
+  useEffect(() => {
+    if (viewerUserIds.length === 0) return
+    balancesFetcher.submit(
+      { userIds: viewerUserIds },
+      { method: 'post', action: '/api/admin/viewer-balances', encType: 'application/json' },
+    )
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [viewerIdsKey, current?.id])
+  const liveBalances = balancesFetcher.data?.balances ?? {}
+
   // Live bets feed for the open round. Seeded from the loader, then appended
   // as new bets stream in. Resets whenever the open round changes (new round,
   // round resolved, or initial load with no open round).
@@ -1087,6 +1103,7 @@ export default function AdminLive() {
               settling={resolveFetcher.state !== 'idle'}
               settleError={resolveFetcher.data?.error ?? null}
               viewers={viewers}
+              viewerBalances={liveBalances}
               bets={bets}
             />
           ) : (
@@ -1117,7 +1134,7 @@ export default function AdminLive() {
           {!current && (
             <div className="grid grid-cols-1 gap-4 md:grid-cols-5">
               <div className="md:col-span-2">
-                <ViewersPanel viewers={viewers} />
+                <ViewersPanel viewers={viewers} balances={liveBalances} />
               </div>
               <div className="md:col-span-3">
                 <LiveBetsPanel bets={bets} hasOpenRound={false} roundId={null} />
@@ -1290,7 +1307,7 @@ function SettledSummaryPanel({
   )
 }
 
-function ViewersPanel({ viewers }: { viewers: ReturnType<typeof usePresenceMembers> }) {
+function ViewersPanel({ viewers, balances = {} }: { viewers: ReturnType<typeof usePresenceMembers>; balances?: Record<string, number> }) {
   const t = useT()
   return (
     <div className="rounded-xl p-4" style={{ background: '#0f172a', border: '1px solid #1e1b4b' }}>
@@ -1314,7 +1331,9 @@ function ViewersPanel({ viewers }: { viewers: ReturnType<typeof usePresenceMembe
                 {v.info.kind === 'admin' ? (v.info.name ?? 'Admin') : (v.info.tel ?? v.id)}
               </span>
               <span className="text-[10px] font-bold" style={{ color: '#fde68a' }}>
-                {v.info.kind === 'user' ? `${(v.info.balance ?? 0).toLocaleString()} ₭` : ''}
+                {v.info.kind === 'user'
+                  ? `${(balances[v.id.replace(/^user:/, '')] ?? v.info.balance ?? 0).toLocaleString()} ₭`
+                  : ''}
               </span>
             </li>
           ))}
@@ -1474,6 +1493,7 @@ function ActiveRoundPanel({
   settling,
   settleError,
   viewers,
+  viewerBalances,
   bets,
 }: {
   round: CurrentRound
@@ -1482,6 +1502,7 @@ function ActiveRoundPanel({
   settling: boolean
   settleError: string | null
   viewers: ReturnType<typeof usePresenceMembers>
+  viewerBalances: Record<string, number>
   bets: LiveBet[]
 }) {
   const t = useT()
@@ -1622,6 +1643,7 @@ function ActiveRoundPanel({
           remainingSeconds={remainingSeconds}
           onClose={() => setResultModalOpen(false)}
           viewers={viewers}
+          viewerBalances={viewerBalances}
           bets={bets}
         />
       )}
@@ -1642,6 +1664,7 @@ function ResultEntryModal({
   remainingSeconds,
   onClose,
   viewers,
+  viewerBalances,
   bets,
 }: {
   round: CurrentRound
@@ -1656,6 +1679,7 @@ function ResultEntryModal({
   remainingSeconds: number | null
   onClose: () => void
   viewers: ReturnType<typeof usePresenceMembers>
+  viewerBalances: Record<string, number>
   bets: LiveBet[]
 }) {
   const t = useT()
@@ -1797,7 +1821,7 @@ function ResultEntryModal({
 
         <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-5">
           <div className="md:col-span-2">
-            <ViewersPanel viewers={viewers} />
+            <ViewersPanel viewers={viewers} balances={viewerBalances} />
           </div>
           <div className="md:col-span-3">
             <LiveBetsPanel bets={bets} hasOpenRound={true} roundId={round.id} maxHeight="240px" />
