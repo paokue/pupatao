@@ -1311,9 +1311,11 @@ function ViewersPanel({ viewers }: { viewers: ReturnType<typeof usePresenceMembe
               style={{ background: '#1e1b4b' }}
             >
               <span className="truncate" style={{ color: '#e9d5ff' }}>
-                {v.info.name ?? v.info.tel ?? v.id}
+                {v.info.kind === 'admin' ? (v.info.name ?? 'Admin') : (v.info.tel ?? v.id)}
               </span>
-              <span className="text-[10px]" style={{ color: '#a5b4fc' }}>{v.info.tel ?? ''}</span>
+              <span className="text-[10px] font-bold" style={{ color: '#fde68a' }}>
+                {v.info.kind === 'user' ? `${(v.info.balance ?? 0).toLocaleString()} ₭` : ''}
+              </span>
             </li>
           ))}
         </ul>

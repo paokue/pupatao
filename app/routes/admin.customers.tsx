@@ -14,6 +14,21 @@ import { parseLocaleCookie } from '~/lib/i18n'
 
 const PAGE_SIZES = [10, 30, 50, 100, 200, 500] as const
 
+// Lao mobile numbers are stored in several shapes:
+//   +85620XXXXXXXX · 020XXXXXXXX · 20XXXXXXXX · XXXXXXXX (subscriber only)
+// Normalise any of them to the digits-only international form WhatsApp expects
+// (85620XXXXXXXX) so wa.me opens the correct chat.
+function toWhatsappPhone(raw: string): string {
+  const d = raw.replace(/\D/g, '') // strip +, spaces, dashes → digits only
+  if (d.startsWith('856')) return d                 // already has country code
+  if (d.startsWith('0')) return '856' + d.slice(1)  // 020XXXXXXXX → 85620XXXXXXXX
+  if (d.startsWith('20')) return '856' + d          // 20XXXXXXXX  → 85620XXXXXXXX
+  return '85620' + d                                 // bare subscriber → 85620XXXXXXXX
+}
+function whatsappLink(raw: string): string {
+  return `https://wa.me/${toWhatsappPhone(raw)}`
+}
+
 const PHASE_VALUES = ['NORMAL', 'PHASE_A', 'PHASE_B', 'PHASE_C', 'ADMIN_LOCKED'] as const
 type PhaseFilter = 'ALL' | typeof PHASE_VALUES[number]
 type StatusFilter = 'ALL' | 'ACTIVE' | 'SUSPENDED'
@@ -338,7 +353,6 @@ export default function AdminCustomers() {
               <th className="px-3 py-2">{t('admin.customers.table.phone')}</th>
               <th className="px-3 py-2">{t('admin.customers.table.name')}</th>
               <th className="px-3 py-2 text-right">REAL</th>
-              <th className="px-3 py-2 text-right">DEMO</th>
               <th className="px-3 py-2">{t('admin.customers.table.status')}</th>
               <th className="px-3 py-2">{t('admin.customers.table.gameTier')}</th>
               <th className="px-3 py-2"></th>
@@ -355,10 +369,11 @@ export default function AdminCustomers() {
             {data.users.map((u, i) => (
               <tr key={u.id} style={{ borderTop: '1px solid #1e1b4b', color: '#e9d5ff' }}>
                 <td className="px-3 py-2 text-right text-[10px] font-bold tabular-nums" style={{ color: '#64748b' }}>{(data.page - 1) * data.pageSize + i + 1}</td>
-                <td className="px-3 py-2 font-semibold">{u.tel}</td>
+                <td className="px-3 py-2 font-semibold">
+                  <a href={whatsappLink(u.tel)} target="_blank" rel="noopener noreferrer" className="hover:underline" style={{ color: '#34d399' }} title="WhatsApp">{u.tel}</a>
+                </td>
                 <td className="px-3 py-2">{[u.firstName, u.lastName].filter(Boolean).join(' ') || <span style={{ color: '#64748b' }}>—</span>}</td>
                 <td className="px-3 py-2 text-right" style={{ color: '#fde68a' }}>{u.real.toLocaleString()}</td>
-                <td className="px-3 py-2 text-right" style={{ color: '#a5b4fc' }}>{u.demo.toLocaleString()}</td>
                 <td className="px-3 py-2"><StatusPill status={u.status} /></td>
                 <td className="px-3 py-2">
                   <div className="flex items-center gap-1.5">
@@ -455,7 +470,7 @@ function CustomerCard({ u, onAction, onResetPassword, rowNum }: { u: CustomerRow
         <div className="min-w-0">
           <div className="flex items-center gap-1.5">
             <span className="text-[10px] font-bold tabular-nums" style={{ color: '#64748b' }}>#{rowNum}</span>
-            <div className="text-sm font-semibold" style={{ color: '#fde68a' }}>{u.tel}</div>
+            <a href={whatsappLink(u.tel)} target="_blank" rel="noopener noreferrer" className="text-sm font-semibold hover:underline" style={{ color: '#34d399' }} title="WhatsApp">{u.tel}</a>
           </div>
           <div className="truncate text-xs" style={{ color: '#e9d5ff' }}>
             {[u.firstName, u.lastName].filter(Boolean).join(' ') || <span style={{ color: '#64748b' }}>—</span>}
@@ -463,14 +478,10 @@ function CustomerCard({ u, onAction, onResetPassword, rowNum }: { u: CustomerRow
         </div>
         <StatusPill status={u.status} />
       </div>
-      <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
+      <div className="mt-2 text-xs">
         <div className="rounded-md px-2 py-1.5" style={{ background: '#1e1b4b' }}>
           <div className="text-[9px] font-bold " style={{ color: '#a5b4fc' }}>REAL</div>
           <div className="font-semibold" style={{ color: '#fde68a' }}>{u.real.toLocaleString()}</div>
-        </div>
-        <div className="rounded-md px-2 py-1.5" style={{ background: '#1e1b4b' }}>
-          <div className="text-[9px] font-bold " style={{ color: '#a5b4fc' }}>DEMO</div>
-          <div className="font-semibold" style={{ color: '#a5b4fc' }}>{u.demo.toLocaleString()}</div>
         </div>
       </div>
       <div className="mt-2 flex items-center justify-between gap-2">

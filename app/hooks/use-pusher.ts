@@ -38,7 +38,7 @@ export function usePusherEvent<T = unknown>(
 
 export interface PresenceMember {
   id: string
-  info: { kind: 'admin' | 'user'; name?: string; tel?: string }
+  info: { kind: 'admin' | 'user'; name?: string; tel?: string; balance?: number }
 }
 
 // Subscribe to a presence channel and return the live members list.

@@ -2,6 +2,7 @@ import type { Route } from './+types/api.pusher-auth'
 import { getCurrentUser } from '~/lib/auth.server'
 import { getCurrentAdmin } from '~/lib/admin-auth.server'
 import { authorizeChannel } from '~/lib/pusher.server'
+import { prisma } from '~/lib/prisma.server'
 import { ADMIN_CHANNEL, PRESENCE_LIVE, userChannel } from '~/lib/pusher-channels'
 
 // Pusher posts here with `socket_id` + `channel_name` whenever the browser
@@ -49,12 +50,18 @@ export async function action({ request }: Route.ActionArgs) {
     }
     const user = await getCurrentUser(request)
     if (user) {
+      // Snapshot the REAL balance so the admin viewer list can show phone + balance.
+      const realWallet = await prisma.wallet.findUnique({
+        where: { userId_type: { userId: user.id, type: 'REAL' } },
+        select: { balance: true },
+      }).catch(() => null)
       const body = authorizeChannel(socketId, channel, {
         user_id: `user:${user.id}`,
         user_info: {
           kind: 'user',
           tel: user.tel,
           name: [user.firstName, user.lastName].filter(Boolean).join(' ') || user.tel,
+          balance: realWallet?.balance ?? 0,
         },
       })
       if (!body) return Response.json({ error: 'Pusher not configured' }, { status: 500 })
