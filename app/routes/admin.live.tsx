@@ -7,7 +7,7 @@ import { requireAdmin } from '~/lib/admin-auth.server'
 import { prisma } from '~/lib/prisma.server'
 import { notifyAdmin, notifyGame, notifyPresenceLive, notifyUser } from '~/lib/pusher.server'
 import { getPayoutConfig, type PayoutConfig } from '~/lib/payouts.server'
-import { LOCKED_LIVE_VOID_RETURN_MIN } from '~/lib/game-logic.server'
+import { liveBetPotentialReturn, LOCKED_LIVE_VOID_RETURN_MIN } from '~/lib/game-logic.server'
 import { useT } from '~/lib/use-t'
 import { t as translate, parseLocaleCookie } from '~/lib/i18n'
 import {
@@ -506,18 +506,32 @@ export async function action({ request }: Route.ActionArgs) {
       }
       const promoStreak = process.env.PROMO_STREAK === 'true'
 
-      // Locked-user void rule: once the result is known, an ADMIN_LOCKED user's
-      // bet whose WINNINGS (profit = payout − stake) are MORE THAN 500,000 ₭ is
-      // voided — not paid out; the stake is refunded and the bet marked REFUNDED.
-      // A losing bet (or a win of exactly 500,000 profit or less, e.g. a 100k
-      // pair → 600k return = 500k profit) follows the normal flow.
+      // Locked-user round-level void rule:
+      //  • A "big" bet = an ADMIN_LOCKED user's bet whose potential WINNINGS
+      //    (return − stake) would be MORE THAN 500,000 ₭.
+      //  • If a user has ≥1 big bet AND a big bet actually WINS this round, ALL
+      //    of that user's bets are voided + refunded (marked REFUNDED).
+      //  • Otherwise (no big bet, or all big bets lost) every bet settles normally.
+      const promoSum = livePromo.sum
+      const userHasBigBet = new Set<string>()       // user placed a >500k-profit bet
+      const userBigBetWon = new Set<string>()       // one of those big bets won
+      for (const b of bets) {
+        if (b.user.selfPlayPhase !== 'ADMIN_LOCKED') continue
+        const potentialProfit = liveBetPotentialReturn(b, cfg, { promoSum }) - b.amount
+        if (potentialProfit <= LOCKED_LIVE_VOID_RETURN_MIN) continue
+        userHasBigBet.add(b.userId)
+        if (computeBetPayout(b, dice, diceSum, cfg, livePromo) > 0) userBigBetWon.add(b.userId)
+      }
+      // Users whose entire round is refunded: had a big bet, and it won.
+      const refundUserIds = new Set([...userHasBigBet].filter(uid => userBigBetWon.has(uid)))
+
       type Resolved = { id: string; payout: number; result: 'WIN' | 'LOSS' | 'REFUNDED' }
       const betUpdates: Resolved[] = bets.map(b => {
-        const payout = computeBetPayout(b, dice, diceSum, cfg, livePromo)
-        if (b.user.selfPlayPhase === 'ADMIN_LOCKED' && payout - b.amount > LOCKED_LIVE_VOID_RETURN_MIN) {
-          // Voided win: refund the stake instead of paying the (large) win.
+        if (refundUserIds.has(b.userId)) {
+          // Refund every bet for this user this round (stake returned, no payout).
           return { id: b.id, payout: b.amount, result: 'REFUNDED' as const }
         }
+        const payout = computeBetPayout(b, dice, diceSum, cfg, livePromo)
         return { id: b.id, payout, result: payout > 0 ? 'WIN' : 'LOSS' }
       })
 

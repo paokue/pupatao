@@ -65,7 +65,7 @@ enum SelfPlayPhase {
 
 model User {
   id           String        @id @default(auto()) @map("_id") @db.ObjectId
-  tel          String        @unique // required — login identifier (e.g. "+8562099299817")
+  tel          String        @unique // required — login identifier (e.g. "+8562076350786")
   passwordHash String // argon2id (preferred) or bcrypt — never store raw password
   firstName    String?
   lastName     String?

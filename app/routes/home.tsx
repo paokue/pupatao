@@ -642,10 +642,10 @@ function LiveScheduleCard({
 
   // Countdown to start
   const totalSec = Math.floor(diffMs / 1000)
-  const days  = Math.floor(totalSec / 86400)
+  const days = Math.floor(totalSec / 86400)
   const hours = Math.floor((totalSec % 86400) / 3600)
-  const mins  = Math.floor((totalSec % 3600) / 60)
-  const secs  = totalSec % 60
+  const mins = Math.floor((totalSec % 3600) / 60)
+  const secs = totalSec % 60
 
   const units = [
     { label: 'ມື້', value: days },
@@ -717,10 +717,10 @@ function symName(sym: string, t: ReturnType<typeof useT>): string {
 }
 
 const MAX_BET_SYMBOL = 1_000_000  // Max total bet per symbol cell (×2 payout → 2,000,000)
-const MAX_BET_PAIR   = 200_000    // Max total bet per pair combo (×6 payout → 1,200,000)
+const MAX_BET_PAIR = 200_000    // Max total bet per pair combo (×6 payout → 1,200,000)
 const MAX_BET_MIDDLE = 200_000    // Max total bet on MIDDLE range (×6 payout → 1,200,000)
-const MAX_BET_RANGE  = 1_000_000  // Max total bet on LOW / HIGH range (×2 payout → 2,000,000)
-const MAX_BET_SUM    = 200_000    // Max total bet per number 3-18 (×4 payout → 800,000)
+const MAX_BET_RANGE = 1_000_000  // Max total bet on LOW / HIGH range (×2 payout → 2,000,000)
+const MAX_BET_SUM = 200_000    // Max total bet per number 3-18 (×4 payout → 800,000)
 
 // LIVE mode only: per betting target (symbol / range / pair / number) one user may
 // stake at most this much. All users combined are capped per target on the server
@@ -776,8 +776,8 @@ function CountUpNumber({ from, to, duration = 1400, sound = false }: { from: num
 
 function ProcessingRing({ countdown, size }: { countdown: number; size: 'sm' | 'lg' }) {
   const dim = size === 'sm' ? 64 : 80
-  const cx  = dim / 2
-  const r   = size === 'sm' ? 26 : 32
+  const cx = dim / 2
+  const r = size === 'sm' ? 26 : 32
   const circ = 2 * Math.PI * r
   return (
     <div style={{ position: 'relative', width: dim, height: dim, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -852,8 +852,9 @@ function ProfileDropdown({ name, onClose, competitionEnabled, competitionType, o
     { label: t('menu.playHistory'), icon: <ReceiptText size={18} />, href: '/history', desc: t('menu.playHistoryDesc') },
     { label: t('menu.profile'), icon: <User size={18} />, href: '/profile', desc: t('menu.profileDesc') },
     { label: t('menu.rules'), icon: <BookOpen size={18} />, href: '/rules', desc: t('menu.rulesDesc') },
-    { label: t('menu.contactAdmin'), icon: <MessageCircle size={18} />, href: 'https://wa.me/8562099299817', desc: t('menu.contactAdminDesc'), external: true },
-    { label: t('menu.joinGroup'), icon: <Users size={18} />, desc: t('menu.joinGroupDesc'), onClick: onJoinGroup },
+    { label: t('menu.contactAdmin'), icon: <MessageCircle size={18} />, href: 'https://wa.me/8562076350786', desc: t('menu.contactAdminDesc'), external: true },
+    // Join Group menu — temporarily disabled (re-enable later by uncommenting):
+    // { label: t('menu.joinGroup'), icon: <Users size={18} />, desc: t('menu.joinGroupDesc'), onClick: onJoinGroup },
   ]
 
   return (
@@ -1093,9 +1094,9 @@ export async function loader({ request }: Route.LoaderArgs) {
       selfPlayHistory: [] as SymbolKey[][],
       liveHistory: [] as SymbolKey[][],
       liveRound, liveStreamUrl, schedule,
-      competitionEnabled:      competitionCfg.enabled,
-      competitionMenuVisible:  competitionCfg.menuVisible,
-      competitionType:         competitionCfg.type,
+      competitionEnabled: competitionCfg.enabled,
+      competitionMenuVisible: competitionCfg.menuVisible,
+      competitionType: competitionCfg.type,
       isCompetitionParticipant: false,
       myLiveBets: [] as MyLiveBet[],
       payoutConfig,
@@ -1107,34 +1108,34 @@ export async function loader({ request }: Route.LoaderArgs) {
   // The customer's own bets in the current LIVE round — populates the
   // "your bets in this round" list shown during the awaiting-result phase.
   //
-  // For ADMIN_LOCKED users we HIDE high-value bets (return-if-won ≥ 500,000 ₭)
-  // from their own screen — the bet still exists and settles (a win ≥ 500k is
-  // voided + refunded at resolve; a loss stays), it's just not shown live.
+  // Round-level rule for ADMIN_LOCKED users: if ANY of their bets would win more
+  // than 500,000 ₭ profit (return − stake), HIDE ALL of their bets from their own
+  // screen for this round. The bets still exist and settle at resolve (all
+  // refunded if the big bet wins; otherwise settled normally).
   const { liveBetPotentialReturn, LOCKED_LIVE_VOID_RETURN_MIN } = await import('~/lib/game-logic.server')
   const _promoSum = process.env.PROMO_SUM === 'true'
-  const myLiveBets = liveRound
-    ? (await prisma.bet.findMany({
+  const _myRawBets = liveRound
+    ? await prisma.bet.findMany({
       where: { roundId: liveRound.id, userId: user.id },
       orderBy: { createdAt: 'asc' },
       select: { id: true, kind: true, amount: true, symbol: true, range: true, pairA: true, pairB: true, exactSum: true },
-    }))
-      .filter(b => !(
-        user.selfPlayPhase === 'ADMIN_LOCKED' &&
-        // Hide by potential WINNINGS (profit = return − stake), so a 100k pair
-        // (600k return = 500k profit) still shows; only > 500k profit is hidden.
-        liveBetPotentialReturn(b, payoutConfig, { promoSum: _promoSum }) - b.amount > LOCKED_LIVE_VOID_RETURN_MIN
-      ))
-      .map(b => ({
-      id: b.id,
-      kind: b.kind as 'SYMBOL' | 'RANGE' | 'PAIR' | 'SUM',
-      amount: b.amount,
-      symbol: b.symbol as string | null,
-      range: b.range as string | null,
-      pairA: b.pairA as string | null,
-      pairB: b.pairB as string | null,
-      exactSum: b.exactSum as number | null,
-    }))
+    })
     : []
+  const _hideAllMyBets = user.selfPlayPhase === 'ADMIN_LOCKED' && _myRawBets.some(b =>
+    liveBetPotentialReturn(b, payoutConfig, { promoSum: _promoSum }) - b.amount > LOCKED_LIVE_VOID_RETURN_MIN,
+  )
+  const myLiveBets = _hideAllMyBets
+    ? []
+    : _myRawBets.map(b => ({
+        id: b.id,
+        kind: b.kind as 'SYMBOL' | 'RANGE' | 'PAIR' | 'SUM',
+        amount: b.amount,
+        symbol: b.symbol as string | null,
+        range: b.range as string | null,
+        pairA: b.pairA as string | null,
+        pairB: b.pairB as string | null,
+        exactSum: b.exactSum as number | null,
+      }))
 
   const [selfPlay, live] = await Promise.all([
     prisma.gameRound.findMany({
@@ -1164,9 +1165,9 @@ export async function loader({ request }: Route.LoaderArgs) {
     liveRound,
     liveStreamUrl,
     schedule,
-    competitionEnabled:      competitionCfg.enabled,
-    competitionMenuVisible:  competitionCfg.menuVisible,
-    competitionType:         competitionCfg.type,
+    competitionEnabled: competitionCfg.enabled,
+    competitionMenuVisible: competitionCfg.menuVisible,
+    competitionType: competitionCfg.type,
     isCompetitionParticipant: competitionCfg.type !== 'DEMO_LIVE' && competitionCfg.enabled
       ? !!(await prisma.competitionParticipant.findUnique({ where: { userId: user.id } }))
       : false,
@@ -1337,9 +1338,9 @@ export default function FishPrawnCrabGame() {
   }
 
   // Local competition state — updated immediately via Pusher (before loader revalidation)
-  const [competitionEnabled,     setCompetitionEnabledLocal]     = useState(loaderData.competitionEnabled)
+  const [competitionEnabled, setCompetitionEnabledLocal] = useState(loaderData.competitionEnabled)
   const [competitionMenuVisible, setCompetitionMenuVisibleLocal] = useState(loaderData.competitionMenuVisible)
-  useEffect(() => { setCompetitionEnabledLocal(loaderData.competitionEnabled) },     [loaderData.competitionEnabled])
+  useEffect(() => { setCompetitionEnabledLocal(loaderData.competitionEnabled) }, [loaderData.competitionEnabled])
   useEffect(() => { setCompetitionMenuVisibleLocal(loaderData.competitionMenuVisible) }, [loaderData.competitionMenuVisible])
   const revalidator = useRevalidator()
 
@@ -2381,7 +2382,7 @@ export default function FishPrawnCrabGame() {
     if (mode !== 'live') return
     const id = setInterval(() => setFakeViewers(getFakeViewers()), 30_000)
     return () => clearInterval(id)
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode])
 
   // Dice display: 3 dice + SUM badge + win badge. Used in both RANDOM and LIVE modes.
@@ -3454,7 +3455,7 @@ export default function FishPrawnCrabGame() {
                                   <RangeIcon size={12} style={{ color: rangeColor }} className="shrink-0" />
                                   <span style={{ color: rangeColor }}>{b.range === 'LOW' ? t('game.low') : b.range === 'HIGH' ? t('game.high') : t('game.middle')}</span>
                                 </>}
-                              {b.kind === 'SUM' && b.exactSum != null && <>
+                                {b.kind === 'SUM' && b.exactSum != null && <>
                                   <span className="shrink-0 font-bold" style={{ color: '#fbbf24' }}>ເລກ {b.exactSum}</span>
                                 </>}
                               </span>
@@ -4014,56 +4015,56 @@ export default function FishPrawnCrabGame() {
             style={{ background: 'rgba(15,0,32,0.82)' }}
             onClick={() => setResultModal(null)}
           >
-              <div
-                onClick={e => e.stopPropagation()}
-                className="w-full max-w-sm rounded-md bg-white p-6 overflow-y-auto"
-                style={{ maxHeight: '95vh' }}
-              >
-                <div className="text-center text-xs font-bold text-gray-500">
-                  {t('result.titleRandom')}
-                </div>
-                <div className="mt-2 text-center text-2xl font-bold" style={{ color: accent }}>
-                  {isWin ? t('result.youWin') : isEven ? t('result.breakEven') : t('result.youLost')}
-                </div>
-                <div className="mt-3 flex items-center justify-center gap-2">
-                  {resultModal.dice.map((s, i) => (
-                    <img key={i} src={`/symbols/${s}.png`} alt={s}
-                      className="h-12 w-12 rounded object-contain"
-                      style={{ border: '1px solid #c4b5fd', background: '#f5f5f5' }} />
-                  ))}
-                  <span className="ml-2 rounded-full px-3 py-1 text-xs font-bold" style={{ background: '#f3f4f6', color: '#1e0040' }}>
-                    {t('result.sum')} {resultModal.diceSum}
+            <div
+              onClick={e => e.stopPropagation()}
+              className="w-full max-w-sm rounded-md bg-white p-6 overflow-y-auto"
+              style={{ maxHeight: '95vh' }}
+            >
+              <div className="text-center text-xs font-bold text-gray-500">
+                {t('result.titleRandom')}
+              </div>
+              <div className="mt-2 text-center text-2xl font-bold" style={{ color: accent }}>
+                {isWin ? t('result.youWin') : isEven ? t('result.breakEven') : t('result.youLost')}
+              </div>
+              <div className="mt-3 flex items-center justify-center gap-2">
+                {resultModal.dice.map((s, i) => (
+                  <img key={i} src={`/symbols/${s}.png`} alt={s}
+                    className="h-12 w-12 rounded object-contain"
+                    style={{ border: '1px solid #c4b5fd', background: '#f5f5f5' }} />
+                ))}
+                <span className="ml-2 rounded-full px-3 py-1 text-xs font-bold" style={{ background: '#f3f4f6', color: '#1e0040' }}>
+                  {t('result.sum')} {resultModal.diceSum}
+                </span>
+              </div>
+              <div className="mt-4 text-center text-4xl font-bold" style={{ color: accent }}>
+                {isEven ? '0' : (isWin ? '+' : '−')}
+                {!isEven && <CountUpNumber from={0} to={Math.abs(net)} duration={1400} sound />}
+              </div>
+              <BetBreakdown
+                symbolBets={symbolToBreakdown(resultModal.symbolResults)}
+                rangeBets={rangeToBreakdown(resultModal.rangeResults, t)}
+                pairBets={pairToBreakdown(resultModal.pairResults)}
+              />
+              <div className="mt-4 border-t border-gray-200 pt-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold">{t('result.totalBalance')}</span>
+                  <span className="text-xl font-bold">
+                    <CountUpNumber
+                      from={Math.max(0, resultModal.newBalance - net)}
+                      to={resultModal.newBalance}
+                      duration={1600}
+                    />
                   </span>
                 </div>
-                <div className="mt-4 text-center text-4xl font-bold" style={{ color: accent }}>
-                  {isEven ? '0' : (isWin ? '+' : '−')}
-                  {!isEven && <CountUpNumber from={0} to={Math.abs(net)} duration={1400} sound />}
-                </div>
-                <BetBreakdown
-                  symbolBets={symbolToBreakdown(resultModal.symbolResults)}
-                  rangeBets={rangeToBreakdown(resultModal.rangeResults, t)}
-                  pairBets={pairToBreakdown(resultModal.pairResults)}
-                />
-                <div className="mt-4 border-t border-gray-200 pt-3">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold">{t('result.totalBalance')}</span>
-                    <span className="text-xl font-bold">
-                      <CountUpNumber
-                        from={Math.max(0, resultModal.newBalance - net)}
-                        to={resultModal.newBalance}
-                        duration={1600}
-                      />
-                    </span>
-                  </div>
-                  <button
-                    onClick={() => setResultModal(null)}
-                    className="mt-4 w-full rounded-xl py-3 text-sm font-bold transition-opacity hover:opacity-90 border"
-                    autoFocus
-                  >
-                    {t('result.continue')}
-                  </button>
-                </div>
+                <button
+                  onClick={() => setResultModal(null)}
+                  className="mt-4 w-full rounded-xl py-3 text-sm font-bold transition-opacity hover:opacity-90 border"
+                  autoFocus
+                >
+                  {t('result.continue')}
+                </button>
               </div>
+            </div>
           </div>
         )
       })()}
@@ -4083,53 +4084,53 @@ export default function FishPrawnCrabGame() {
             style={{ background: 'rgba(15,0,32,0.82)' }}
             onClick={() => setLiveSettleModal(null)}
           >
-              <div
-                onClick={e => e.stopPropagation()}
-                className="w-full max-w-sm rounded-md bg-white p-6 overflow-y-auto"
-                style={{ maxHeight: '95vh' }}
-              >
-                <div className="text-center text-xs font-bold text-gray-500">{t('result.titleLive')}</div>
-                <div className="mt-2 text-center text-2xl font-bold" style={{ color: accent }}>
-                  {isWin ? t('result.youWin') : isEven ? t('result.breakEven') : t('result.youLost')}
-                </div>
-                <div className="mt-3 flex items-center justify-center gap-2">
-                  {m.dice.map((s, i) => (
-                    <img key={i} src={`/symbols/${s.toLowerCase()}.png`} alt={s}
-                      className="h-12 w-12 rounded object-contain"
-                      style={{ border: '1px solid #c4b5fd', background: '#f5f5f5' }} />
-                  ))}
-                  <span className="ml-2 rounded-full px-3 py-1 text-xs font-bold" style={{ background: '#f3f4f6', color: '#1e0040' }}>
-                    {t('result.sum')} {m.diceSum}
-                  </span>
-                </div>
-                <div className="mt-4 text-center text-4xl font-bold" style={{ color: accent }}>
-                  {amountText}
-                </div>
-                {m.bets.length > 0 && (() => {
-                  const split = settledToBreakdown(m.bets, t)
-                  return (
-                    <BetBreakdown
-                      symbolBets={split.symbolBets}
-                      rangeBets={split.rangeBets}
-                      pairBets={split.pairBets}
-                      sumBets={split.sumBets}
-                    />
-                  )
-                })()}
-                <div className="mt-4 border-t border-gray-200 pt-3">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold">{t('result.totalBalance')}</span>
-                    <span className="text-xl font-bold">{m.newBalance.toLocaleString()}</span>
-                  </div>
-                  <button
-                    onClick={() => setLiveSettleModal(null)}
-                    className="mt-4 w-full rounded-xl py-3 text-sm font-bold transition-opacity hover:opacity-90 border"
-                    autoFocus
-                  >
-                    {t('result.continue')}
-                  </button>
-                </div>
+            <div
+              onClick={e => e.stopPropagation()}
+              className="w-full max-w-sm rounded-md bg-white p-6 overflow-y-auto"
+              style={{ maxHeight: '95vh' }}
+            >
+              <div className="text-center text-xs font-bold text-gray-500">{t('result.titleLive')}</div>
+              <div className="mt-2 text-center text-2xl font-bold" style={{ color: accent }}>
+                {isWin ? t('result.youWin') : isEven ? t('result.breakEven') : t('result.youLost')}
               </div>
+              <div className="mt-3 flex items-center justify-center gap-2">
+                {m.dice.map((s, i) => (
+                  <img key={i} src={`/symbols/${s.toLowerCase()}.png`} alt={s}
+                    className="h-12 w-12 rounded object-contain"
+                    style={{ border: '1px solid #c4b5fd', background: '#f5f5f5' }} />
+                ))}
+                <span className="ml-2 rounded-full px-3 py-1 text-xs font-bold" style={{ background: '#f3f4f6', color: '#1e0040' }}>
+                  {t('result.sum')} {m.diceSum}
+                </span>
+              </div>
+              <div className="mt-4 text-center text-4xl font-bold" style={{ color: accent }}>
+                {amountText}
+              </div>
+              {m.bets.length > 0 && (() => {
+                const split = settledToBreakdown(m.bets, t)
+                return (
+                  <BetBreakdown
+                    symbolBets={split.symbolBets}
+                    rangeBets={split.rangeBets}
+                    pairBets={split.pairBets}
+                    sumBets={split.sumBets}
+                  />
+                )
+              })()}
+              <div className="mt-4 border-t border-gray-200 pt-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold">{t('result.totalBalance')}</span>
+                  <span className="text-xl font-bold">{m.newBalance.toLocaleString()}</span>
+                </div>
+                <button
+                  onClick={() => setLiveSettleModal(null)}
+                  className="mt-4 w-full rounded-xl py-3 text-sm font-bold transition-opacity hover:opacity-90 border"
+                  autoFocus
+                >
+                  {t('result.continue')}
+                </button>
+              </div>
+            </div>
           </div>
         )
       })()}

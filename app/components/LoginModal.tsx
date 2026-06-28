@@ -4,7 +4,7 @@ import { Loader, LogIn, X } from 'lucide-react'
 import { PasswordInput } from './PasswordInput'
 import { useT } from '~/lib/use-t'
 
-const WHATSAPP_ADMIN = '+8562099299817'
+const WHATSAPP_ADMIN = '+8562076350786'
 
 interface LoginModalProps {
   open: boolean
