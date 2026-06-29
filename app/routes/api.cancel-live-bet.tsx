@@ -51,12 +51,35 @@ export async function action({ request }: Route.ActionArgs) {
           balanceBefore: wallet.balance,
           balanceAfter: newBalance,
           status: 'COMPLETED',
+          roundId: bet.roundId, // link the refund to its round for auditing
           idempotencyKey: crypto.randomUUID(),
           note: 'Live bet cancelled — stake refunded',
         },
       })
       return { newBalance }
     })
+
+    // Audit trail — every cancellation is recorded so abuse can be reviewed
+    // later (e.g. a user who cancels heavily). Best-effort: never fail the cancel.
+    const secondsLeft = bet.round?.bettingClosesAt
+      ? Math.round((bet.round.bettingClosesAt.getTime() - Date.now()) / 1000)
+      : null
+    prisma.auditLog.create({
+      data: {
+        action: 'live.bet_cancel',
+        target: `user:${user.id}`,
+        metadata: {
+          tel: user.tel,
+          betId,
+          roundId: bet.roundId,
+          amount: bet.amount,
+          kind: bet.kind,
+          symbol: bet.symbol ?? bet.range ?? bet.exactSum ?? null,
+          secondsLeftInWindow: secondsLeft, // how long was left on the countdown
+        },
+      },
+    }).catch(err => console.error('[cancel-live-bet] audit log failed', err))
+    console.log(`[cancel-live-bet] user=${user.tel} round=${bet.roundId} amount=${bet.amount} secondsLeft=${secondsLeft}`)
 
     return Response.json({ ok: true, newBalance: result.newBalance })
   } catch (err) {

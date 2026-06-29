@@ -528,6 +528,9 @@ export const STRINGS = {
   // ─── LIVE-mode status badges + waiting messages ──────────────────────
   "live.statusBetting": { lo: "⏱ {n}s ຮັບແທງ", en: "⏱ {n}s BETTING" },
   "live.betLocked": { lo: "⏳ ກຳລັງເລີ່ມຮອບໃໝ່, ກະລຸນາລໍຖ້າ...", en: "⏳ Starting a new round, please wait…" },
+  "live.reload": { lo: "ໂຫຼດໃໝ່", en: "Reload" },
+  "live.tapForSound": { lo: "ເປີດສຽງ", en: "Sound" },
+  "live.mute": { lo: "ປິດສຽງ", en: "Mute" },
   "live.statusWaitingResult": {
     lo: "🔒 ກຳລັງລໍຜົນ",
     en: "🔒 WAITING FOR RESULT",

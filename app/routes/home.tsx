@@ -273,6 +273,7 @@ function LiveStreamBox({
   autoStart?: boolean
   children?: ReactNode
 }) {
+  const t = useT()
   const boxRef = useRef<HTMLDivElement>(null)
   const fbMountRef = useRef<HTMLDivElement>(null)
   const fbPlayerRef = useRef<FbPlayer | null>(null)
@@ -535,35 +536,44 @@ function LiveStreamBox({
       )}
 
       {/* Manual reload button — always shown when a URL is set so the user
-          can recover from a frozen stream without reloading the whole page. */}
+          can recover from a frozen stream without reloading the whole page.
+          On the mobile full-screen view it sits in the top area (under the
+          status badge); on the desktop panel it stays at the bottom. */}
       {rawUrl && (
         <button
           type="button"
           onClick={reload}
-          className="absolute bottom-2 right-2 flex items-center gap-1 rounded-full px-2 py-1 text-[10px] font-semibold transition-opacity hover:opacity-100"
-          style={{ background: 'rgba(0,0,0,0.55)', color: '#fde68a', border: '1px solid rgba(253,230,138,0.3)', opacity: 0.7 }}
-          title="Reload stream"
+          className="absolute right-3 z-20 flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[11px] font-bold transition-transform active:scale-95"
+          style={{
+            ...(fullScreen ? { top: 142 } : { bottom: 'max(env(safe-area-inset-bottom), 14px)' }),
+            background: '#7c3aed',
+            color: '#fff',
+            boxShadow: '0 3px 16px rgba(0,0,0,0.7)',
+          }}
+          title={t('live.reload')}
         >
-          <RefreshCw size={11} />
-          Reload
+          <RefreshCw size={14} />
+          {t('live.reload')}
         </button>
       )}
 
-      {/* Sound toggle — start muted (required for autoplay), tap to unmute. */}
+      {/* Sound toggle — start muted (required for autoplay), tap to unmute.
+          On the mobile full-screen view it stacks UNDER the Reload button. */}
       {rawUrl && (
         <button
           type="button"
           onClick={() => setIsMuted(m => !m)}
-          className="absolute bottom-2 left-2 flex items-center gap-1 rounded-full px-2 py-1 text-[10px] font-semibold"
+          className="absolute z-20 flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[11px] font-bold transition-transform active:scale-95"
           style={{
-            background: isMuted ? 'rgba(220,38,38,0.85)' : 'rgba(0,0,0,0.55)',
+            ...(fullScreen ? { top: 100, right: 12 } : { bottom: 'max(env(safe-area-inset-bottom), 14px)', left: 12 }),
+            background: isMuted ? '#ef4444' : '#111827',
             color: '#fff',
-            border: '1px solid rgba(255,255,255,0.3)',
+            boxShadow: '0 3px 16px rgba(0,0,0,0.7)',
           }}
-          title={isMuted ? 'Tap for sound' : 'Mute'}
+          title={isMuted ? t('live.tapForSound') : t('live.mute')}
         >
-          {isMuted ? <VolumeOff size={11} /> : <Volume2 size={11} />}
-          {isMuted ? 'Tap for sound' : ''}
+          {isMuted ? <VolumeOff size={14} /> : <Volume2 size={14} />}
+          {isMuted ? t('live.tapForSound') : t('live.mute')}
         </button>
       )}
 
