@@ -14,11 +14,19 @@ export async function action({ request }: Route.ActionArgs) {
   try {
     const bet = await prisma.bet.findUnique({
       where: { id: betId },
-      include: { round: { select: { status: true } } },
+      include: { round: { select: { status: true, bettingClosesAt: true } } },
     })
     if (!bet) return Response.json({ error: 'Bet not found' }, { status: 404 })
     if (bet.userId !== user.id) return Response.json({ error: 'Forbidden' }, { status: 403 })
     if (bet.round?.status !== 'BETTING') return Response.json({ error: 'Betting is already closed' }, { status: 409 })
+    // SECURITY: only allow cancelling while the betting COUNTDOWN is still
+    // running. The round stays in BETTING status until the admin manually locks
+    // it — which is after the countdown ends and the dealer reveals the dice on
+    // the live stream. Without this check a player could watch the stream, see
+    // the result, then cancel (refund) their losing bets before the admin locks.
+    if (bet.round.bettingClosesAt && bet.round.bettingClosesAt.getTime() <= Date.now()) {
+      return Response.json({ error: 'Betting window closed' }, { status: 409 })
+    }
     if (bet.result !== null) return Response.json({ error: 'Bet already settled' }, { status: 409 })
 
     const result = await prisma.$transaction(async db => {
@@ -34,7 +42,11 @@ export async function action({ request }: Route.ActionArgs) {
         data: {
           userId: user.id,
           walletId: bet.walletId,
-          type: 'DEPOSIT',
+          // NOT 'DEPOSIT': the self-play phase anchor (player-winnings.server.ts)
+          // keys off the latest COMPLETED deposit, so a deposit-typed refund would
+          // let a user reset their netProfit/phase tier by bet+cancel. ADJUSTMENT
+          // is neutral to that logic.
+          type: 'ADJUSTMENT',
           amount: bet.amount,
           balanceBefore: wallet.balance,
           balanceAfter: newBalance,
